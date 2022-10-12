@@ -1,0 +1,33 @@
+[package]
+name = "asynchronix"
+authors = ["Serge Barral <serge.barral@asynchronics.com>"]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.64"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/asynchronics/asynchronix"
+readme = "../README.md"
+description = """
+A high performance asychronous compute framework for system simulation.
+"""
+categories = ["simulation", "aerospace", "science"]
+keywords = ["simulation", "discrete-event", "systems", "cyberphysical", "real-time"]
+
+[features]
+# API-unstable public exports meant for external test/benchmarking; development only.
+dev-hooks = []
+# Logging of performance-related statistics; development only.
+dev-logs = []
+
+[dependencies]
+parking = "2.0"
+slab = "0.4"
+cache-padded = "1.1"
+num_cpus = "1.13"
+
+[target.'cfg(asynchronix_loom)'.dependencies]
+loom = "0.5"
+
+[dev-dependencies]
+futures-channel = "0.3"
+futures-util = "0.3"

@@ -1,0 +1,34 @@
+name: Loom
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+    paths:
+      - 'asynchronix/src/runtime/executor/queue.rs'
+      - 'asynchronix/src/runtime/executor/queue/**'
+      - 'asynchronix/src/runtime/executor/task.rs'
+      - 'asynchronix/src/runtime/executor/task/**'
+
+jobs:
+  loom:
+    name: Loom
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v3
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Run cargo test (Loom)
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --tests --release
+        env:
+          RUSTFLAGS: --cfg asynchronix_loom
