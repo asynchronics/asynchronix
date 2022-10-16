@@ -250,34 +250,6 @@ fn loom_task_schedule() {
 }
 
 #[test]
-fn loom_task_custom1() {
-    const DEFAULT_PREEMPTION_BOUND: usize = 4;
-
-    let mut builder = Builder::new();
-    if builder.preemption_bound.is_none() {
-        builder.preemption_bound = Some(DEFAULT_PREEMPTION_BOUND);
-    }
-
-    builder.check(move || {
-        test_prelude!();
-        lazy_static! {
-            static ref READY: AtomicBool = AtomicBool::new(false);
-        }
-
-        let (promise, runnable, cancel_token) = spawn(async move { 42 }, schedule_task, ());
-
-        let t = thread::spawn(move || {
-            // The task should complete immediately when ran.
-            runnable.run();
-        });
-
-        cancel_token.cancel();
-
-        t.join().unwrap();
-    });
-}
-
-#[test]
 fn loom_task_cancel() {
     const DEFAULT_PREEMPTION_BOUND: usize = 4;
 
