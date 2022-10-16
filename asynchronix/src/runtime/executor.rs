@@ -19,7 +19,7 @@ mod worker;
 #[cfg(all(test, not(asynchronix_loom)))]
 mod tests;
 
-use self::pool::{Pool, PoolState};
+use self::pool::Pool;
 use self::rng::Rng;
 use self::task::{CancelToken, Promise, Runnable};
 use self::worker::Worker;
@@ -41,8 +41,8 @@ static NEXT_EXECUTOR_ID: AtomicUsize = AtomicUsize::new(0);
 /// fairness as a goal in itself. While it does use fair local queues inasmuch
 /// as these tend to perform better in message-passing applications, it uses an
 /// unfair injection queue and a LIFO slot without attempt to mitigate the
-/// effect of badly behaving code (e.g. futures that use spin-locks and hope for
-/// the best by yielding to the executor with something like tokio's
+/// effect of badly behaving code (e.g. futures that spin-lock by yielding to
+/// the executor; there is for this reason no support for something like tokio's
 /// `yield_now`).
 ///
 /// Another way in which it differs from other `async` executors is that it
@@ -50,8 +50,7 @@ static NEXT_EXECUTOR_ID: AtomicUsize = AtomicUsize::new(0);
 /// discrete-time simulator, the simulation of a system at a given time step
 /// will make as much progress as possible until it technically reaches a
 /// deadlock. Only then does the simulator advance the simulated time until the
-/// next "event" extracted from a time-sorted priority queue, sending it to
-/// enable further progress in the computation.
+/// next "event" extracted from a time-sorted priority queue.
 ///
 /// The design of the executor is largely influenced by the tokio and go
 /// schedulers, both of which are optimized for message-passing applications. In
@@ -62,15 +61,14 @@ static NEXT_EXECUTOR_ID: AtomicUsize = AtomicUsize::new(0);
 /// simple by taking advantage of the fact that the injector is not required to
 /// be either LIFO or FIFO.
 ///
-/// Probably the largest difference with tokio is the task system, which boasts
-/// a higher throughput achieved by reducing the need for synchronization.
+/// Probably the largest difference with tokio is the task system, which
+/// achieves a higher throughput by reducing the need for synchronization.
 /// Another difference is that, at the moment, the complete subset of active
-/// worker threads is stored in a single atomic variable. This makes it in
-/// particular possible to rapidly identify free worker threads for stealing
-/// operations. The downside of this approach is that the maximum number of
-/// worker threads is limited to `usize::BITS`, but this is unlikely to
-/// constitute a limitation since system simulation is not typically an
-/// embarrassingly parallel problem.
+/// worker threads is stored in a single atomic variable. This makes it possible
+/// to rapidly identify free worker threads for stealing operations. The
+/// downside of this approach is that the maximum number of worker threads is
+/// limited to `usize::BITS`, but this is unlikely to constitute a limitation
+/// since system simulation is not typically embarrassingly parallel.
 #[derive(Debug)]
 pub(crate) struct Executor {
     pool: Arc<Pool>,
@@ -139,7 +137,7 @@ impl Executor {
 
         // Wait until all workers are blocked on the signal barrier.
         parker.park();
-        assert!(pool.is_idle());
+        assert!(pool.is_pool_idle());
 
         Self {
             pool,
@@ -208,7 +206,7 @@ impl Executor {
             if let Some(worker_panic) = self.pool.take_panic() {
                 panic::resume_unwind(worker_panic);
             }
-            if self.pool.is_idle() {
+            if self.pool.is_pool_idle() {
                 return;
             }
 
@@ -358,26 +356,25 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
 
         loop {
             // Signal barrier: park until notified to continue or terminate.
-            if worker.pool.set_worker_inactive(id) == PoolState::Idle {
-                // If this worker was the last active worker, it is necessary to
-                // check again whether the global queue is not populated. This
-                // could happen if the executor thread pushed a task to the
-                // global queue but could not activate a new worker because all
-                // workers were then activated.
-                if !worker.pool.global_queue.is_empty() {
-                    worker.pool.set_worker_active(id);
-                } else {
+            if worker.pool.try_set_worker_inactive(id) {
+                parker.park();
+            } else {
+                // This worker is the last active worker so it is necessary to
+                // check if the global queue is populated. This could happen if
+                // the executor thread pushed a task to the global queue but
+                // could not activate a new worker because all workers were then
+                // activated.
+                if worker.pool.global_queue.is_empty() {
+                    worker.pool.set_all_workers_inactive();
                     worker.pool.executor_unparker.unpark();
                     parker.park();
                 }
-            } else {
-                parker.park();
             }
+
             if worker.pool.termination_is_triggered() {
                 return;
             }
 
-            // We may spin for a little while: start counting.
             let mut search_start = Instant::now();
 
             // Process the tasks one by one.
@@ -388,17 +385,17 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
 
                     // There is a _very_ remote possibility that, even though
                     // the local queue is empty, it has temporarily too little
-                    // spare capacity for the bucket. This could happen because
-                    // a concurrent steal operation could be preempted for all
-                    // the time it took to pop and process the remaining tasks
-                    // and hasn't released the stolen capacity yet.
+                    // spare capacity for the bucket. This could happen if a
+                    // concurrent steal operation was preempted for all the time
+                    // it took to pop and process the remaining tasks and it
+                    // hasn't released the stolen capacity yet.
                     //
                     // Unfortunately, we cannot just skip checking the global
                     // queue altogether when there isn't enough spare capacity
-                    // in the local queue, as this could lead to a race: suppose
-                    // that (1) this thread has earlier pushed tasks onto the
-                    // global queue, and (2) the stealer has processed all
-                    // stolen tasks before this thread sees the capacity
+                    // in the local queue because this could lead to a race:
+                    // suppose that (1) this thread has earlier pushed tasks
+                    // onto the global queue, and (2) the stealer has processed
+                    // all stolen tasks before this thread sees the capacity
                     // restored and at the same time (3) the stealer does not
                     // yet see the tasks this thread pushed to the global queue;
                     // in such scenario, both this thread and the stealer thread

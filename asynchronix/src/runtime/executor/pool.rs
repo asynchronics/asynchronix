@@ -7,12 +7,13 @@ use super::injector::Injector;
 use super::rng;
 use super::{GlobalQueue, Stealer};
 
+/// A view of the thread pool shared between the executor and all workers.
 #[derive(Debug)]
 pub(crate) struct Pool {
     pub(crate) global_queue: GlobalQueue,
     pub(crate) executor_id: usize,
     pub(crate) executor_unparker: parking::Unparker,
-    state: PoolRegistry,
+    registry: PoolRegistry,
     stealers: Box<[Stealer]>,
     worker_unparkers: Box<[parking::Unparker]>,
     searching_workers: AtomicUsize,
@@ -34,7 +35,7 @@ impl Pool {
             global_queue: Injector::new(),
             executor_id,
             executor_unparker,
-            state: PoolRegistry::new(worker_unparkers.len()),
+            registry: PoolRegistry::new(worker_unparkers.len()),
             stealers: stealers.into_boxed_slice(),
             worker_unparkers,
             searching_workers: AtomicUsize::new(0),
@@ -47,45 +48,48 @@ impl Pool {
     ///
     /// Unparking the worker threads is the responsibility of the caller.
     pub(crate) fn set_all_workers_active(&self) {
-        self.state.set_all_active();
+        self.registry.set_all_active();
     }
 
-    /// Marks the specified worker as active.
+    /// Marks all pool workers as inactive.
     ///
-    /// Unparking the worker thread is the responsibility of the caller.
-    pub(crate) fn set_worker_active(&self, worker_id: usize) {
-        self.state.set_active(worker_id);
+    /// Unparking the executor threads is the responsibility of the caller.
+    pub(crate) fn set_all_workers_inactive(&self) {
+        self.registry.set_all_inactive();
     }
 
-    /// Marks the specified worker as idle.
+    /// Marks the specified worker as inactive unless it is the last active
+    /// worker.
     ///
     /// Parking the worker thread is the responsibility of the caller.
     ///
-    /// If this was the last active worker, the main executor thread is
-    /// unparked.
-    pub(crate) fn set_worker_inactive(&self, worker_id: usize) -> PoolState {
-        self.state.set_inactive(worker_id)
+    /// If this was the last active worker, `false` is returned and it is
+    /// guaranteed that all memory operations performed by threads that called
+    /// `activate_worker` will be visible.
+    pub(crate) fn try_set_worker_inactive(&self, worker_id: usize) -> bool {
+        self.registry.try_set_inactive(worker_id)
     }
 
-    /// Unparks an idle worker if any is found, or do nothing otherwise.
+    /// Unparks an idle worker if any is found and mark it as active, or do
+    /// nothing otherwise.
     ///
     /// For performance reasons, no synchronization is established if no worker
     /// is found, meaning that workers in other threads may later transition to
-    /// idle state without observing the tasks scheduled by the caller to this
-    /// method. If this is not tolerable (for instance if this method is called
-    /// from a non-worker thread), use the more expensive `activate_worker`.
+    /// idle state without observing the tasks scheduled by this caller. If this
+    /// is not tolerable (for instance if this method is called from a
+    /// non-worker thread), use the more expensive `activate_worker`.
     pub(crate) fn activate_worker_relaxed(&self) {
-        if let Some(worker_id) = self.state.set_one_active_relaxed() {
+        if let Some(worker_id) = self.registry.set_one_active_relaxed() {
             self.searching_workers.fetch_add(1, Ordering::Relaxed);
             self.worker_unparkers[worker_id].unpark();
         }
     }
 
-    /// Unparks an idle worker if any is found, or ensure that at least the last
-    /// worker to transition to idle state will observe all tasks previously
-    /// scheduled by the caller to this method.
+    /// Unparks an idle worker if any is found and mark it as active, or ensure
+    /// that at least the last active worker will observe all memory operations
+    /// performed before this call when calling `try_set_worker_inactive`.
     pub(crate) fn activate_worker(&self) {
-        if let Some(worker_id) = self.state.set_one_active() {
+        if let Some(worker_id) = self.registry.set_one_active() {
             self.searching_workers.fetch_add(1, Ordering::Relaxed);
             self.worker_unparkers[worker_id].unpark();
         }
@@ -95,8 +99,8 @@ impl Pool {
     ///
     /// If `true` is returned, it is guaranteed that all operations performed by
     /// the now-inactive workers become visible in this thread.
-    pub(crate) fn is_idle(&self) -> bool {
-        self.state.pool_state() == PoolState::Idle
+    pub(crate) fn is_pool_idle(&self) -> bool {
+        self.registry.is_idle()
     }
 
     /// Increments the count of workers actively searching for tasks.
@@ -119,7 +123,7 @@ impl Pool {
     pub(crate) fn trigger_termination(&self) {
         self.terminate_signal.store(true, Ordering::Relaxed);
 
-        self.state.set_all_active();
+        self.registry.set_all_active();
         for unparker in &*self.worker_unparkers {
             unparker.unpark();
         }
@@ -158,7 +162,7 @@ impl Pool {
         rng: &'_ rng::Rng,
     ) -> ShuffledStealers<'a> {
         // All active workers except the specified one are candidate for stealing.
-        let mut candidates = self.state.get_active();
+        let mut candidates = self.registry.get_active();
         if let Some(excluded_worker_id) = excluded_worker_id {
             candidates &= !(1 << excluded_worker_id);
         }
@@ -167,6 +171,8 @@ impl Pool {
     }
 }
 
+/// An iterator over active workers that yields their associated stealer,
+/// starting from a randomly selected worker.
 pub(crate) struct ShuffledStealers<'a> {
     stealers: &'a [Stealer],
     // A bit-rotated bit field of the remaining candidate workers to steal from.
@@ -186,8 +192,7 @@ impl<'a> ShuffledStealers<'a> {
             // Right-rotate the candidates so that the bit corresponding to the
             // randomly selected worker becomes the LSB.
             let candidate_count = stealers.len();
-            let lower_mask = (1 << next_candidate) - 1;
-            let lower_bits = candidates & lower_mask;
+            let lower_bits = candidates & ((1 << next_candidate) - 1);
             let candidates =
                 (candidates >> next_candidate) | (lower_bits << (candidate_count - next_candidate));
 
@@ -266,53 +271,66 @@ impl PoolRegistry {
             record: Record::new(pool_size),
         }
     }
-    /// Returns the state of the pool.
+
+    /// Returns whether the pool is idle, i.e. whether there are no active
+    /// workers.
     ///
-    /// This operation has Acquire semantic, which guarantees that if the pool
-    /// state returned is `PoolState::Idle`, then all operations performed by
-    /// the now-inactive workers are visible.
-    fn pool_state(&self) -> PoolState {
+    /// It is guaranteed that if `false` is returned, then all operations
+    /// performed by the now-inactive workers are visible.
+    fn is_idle(&self) -> bool {
         // Ordering: this Acquire operation synchronizes with all Release
         // RMWs in the `set_inactive` method via a release sequence.
-        let active_workers = self.active_workers.load(Ordering::Acquire);
-        if active_workers == 0 {
-            PoolState::Idle
-        } else {
-            PoolState::Busy
-        }
+        self.active_workers.load(Ordering::Acquire) == 0
     }
 
-    /// Marks the specified worker as inactive.
+    /// Marks the specified worker as inactive, unless this is the last worker.
     ///
-    /// The specified worker must currently be marked as active. Returns
-    /// `PoolState::Idle` if this was the last active thread.
-    ///
-    /// If this is the last active worker (i.e. `PoolState::Idle` is returned),
-    /// then it is guaranteed that all operations performed by the now-inactive
-    /// workers and by unsuccessful callers to `set_one_active` are now visible.
-    fn set_inactive(&self, worker_id: usize) -> PoolState {
-        // Ordering: this Release operation synchronizes with the Acquire
-        // fence in the below conditional when the pool becomes idle, and/or
+    /// The specified worker must currently be marked as active. This method
+    /// will always fail and return `false` if this was the last active worker,
+    /// because the worker is then expected to check again the global queue
+    /// before explicitly calling `set_all_inactive` to confirm that the pool is
+    /// indeed idle.
+    fn try_set_inactive(&self, worker_id: usize) -> bool {
+        // Ordering: this Release operation synchronizes with the Acquire fence
+        // in the below conditional if this is is the last active worker, and/or
         // with the Acquire state load in the `pool_state` method.
         let active_workers = self
             .active_workers
-            .fetch_and(!(1 << worker_id), Ordering::Release);
+            .fetch_update(Ordering::Release, Ordering::Relaxed, |active_workers| {
+                if active_workers == (1 << worker_id) {
+                    // It looks like this is the last worker, but the value
+                    // could be stale so it is necessary to make sure of this by
+                    // enforcing the CAS rather than returning `None`.
+                    Some(active_workers)
+                } else {
+                    Some(active_workers & !(1 << worker_id))
+                }
+            })
+            .unwrap();
 
-        if active_workers & !(1 << worker_id) == 0 {
-            // Ordering: this Acquire fence synchronizes with all Release
-            // RMWs in this and in the previous calls to `set_inactive` via a
-            // release sequence.
+        assert_ne!(active_workers & (1 << worker_id), 0);
+
+        if active_workers == (1 << worker_id) {
+            // This is the last worker so we need to ensures that after this
+            // call, all tasks pushed on the global queue before
+            // `set_one_active` was called unsuccessfully are visible.
+            //
+            // Ordering: this Acquire fence synchronizes with all Release RMWs
+            // in this and in the previous calls to `set_inactive` via a release
+            // sequence.
             atomic::fence(Ordering::Acquire);
-            PoolState::Idle
+
+            false
         } else {
-            PoolState::Busy
+            true
         }
     }
 
-    /// Marks the specified worker as active.
-    fn set_active(&self, worker_id: usize) {
-        self.active_workers
-            .fetch_or(1 << worker_id, Ordering::Relaxed);
+    /// Marks all workers as inactive.
+    fn set_all_inactive(&self) {
+        // Ordering: this Release store synchronizes with the Acquire load in
+        // `is_idle`.
+        self.active_workers.store(0, Ordering::Release);
     }
 
     /// Marks all workers as active.
@@ -359,8 +377,8 @@ impl PoolRegistry {
                 // There is apparently no free worker, so a dummy RMW with
                 // Release ordering is performed with the sole purpose of
                 // synchronizing with the Acquire fence in `set_inactive` so
-                // that the last worker to transition to idle can see the tasks
-                // that were queued prior to this call.
+                // that the last worker see the tasks that were queued prior to
+                // this call when calling (unsuccessfully) `set_inactive`..
                 let new_active_workers = self.active_workers.fetch_or(0, Ordering::Release);
                 if new_active_workers == active_workers {
                     return None;
@@ -383,12 +401,6 @@ impl PoolRegistry {
     fn get_active(&self) -> usize {
         self.active_workers.load(Ordering::Relaxed)
     }
-}
-
-#[derive(PartialEq)]
-pub(crate) enum PoolState {
-    Idle,
-    Busy,
 }
 
 #[cfg(feature = "dev-logs")]
