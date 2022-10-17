@@ -9,10 +9,10 @@ use super::{GlobalQueue, Stealer};
 
 /// A view of the thread pool shared between the executor and all workers.
 #[derive(Debug)]
-pub(crate) struct Pool {
-    pub(crate) global_queue: GlobalQueue,
-    pub(crate) executor_id: usize,
-    pub(crate) executor_unparker: parking::Unparker,
+pub(super) struct Pool {
+    pub(super) global_queue: GlobalQueue,
+    pub(super) executor_id: usize,
+    pub(super) executor_unparker: parking::Unparker,
     registry: PoolRegistry,
     stealers: Box<[Stealer]>,
     worker_unparkers: Box<[parking::Unparker]>,
@@ -23,7 +23,7 @@ pub(crate) struct Pool {
 
 impl Pool {
     /// Creates a new pool.
-    pub(crate) fn new(
+    pub(super) fn new(
         executor_id: usize,
         executor_unparker: parking::Unparker,
         shared_data: impl Iterator<Item = (Stealer, parking::Unparker)>,
@@ -47,14 +47,14 @@ impl Pool {
     /// Marks all pool workers as active.
     ///
     /// Unparking the worker threads is the responsibility of the caller.
-    pub(crate) fn set_all_workers_active(&self) {
+    pub(super) fn set_all_workers_active(&self) {
         self.registry.set_all_active();
     }
 
     /// Marks all pool workers as inactive.
     ///
     /// Unparking the executor threads is the responsibility of the caller.
-    pub(crate) fn set_all_workers_inactive(&self) {
+    pub(super) fn set_all_workers_inactive(&self) {
         self.registry.set_all_inactive();
     }
 
@@ -66,7 +66,7 @@ impl Pool {
     /// If this was the last active worker, `false` is returned and it is
     /// guaranteed that all memory operations performed by threads that called
     /// `activate_worker` will be visible.
-    pub(crate) fn try_set_worker_inactive(&self, worker_id: usize) -> bool {
+    pub(super) fn try_set_worker_inactive(&self, worker_id: usize) -> bool {
         self.registry.try_set_inactive(worker_id)
     }
 
@@ -78,7 +78,7 @@ impl Pool {
     /// idle state without observing the tasks scheduled by this caller. If this
     /// is not tolerable (for instance if this method is called from a
     /// non-worker thread), use the more expensive `activate_worker`.
-    pub(crate) fn activate_worker_relaxed(&self) {
+    pub(super) fn activate_worker_relaxed(&self) {
         if let Some(worker_id) = self.registry.set_one_active_relaxed() {
             self.searching_workers.fetch_add(1, Ordering::Relaxed);
             self.worker_unparkers[worker_id].unpark();
@@ -88,7 +88,7 @@ impl Pool {
     /// Unparks an idle worker if any is found and mark it as active, or ensure
     /// that at least the last active worker will observe all memory operations
     /// performed before this call when calling `try_set_worker_inactive`.
-    pub(crate) fn activate_worker(&self) {
+    pub(super) fn activate_worker(&self) {
         if let Some(worker_id) = self.registry.set_one_active() {
             self.searching_workers.fetch_add(1, Ordering::Relaxed);
             self.worker_unparkers[worker_id].unpark();
@@ -99,28 +99,28 @@ impl Pool {
     ///
     /// If `true` is returned, it is guaranteed that all operations performed by
     /// the now-inactive workers become visible in this thread.
-    pub(crate) fn is_pool_idle(&self) -> bool {
+    pub(super) fn is_pool_idle(&self) -> bool {
         self.registry.is_idle()
     }
 
     /// Increments the count of workers actively searching for tasks.
-    pub(crate) fn begin_worker_search(&self) {
+    pub(super) fn begin_worker_search(&self) {
         self.searching_workers.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Decrements the count of workers actively searching for tasks.
-    pub(crate) fn end_worker_search(&self) {
+    pub(super) fn end_worker_search(&self) {
         self.searching_workers.fetch_sub(1, Ordering::Relaxed);
     }
 
     /// Returns the count of workers actively searching for tasks.
-    pub(crate) fn searching_worker_count(&self) -> usize {
+    pub(super) fn searching_worker_count(&self) -> usize {
         self.searching_workers.load(Ordering::Relaxed)
     }
 
     /// Triggers the termination signal and unparks all worker threads so they
     /// can cleanly terminate.
-    pub(crate) fn trigger_termination(&self) {
+    pub(super) fn trigger_termination(&self) {
         self.terminate_signal.store(true, Ordering::Relaxed);
 
         self.registry.set_all_active();
@@ -130,7 +130,7 @@ impl Pool {
     }
 
     /// Returns true if the termination signal was triggered.
-    pub(crate) fn termination_is_triggered(&self) -> bool {
+    pub(super) fn termination_is_triggered(&self) -> bool {
         self.terminate_signal.load(Ordering::Relaxed)
     }
 
@@ -139,7 +139,7 @@ impl Pool {
     /// If no panic is currently registered, the panic in argument is
     /// registered. If a panic was already registered by a worker and was not
     /// yet processed by the executor, then nothing is done.
-    pub(crate) fn register_panic(&self, panic: Box<dyn Any + Send + 'static>) {
+    pub(super) fn register_panic(&self, panic: Box<dyn Any + Send + 'static>) {
         let mut worker_panic = self.worker_panic.lock().unwrap();
         if worker_panic.is_none() {
             *worker_panic = Some(panic);
@@ -147,7 +147,7 @@ impl Pool {
     }
 
     /// Takes a worker panic if any is registered.
-    pub(crate) fn take_panic(&self) -> Option<Box<dyn Any + Send + 'static>> {
+    pub(super) fn take_panic(&self) -> Option<Box<dyn Any + Send + 'static>> {
         let mut worker_panic = self.worker_panic.lock().unwrap();
         worker_panic.take()
     }
@@ -156,7 +156,7 @@ impl Pool {
     /// workers, starting from a randomly selected active worker. The worker
     /// which ID is provided in argument (if any) is excluded from the pool of
     /// candidates.
-    pub(crate) fn shuffled_stealers<'a>(
+    pub(super) fn shuffled_stealers<'a>(
         &'a self,
         excluded_worker_id: Option<usize>,
         rng: &'_ rng::Rng,
@@ -173,7 +173,7 @@ impl Pool {
 
 /// An iterator over active workers that yields their associated stealer,
 /// starting from a randomly selected worker.
-pub(crate) struct ShuffledStealers<'a> {
+pub(super) struct ShuffledStealers<'a> {
     stealers: &'a [Stealer],
     // A bit-rotated bit field of the remaining candidate workers to steal from.
     // If set, the LSB represents the next candidate.

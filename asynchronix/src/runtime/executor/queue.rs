@@ -12,7 +12,7 @@ use crate::loom_exports::cell::UnsafeCell;
 use crate::loom_exports::sync::atomic::{AtomicU32, AtomicU64};
 use crate::loom_exports::{debug_or_loom_assert, debug_or_loom_assert_eq};
 
-pub(crate) use buffers::*;
+pub(super) use buffers::*;
 
 mod buffers;
 #[cfg(test)]
@@ -180,13 +180,13 @@ impl<T, B: Buffer<T>> Drop for Queue<T, B> {
 
 /// Handle for single-threaded FIFO push and pop operations.
 #[derive(Debug)]
-pub(crate) struct Worker<T, B: Buffer<T>> {
+pub(super) struct Worker<T, B: Buffer<T>> {
     queue: Arc<Queue<T, B>>,
 }
 
 impl<T, B: Buffer<T>> Worker<T, B> {
     /// Creates a new queue and returns a `Worker` handle.
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         let queue = Arc::new(Queue {
             heads: CachePadded::new(AtomicU64::new(0)),
             tail: CachePadded::new(AtomicU32::new(0)),
@@ -201,7 +201,7 @@ impl<T, B: Buffer<T>> Worker<T, B> {
     ///
     /// An arbitrary number of `Stealer` handles can be created, either using
     /// this method or cloning an existing `Stealer` handle.
-    pub(crate) fn stealer(&self) -> Stealer<T, B> {
+    pub(super) fn stealer(&self) -> Stealer<T, B> {
         Stealer {
             queue: self.queue.clone(),
         }
@@ -212,7 +212,7 @@ impl<T, B: Buffer<T>> Worker<T, B> {
     ///
     /// Note that that the spare capacity may be underestimated due to
     /// concurrent stealing operations.
-    pub(crate) fn spare_capacity(&self) -> usize {
+    pub(super) fn spare_capacity(&self) -> usize {
         let capacity = <B as Buffer<T>>::CAPACITY;
         let stealer_head = unpack_heads(self.queue.heads.load(Relaxed)).1;
         let tail = self.queue.tail.load(Relaxed);
@@ -230,7 +230,7 @@ impl<T, B: Buffer<T>> Worker<T, B> {
     ///
     /// This will fail if the queue is full, in which case the item is returned
     /// as the error field.
-    pub(crate) fn push(&self, item: T) -> Result<(), T> {
+    pub(super) fn push(&self, item: T) -> Result<(), T> {
         let stealer_head = unpack_heads(self.queue.heads.load(Acquire)).1;
         let tail = self.queue.tail.load(Relaxed);
 
@@ -258,7 +258,7 @@ impl<T, B: Buffer<T>> Worker<T, B> {
     /// spare capacity to accommodate all iterator items, for instance by
     /// calling `[Worker::spare_capacity]` beforehand. Otherwise, the iterator
     /// is dropped while still holding the items in excess.
-    pub(crate) fn extend<I: IntoIterator<Item = T>>(&self, iter: I) {
+    pub(super) fn extend<I: IntoIterator<Item = T>>(&self, iter: I) {
         let stealer_head = unpack_heads(self.queue.heads.load(Acquire)).1;
         let mut tail = self.queue.tail.load(Relaxed);
 
@@ -284,7 +284,7 @@ impl<T, B: Buffer<T>> Worker<T, B> {
     /// Attempts to pop one item from the head of the queue.
     ///
     /// This returns None if the queue is empty.
-    pub(crate) fn pop(&self) -> Option<T> {
+    pub(super) fn pop(&self) -> Option<T> {
         let mut heads = self.queue.heads.load(Acquire);
 
         let prev_worker_head = loop {
@@ -343,7 +343,7 @@ impl<T, B: Buffer<T>> Worker<T, B> {
     /// An error is returned in the following cases:
     /// 1) no item was stolen, either because the queue is empty or `N` is 0,
     /// 2) a concurrent stealing operation is ongoing.
-    pub(crate) fn drain<C>(&self, count_fn: C) -> Result<Drain<'_, T, B>, StealError>
+    pub(super) fn drain<C>(&self, count_fn: C) -> Result<Drain<'_, T, B>, StealError>
     where
         C: FnMut(usize) -> usize,
     {
@@ -373,7 +373,7 @@ unsafe impl<T: Send, B: Buffer<T>> Send for Worker<T, B> {}
 /// This iterator is created by [`Worker::drain`]. See its documentation for
 /// more.
 #[derive(Debug)]
-pub(crate) struct Drain<'a, T, B: Buffer<T>> {
+pub(super) struct Drain<'a, T, B: Buffer<T>> {
     queue: &'a Queue<T, B>,
     head: u32,
     from_head: u32,
@@ -448,7 +448,7 @@ unsafe impl<'a, T: Send, B: Buffer<T>> Sync for Drain<'a, T, B> {}
 
 /// Handle for multi-threaded stealing operations.
 #[derive(Debug)]
-pub(crate) struct Stealer<T, B: Buffer<T>> {
+pub(super) struct Stealer<T, B: Buffer<T>> {
     queue: Arc<Queue<T, B>>,
 }
 
@@ -474,7 +474,7 @@ impl<T, B: Buffer<T>> Stealer<T, B> {
     /// an error as long as one element could be returned directly. This can
     /// occur if the destination queue is full, if the source queue has only one
     /// item or if `N` is 1.
-    pub(crate) fn steal_and_pop<C, BDest>(
+    pub(super) fn steal_and_pop<C, BDest>(
         &self,
         dest: &Worker<T, BDest>,
         count_fn: C,
@@ -557,7 +557,7 @@ unsafe impl<T: Send, B: Buffer<T>> Sync for Stealer<T, B> {}
 
 /// Error returned when stealing is unsuccessful.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum StealError {
+pub(super) enum StealError {
     /// No item was stolen.
     Empty,
     /// Another concurrent stealing operation is ongoing.
