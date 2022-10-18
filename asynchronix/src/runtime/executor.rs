@@ -49,7 +49,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use parking::Parker;
+use crossbeam_utils::sync::{Parker, Unparker};
 use slab::Slab;
 
 mod find_bit;
@@ -86,7 +86,7 @@ pub(crate) struct Executor {
     /// List of tasks that have not completed yet.
     active_tasks: Arc<Mutex<Slab<CancelToken>>>,
     /// Parker for the main executor thread.
-    parker: parking::Parker,
+    parker: Parker,
     /// Join handles of the worker threads.
     worker_handles: Vec<JoinHandle<()>>,
 }
@@ -96,11 +96,13 @@ impl Executor {
     ///
     /// The maximum number of threads is set with the `num_threads` parameter.
     pub(crate) fn new(num_threads: usize) -> Self {
-        let (parker, unparker) = parking::pair();
+        let parker = Parker::new();
+        let unparker = parker.unparker().clone();
 
         let (local_data, shared_data): (Vec<_>, Vec<_>) = (0..num_threads)
             .map(|_| {
-                let (parker, unparker) = parking::pair();
+                let parker = Parker::new();
+                let unparker = parker.unparker().clone();
                 let local_queue = LocalQueue::new();
                 let stealer = local_queue.stealer();
 
@@ -282,7 +284,7 @@ struct ExecutorContext {
     /// Unique executor ID inherited by all tasks spawned on this executor instance.
     executor_id: usize,
     /// Unparker for the main executor thread.
-    executor_unparker: parking::Unparker,
+    executor_unparker: Unparker,
     /// Manager for all worker threads.
     pool_manager: PoolManager,
 }
@@ -291,8 +293,8 @@ impl ExecutorContext {
     /// Creates a new shared executor context.
     pub(super) fn new(
         executor_id: usize,
-        executor_unparker: parking::Unparker,
-        shared_data: impl Iterator<Item = (Stealer, parking::Unparker)>,
+        executor_unparker: Unparker,
+        shared_data: impl Iterator<Item = (Stealer, Unparker)>,
     ) -> Self {
         let (stealers, worker_unparkers): (Vec<_>, Vec<_>) = shared_data.into_iter().unzip();
         let worker_unparkers = worker_unparkers.into_boxed_slice();

@@ -20,7 +20,7 @@ dev-hooks = []
 dev-logs = []
 
 [dependencies]
-parking = "2.0"
+crossbeam-utils = "0.8"
 slab = "0.4"
 cache-padded = "1.1"
 num_cpus = "1.13"

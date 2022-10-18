@@ -2,6 +2,8 @@ use std::any::Any;
 use std::sync::atomic::{self, AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
+use crossbeam_utils::sync::Unparker;
+
 use super::find_bit;
 use super::rng;
 use super::Stealer;
@@ -16,7 +18,7 @@ pub(super) struct PoolManager {
     /// List of the stealers associated to each worker thread.
     stealers: Box<[Stealer]>,
     /// List of the thread unparkers associated to each worker thread.
-    worker_unparkers: Box<[parking::Unparker]>,
+    worker_unparkers: Box<[Unparker]>,
     /// Bit field of all workers that are currently unparked.
     active_workers: AtomicUsize,
     /// Count of all workers currently searching for tasks.
@@ -40,7 +42,7 @@ impl PoolManager {
     pub(super) fn new(
         pool_size: usize,
         stealers: Box<[Stealer]>,
-        worker_unparkers: Box<[parking::Unparker]>,
+        worker_unparkers: Box<[Unparker]>,
     ) -> Self {
         assert!(
             pool_size >= 1,
