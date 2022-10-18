@@ -11,21 +11,29 @@ use super::Stealer;
 /// The manager currently only supports up to `usize::BITS` threads.
 #[derive(Debug)]
 pub(super) struct PoolManager {
+    /// Number of worker threads.
     pool_size: usize,
+    /// List of the stealers associated to each worker thread.
     stealers: Box<[Stealer]>,
+    /// List of the thread unparkers associated to each worker thread.
     worker_unparkers: Box<[parking::Unparker]>,
+    /// Bit field of all workers that are currently unparked.
     active_workers: AtomicUsize,
+    /// Count of all workers currently searching for tasks.
     searching_workers: AtomicUsize,
+    /// Flag requesting all workers to return immediately.
     terminate_signal: AtomicBool,
+    /// Panic caught in a worker thread.
     worker_panic: Mutex<Option<Box<dyn Any + Send + 'static>>>,
     #[cfg(feature = "dev-logs")]
+    /// Thread wake-up statistics.
     record: Record,
 }
 
 impl PoolManager {
     /// Creates a new pool manager.
     ///
-    /// #Panic
+    /// # Panics
     ///
     /// This will panic if the specified pool size is zero or is more than
     /// `usize::BITS`.
@@ -91,13 +99,12 @@ impl PoolManager {
         let mut active_workers = self.active_workers.load(Ordering::Relaxed);
         loop {
             let first_idle_worker = active_workers.trailing_ones() as usize;
-
             if first_idle_worker >= self.pool_size {
                 // There is apparently no free worker, so a dummy RMW with
                 // Release ordering is performed with the sole purpose of
                 // synchronizing with the Acquire fence in `set_inactive` so
-                // that the last worker see the tasks that were queued prior to
-                // this call when calling (unsuccessfully) `set_inactive`..
+                // that the last worker sees the tasks that were queued prior to
+                // this call to `activate_worker`.
                 let new_active_workers = self.active_workers.fetch_or(0, Ordering::Release);
                 if new_active_workers == active_workers {
                     return;
@@ -125,8 +132,9 @@ impl PoolManager {
     /// If this was the last active worker, `false` is returned and it is
     /// guaranteed that all memory operations performed by threads that called
     /// `activate_worker` will be visible. The worker is in such case expected
-    /// to check again the injector queue before explicitly calling
-    /// `set_all_workers_inactive` to confirm that the pool is indeed idle.
+    /// to check again the injector queue and then to explicitly call
+    /// `set_all_workers_inactive` if it can confirm that the injector queue is
+    /// empty.
     pub(super) fn try_set_worker_inactive(&self, worker_id: usize) -> bool {
         // Ordering: this Release operation synchronizes with the Acquire fence
         // in the below conditional if this is is the last active worker, and/or
@@ -176,7 +184,8 @@ impl PoolManager {
 
     /// Marks all pool workers as inactive.
     ///
-    /// Unparking the executor threads is the responsibility of the caller.
+    /// This should only be called by the last active worker. Unparking the
+    /// executor threads is the responsibility of the caller.
     pub(super) fn set_all_workers_inactive(&self) {
         // Ordering: this Release store synchronizes with the Acquire load in
         // `is_idle`.
@@ -187,7 +196,7 @@ impl PoolManager {
     ///
     /// If `true` is returned, it is guaranteed that all operations performed by
     /// the now-inactive workers become visible in this thread.
-    pub(super) fn is_pool_idle(&self) -> bool {
+    pub(super) fn pool_is_idle(&self) -> bool {
         // Ordering: this Acquire operation synchronizes with all Release
         // RMWs in the `set_worker_inactive` method via a release sequence.
         self.active_workers.load(Ordering::Acquire) == 0
@@ -278,6 +287,8 @@ pub(super) struct ShuffledStealers<'a> {
     next_candidate: usize, // index of the next candidate
 }
 impl<'a> ShuffledStealers<'a> {
+    /// A new `ShuffledStealer` iterator initialized at a randomly selected
+    /// active worker.
     fn new(candidates: usize, stealers: &'a [Stealer], rng: &'_ rng::Rng) -> Self {
         let (candidates, next_candidate) = if candidates == 0 {
             (0, 0)

@@ -28,14 +28,16 @@ use std::{mem, vec};
 /// queue and this bucket is only moved to the back of the queue when full.
 #[derive(Debug)]
 pub(crate) struct Injector<T, const BUCKET_CAPACITY: usize> {
+    /// A mutex-protected list of tasks.
     inner: Mutex<Vec<Bucket<T, BUCKET_CAPACITY>>>,
+    /// A flag indicating whether the injector queue is empty.
     is_empty: AtomicBool,
 }
 
 impl<T, const BUCKET_CAPACITY: usize> Injector<T, BUCKET_CAPACITY> {
     /// Creates an empty injector queue.
     ///
-    /// # Panic
+    /// # Panics
     ///
     /// Panics if the capacity is 0.
     pub(crate) const fn new() -> Self {
@@ -105,13 +107,16 @@ impl<T, const BUCKET_CAPACITY: usize> Injector<T, BUCKET_CAPACITY> {
     ///
     /// This is not an issue in practice because it cannot lead to executor
     /// deadlock. Indeed, if the last task/bucket was inserted by a worker
-    /// thread, this worker thread will always see that the injector queue is
-    /// populated (unless the bucket was already popped) so if all workers exit,
-    /// then all tasks they have re-injected will necessarily have been
-    /// processed. Likewise, if the last task/bucket was inserted by the main
-    /// executor thread before `Executor::run()` is called, the synchronization
-    /// established when the executor unparks worker threads ensures that the
-    /// task is visible to all unparked workers.
+    /// thread, that worker thread will always see that the injector queue is
+    /// populated (unless the bucket was already popped). Therefore, if all
+    /// workers exit, then all tasks they have re-injected will necessarily have
+    /// been processed. Likewise, if the last task/bucket was inserted by the
+    /// main executor thread before `Executor::run()` is called, the
+    /// synchronization established when the executor unparks worker threads
+    /// ensures that the task is visible to all unparked workers (there is
+    /// actually an edge case when the executor cannot unpark a thread after
+    /// pushing tasks, but this is taken care of by some extra synchronization
+    /// when deactivating workers).
     pub(crate) fn pop_bucket(&self) -> Option<Bucket<T, BUCKET_CAPACITY>> {
         // Ordering: this flag is only used as a hint so Relaxed ordering is
         // sufficient.

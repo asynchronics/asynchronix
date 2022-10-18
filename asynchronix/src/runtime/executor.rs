@@ -1,3 +1,47 @@
+//! Multi-threaded `async` executor.
+//!
+//! The executor is exclusively designed for message-passing computational
+//! tasks. As such, it does not include an I/O reactor and does not consider
+//! fairness as a goal in itself. While it does use fair local queues inasmuch
+//! as these tend to perform better in message-passing applications, it uses an
+//! unfair injection queue and a LIFO slot without attempt to mitigate the
+//! effect of badly behaving code (e.g. futures that spin-lock by yielding to
+//! the executor; there is for this reason no support for something like tokio's
+//! `yield_now`).
+//!
+//! Another way in which it differs from other `async` executors is that it
+//! treats deadlocking as a normal occurrence. This is because in a
+//! discrete-time simulator, the simulation of a system at a given time step
+//! will make as much progress as possible until it technically reaches a
+//! deadlock. Only then does the simulator advance the simulated time until the
+//! next "event" extracted from a time-sorted priority queue.
+//!
+//! The design of the executor is largely influenced by the tokio and go
+//! schedulers, both of which are optimized for message-passing applications. In
+//! particular, it uses fast, fixed-size thread-local work-stealing queues with
+//! a non-stealable LIFO slot in combination with an injector queue, which
+//! injector queue is used both to schedule new tasks and to absorb temporary
+//! overflow in the local queues.
+//!
+//! The design of the injector queue is kept very simple compared to tokio, by
+//! taking advantage of the fact that the injector is not required to be either
+//! LIFO or FIFO. Moving tasks between a local queue and the injector is fast
+//! because tasks are moved in batch and are stored contiguously in memory.
+//!
+//! Another difference with tokio is that, at the moment, the complete subset of
+//! active worker threads is stored in a single atomic variable. This makes it
+//! possible to rapidly identify free worker threads for stealing operations,
+//! with the downside that the maximum number of worker threads is currently
+//! limited to `usize::BITS`. This is unlikely to constitute a limitation in
+//! practice though since system simulation is not typically embarrassingly
+//! parallel.
+//!
+//! Probably the largest difference with tokio is the task system, which has
+//! better throughput due to less need for synchronization. This mainly results
+//! from the use of an atomic notification counter rather than an atomic
+//! notification flag, thus alleviating the need to reset the notification flag
+//! before polling a future.
+
 use std::future::Future;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -35,54 +79,16 @@ scoped_thread_local!(static ACTIVE_TASKS: Mutex<Slab<CancelToken>>);
 static NEXT_EXECUTOR_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// A multi-threaded `async` executor.
-///
-/// The executor is exclusively designed for message-passing computational
-/// tasks. As such, it does not include an I/O reactor and does not consider
-/// fairness as a goal in itself. While it does use fair local queues inasmuch
-/// as these tend to perform better in message-passing applications, it uses an
-/// unfair injection queue and a LIFO slot without attempt to mitigate the
-/// effect of badly behaving code (e.g. futures that spin-lock by yielding to
-/// the executor; there is for this reason no support for something like tokio's
-/// `yield_now`).
-///
-/// Another way in which it differs from other `async` executors is that it
-/// treats deadlocking as a normal occurrence. This is because in a
-/// discrete-time simulator, the simulation of a system at a given time step
-/// will make as much progress as possible until it technically reaches a
-/// deadlock. Only then does the simulator advance the simulated time until the
-/// next "event" extracted from a time-sorted priority queue.
-///
-/// The design of the executor is largely influenced by the tokio and go
-/// schedulers, both of which are optimized for message-passing applications. In
-/// particular, it uses fast, fixed-size thread-local work-stealing queues with
-/// a non-stealable LIFO slot in combination with an injector queue, which
-/// injector queue is used both to schedule new tasks and to absorb temporary
-/// overflow in the local queues.
-///
-/// The design of the injector queue is kept very simple compared to tokio, by
-/// taking advantage of the fact that the injector is not required to be either
-/// LIFO or FIFO. Moving tasks between a local queue and the injector is fast
-/// because tasks are moved in batch and are stored contiguously in memory.
-///
-/// Another difference with tokio is that, at the moment, the complete subset of
-/// active worker threads is stored in a single atomic variable. This makes it
-/// possible to rapidly identify free worker threads for stealing operations,
-/// with the downside that the maximum number of worker threads is currently
-/// limited to `usize::BITS`. This is unlikely to constitute a limitation in
-/// practice though since system simulation is not typically embarrassingly
-/// parallel.
-///
-/// Probably the largest difference with tokio is the task system, which has
-/// better throughput due to less need for synchronization. This mainly results
-/// from the use of an atomic notification counter rather than an atomic
-/// notification flag, thus alleviating the need to reset the notification flag
-/// before polling a future.
 #[derive(Debug)]
 pub(crate) struct Executor {
+    /// Shared executor data.
     context: Arc<ExecutorContext>,
+    /// List of tasks that have not completed yet.
     active_tasks: Arc<Mutex<Slab<CancelToken>>>,
+    /// Parker for the main executor thread.
     parker: parking::Parker,
-    join_handles: Vec<JoinHandle<()>>,
+    /// Join handles of the worker threads.
+    worker_handles: Vec<JoinHandle<()>>,
 }
 
 impl Executor {
@@ -124,7 +130,7 @@ impl Executor {
         context.pool_manager.set_all_workers_active();
 
         // Spawn all worker threads.
-        let join_handles: Vec<_> = local_data
+        let worker_handles: Vec<_> = local_data
             .into_iter()
             .enumerate()
             .into_iter()
@@ -149,13 +155,13 @@ impl Executor {
 
         // Wait until all workers are blocked on the signal barrier.
         parker.park();
-        assert!(context.pool_manager.is_pool_idle());
+        assert!(context.pool_manager.pool_is_idle());
 
         Self {
             context,
             active_tasks,
             parker,
-            join_handles,
+            worker_handles,
         }
     }
 
@@ -218,7 +224,7 @@ impl Executor {
             if let Some(worker_panic) = self.context.pool_manager.take_panic() {
                 panic::resume_unwind(worker_panic);
             }
-            if self.context.pool_manager.is_pool_idle() {
+            if self.context.pool_manager.pool_is_idle() {
                 return;
             }
 
@@ -231,8 +237,8 @@ impl Drop for Executor {
     fn drop(&mut self) {
         // Force all threads to return.
         self.context.pool_manager.trigger_termination();
-        for join_handle in self.join_handles.drain(0..) {
-            join_handle.join().unwrap();
+        for handle in self.worker_handles.drain(0..) {
+            handle.join().unwrap();
         }
 
         // Drop all tasks that have not completed.
@@ -267,11 +273,17 @@ impl Drop for Executor {
 }
 
 /// Shared executor context.
+///
+/// This contains all executor resources that can be shared between threads.
 #[derive(Debug)]
 struct ExecutorContext {
+    /// Injector queue.
     injector: Injector,
+    /// Unique executor ID inherited by all tasks spawned on this executor instance.
     executor_id: usize,
+    /// Unparker for the main executor thread.
     executor_unparker: parking::Unparker,
+    /// Manager for all worker threads.
     pool_manager: PoolManager,
 }
 
@@ -298,13 +310,15 @@ impl ExecutorContext {
     }
 }
 
-// A `Future` wrapper that removes its cancellation token from the executor's
-// list of active tasks when dropped.
+/// A `Future` wrapper that removes its cancellation token from the list of
+/// active tasks when dropped.
 struct CancellableFuture<T: Future> {
     inner: T,
     cancellation_key: usize,
 }
+
 impl<T: Future> CancellableFuture<T> {
+    /// Creates a new `CancellableFuture`.
     fn new(fut: T, cancellation_key: usize) -> Self {
         Self {
             inner: fut,
@@ -312,6 +326,7 @@ impl<T: Future> CancellableFuture<T> {
         }
     }
 }
+
 impl<T: Future> Future for CancellableFuture<T> {
     type Output = T::Output;
 
@@ -323,6 +338,7 @@ impl<T: Future> Future for CancellableFuture<T> {
         unsafe { self.map_unchecked_mut(|s| &mut s.inner).poll(cx) }
     }
 }
+
 impl<T: Future> Drop for CancellableFuture<T> {
     fn drop(&mut self) {
         // Remove the task from the list of active tasks if the future is
@@ -341,7 +357,13 @@ impl<T: Future> Drop for CancellableFuture<T> {
     }
 }
 
-// Schedules a `Runnable`.
+/// Schedules a `Runnable` from within a worker thread.
+///
+/// # Panics
+///
+/// This function will panic if called from a non-worker thread or if called
+/// from the worker thread of another executor instance than the one the task
+/// for this `Runnable` was spawned on.
 fn schedule_task(task: Runnable, executor_id: usize) {
     LOCAL_WORKER
         .map(|worker| {
@@ -393,6 +415,8 @@ fn schedule_task(task: Runnable, executor_id: usize) {
 
 /// Processes all incoming tasks on a worker thread until the `Terminate` signal
 /// is received or until it panics.
+///
+/// Panics caught in this thread are relayed to the main executor thread.
 fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
     let pool_manager = &worker.executor_context.pool_manager;
     let injector = &worker.executor_context.injector;
@@ -428,7 +452,6 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
                 // No need to call `begin_worker_search()`: this was done by the
                 // thread that unparked the worker.
             } else {
-                // There are tasks in the injector: resume the search.
                 pool_manager.begin_worker_search();
             }
 

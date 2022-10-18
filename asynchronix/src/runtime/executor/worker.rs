@@ -19,7 +19,7 @@ impl Worker {
         Self {
             local_queue,
             fast_slot: Cell::new(None),
-            executor_context: executor_context,
+            executor_context,
         }
     }
 }
