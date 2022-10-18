@@ -77,7 +77,7 @@ impl<T, const BUCKET_CAPACITY: usize> Injector<T, BUCKET_CAPACITY> {
         inner.push(new_bucket);
 
         // Ordering: this flag is only used as a hint so Relaxed ordering is
-        // enough.
+        // sufficient.
         self.is_empty.store(false, Ordering::Relaxed);
     }
 
@@ -91,7 +91,7 @@ impl<T, const BUCKET_CAPACITY: usize> Injector<T, BUCKET_CAPACITY> {
         // If the queue was empty before, update the flag.
         if was_empty {
             // Ordering: this flag is only used as a hint so Relaxed ordering is
-            // enough.
+            // sufficient.
             self.is_empty.store(false, Ordering::Relaxed);
         }
     }
@@ -106,15 +106,15 @@ impl<T, const BUCKET_CAPACITY: usize> Injector<T, BUCKET_CAPACITY> {
     /// This is not an issue in practice because it cannot lead to executor
     /// deadlock. Indeed, if the last task/bucket was inserted by a worker
     /// thread, this worker thread will always see that the injector queue is
-    /// populated (unless the bucket was already popped) so it will never exit
-    /// before all tasks in the injector are processed. Likewise, if the last
-    /// task/bucket was inserted by the main executor thread before
-    /// `Executor::run()` is called, the synchronization established when the
-    /// executor unparks worker threads ensures that the task is visible to all
-    /// unparked workers.
+    /// populated (unless the bucket was already popped) so if all workers exit,
+    /// then all tasks they have re-injected will necessarily have been
+    /// processed. Likewise, if the last task/bucket was inserted by the main
+    /// executor thread before `Executor::run()` is called, the synchronization
+    /// established when the executor unparks worker threads ensures that the
+    /// task is visible to all unparked workers.
     pub(crate) fn pop_bucket(&self) -> Option<Bucket<T, BUCKET_CAPACITY>> {
         // Ordering: this flag is only used as a hint so Relaxed ordering is
-        // enough.
+        // sufficient.
         if self.is_empty.load(Ordering::Relaxed) {
             return None;
         }
@@ -125,7 +125,7 @@ impl<T, const BUCKET_CAPACITY: usize> Injector<T, BUCKET_CAPACITY> {
 
         if inner.is_empty() {
             // Ordering: this flag is only used as a hint so Relaxed ordering is
-            // enough.
+            // sufficient.
             self.is_empty.store(true, Ordering::Relaxed);
         }
 

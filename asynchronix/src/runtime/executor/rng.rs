@@ -2,7 +2,7 @@ use std::cell::Cell;
 
 /// A pseudo-random number generator based on Wang Yi's Wyrand.
 ///
-/// See: https://github.com/wangyi-fudan/wyhash
+/// See: <https://github.com/wangyi-fudan/wyhash>
 #[derive(Clone, Debug)]
 pub(crate) struct Rng {
     seed: Cell<u64>,

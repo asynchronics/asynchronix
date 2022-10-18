@@ -10,7 +10,7 @@ use slab::Slab;
 
 mod find_bit;
 mod injector;
-mod pool;
+mod pool_manager;
 mod queue;
 mod rng;
 mod task;
@@ -19,14 +19,14 @@ mod worker;
 #[cfg(all(test, not(asynchronix_loom)))]
 mod tests;
 
-use self::pool::Pool;
+use self::pool_manager::PoolManager;
 use self::rng::Rng;
 use self::task::{CancelToken, Promise, Runnable};
 use self::worker::Worker;
 use crate::macros::scoped_local_key::scoped_thread_local;
 
 type Bucket = injector::Bucket<Runnable, 128>;
-type GlobalQueue = injector::Injector<Runnable, 128>;
+type Injector = injector::Injector<Runnable, 128>;
 type LocalQueue = queue::Worker<Runnable, queue::B256>;
 type Stealer = queue::Stealer<Runnable, queue::B256>;
 
@@ -55,23 +55,31 @@ static NEXT_EXECUTOR_ID: AtomicUsize = AtomicUsize::new(0);
 /// The design of the executor is largely influenced by the tokio and go
 /// schedulers, both of which are optimized for message-passing applications. In
 /// particular, it uses fast, fixed-size thread-local work-stealing queues with
-/// a "fast" non-stealable slot in combination with a global injector queue. The
+/// a non-stealable LIFO slot in combination with an injector queue, which
 /// injector queue is used both to schedule new tasks and to absorb temporary
-/// overflow in the local queues. The design of the injector queue is kept very
-/// simple by taking advantage of the fact that the injector is not required to
-/// be either LIFO or FIFO.
+/// overflow in the local queues.
 ///
-/// Probably the largest difference with tokio is the task system, which
-/// achieves a higher throughput by reducing the need for synchronization.
-/// Another difference is that, at the moment, the complete subset of active
-/// worker threads is stored in a single atomic variable. This makes it possible
-/// to rapidly identify free worker threads for stealing operations. The
-/// downside of this approach is that the maximum number of worker threads is
-/// limited to `usize::BITS`, but this is unlikely to constitute a limitation
-/// since system simulation is not typically embarrassingly parallel.
+/// The design of the injector queue is kept very simple compared to tokio, by
+/// taking advantage of the fact that the injector is not required to be either
+/// LIFO or FIFO. Moving tasks between a local queue and the injector is fast
+/// because tasks are moved in batch and are stored contiguously in memory.
+///
+/// Another difference with tokio is that, at the moment, the complete subset of
+/// active worker threads is stored in a single atomic variable. This makes it
+/// possible to rapidly identify free worker threads for stealing operations,
+/// with the downside that the maximum number of worker threads is currently
+/// limited to `usize::BITS`. This is unlikely to constitute a limitation in
+/// practice though since system simulation is not typically embarrassingly
+/// parallel.
+///
+/// Probably the largest difference with tokio is the task system, which has
+/// better throughput due to less need for synchronization. This mainly results
+/// from the use of an atomic notification counter rather than an atomic
+/// notification flag, thus alleviating the need to reset the notification flag
+/// before polling a future.
 #[derive(Debug)]
 pub(crate) struct Executor {
-    pool: Arc<Pool>,
+    context: Arc<ExecutorContext>,
     active_tasks: Arc<Mutex<Slab<CancelToken>>>,
     parker: parking::Parker,
     join_handles: Vec<JoinHandle<()>>,
@@ -103,13 +111,17 @@ impl Executor {
             usize::MAX / 2
         );
 
-        let pool = Arc::new(Pool::new(executor_id, unparker, shared_data.into_iter()));
+        let context = Arc::new(ExecutorContext::new(
+            executor_id,
+            unparker,
+            shared_data.into_iter(),
+        ));
         let active_tasks = Arc::new(Mutex::new(Slab::new()));
 
         // All workers must be marked as active _before_ spawning the threads to
         // make sure that the count of active workers does not fall to zero
         // before all workers are blocked on the signal barrier.
-        pool.set_all_workers_active();
+        context.pool_manager.set_all_workers_active();
 
         // Spawn all worker threads.
         let join_handles: Vec<_> = local_data
@@ -121,10 +133,10 @@ impl Executor {
 
                 thread_builder
                     .spawn({
-                        let pool = pool.clone();
+                        let context = context.clone();
                         let active_tasks = active_tasks.clone();
                         move || {
-                            let worker = Worker::new(local_queue, pool);
+                            let worker = Worker::new(local_queue, context);
                             ACTIVE_TASKS.set(&active_tasks, || {
                                 LOCAL_WORKER
                                     .set(&worker, || run_local_worker(&worker, id, worker_parker))
@@ -137,10 +149,10 @@ impl Executor {
 
         // Wait until all workers are blocked on the signal barrier.
         parker.park();
-        assert!(pool.is_pool_idle());
+        assert!(context.pool_manager.is_pool_idle());
 
         Self {
-            pool,
+            context,
             active_tasks,
             parker,
             join_handles,
@@ -163,12 +175,12 @@ impl Executor {
         let future = CancellableFuture::new(future, task_entry.key());
 
         let (promise, runnable, cancel_token) =
-            task::spawn(future, schedule_task, self.pool.executor_id);
+            task::spawn(future, schedule_task, self.context.executor_id);
 
         task_entry.insert(cancel_token);
-        self.pool.global_queue.insert_task(runnable);
+        self.context.injector.insert_task(runnable);
 
-        self.pool.activate_worker();
+        self.context.pool_manager.activate_worker();
 
         promise
     }
@@ -191,22 +203,22 @@ impl Executor {
         let future = CancellableFuture::new(future, task_entry.key());
 
         let (runnable, cancel_token) =
-            task::spawn_and_forget(future, schedule_task, self.pool.executor_id);
+            task::spawn_and_forget(future, schedule_task, self.context.executor_id);
 
         task_entry.insert(cancel_token);
-        self.pool.global_queue.insert_task(runnable);
+        self.context.injector.insert_task(runnable);
 
-        self.pool.activate_worker();
+        self.context.pool_manager.activate_worker();
     }
 
     /// Let the executor run, blocking until all futures have completed or until
     /// the executor deadlocks.
     pub(crate) fn run(&mut self) {
         loop {
-            if let Some(worker_panic) = self.pool.take_panic() {
+            if let Some(worker_panic) = self.context.pool_manager.take_panic() {
                 panic::resume_unwind(worker_panic);
             }
-            if self.pool.is_pool_idle() {
+            if self.context.pool_manager.is_pool_idle() {
                 return;
             }
 
@@ -218,7 +230,7 @@ impl Executor {
 impl Drop for Executor {
     fn drop(&mut self) {
         // Force all threads to return.
-        self.pool.trigger_termination();
+        self.context.pool_manager.trigger_termination();
         for join_handle in self.join_handles.drain(0..) {
             join_handle.join().unwrap();
         }
@@ -227,7 +239,7 @@ impl Drop for Executor {
         //
         // A local worker must be set because some tasks may schedule other
         // tasks when dropped, which requires that a local worker be available.
-        let worker = Worker::new(LocalQueue::new(), self.pool.clone());
+        let worker = Worker::new(LocalQueue::new(), self.context.clone());
         LOCAL_WORKER.set(&worker, || {
             // Cancel all pending futures.
             //
@@ -246,11 +258,43 @@ impl Drop for Executor {
                 // Some of the dropped tasks may have scheduled other tasks that
                 // were not yet cancelled, preventing them from being dropped
                 // upon cancellation. This is OK: the scheduled tasks will be
-                // dropped when the local and global queues are dropped, and
+                // dropped when the local and injector queues are dropped, and
                 // they cannot re-schedule one another since all tasks were
                 // cancelled.
             });
         });
+    }
+}
+
+/// Shared executor context.
+#[derive(Debug)]
+struct ExecutorContext {
+    injector: Injector,
+    executor_id: usize,
+    executor_unparker: parking::Unparker,
+    pool_manager: PoolManager,
+}
+
+impl ExecutorContext {
+    /// Creates a new shared executor context.
+    pub(super) fn new(
+        executor_id: usize,
+        executor_unparker: parking::Unparker,
+        shared_data: impl Iterator<Item = (Stealer, parking::Unparker)>,
+    ) -> Self {
+        let (stealers, worker_unparkers): (Vec<_>, Vec<_>) = shared_data.into_iter().unzip();
+        let worker_unparkers = worker_unparkers.into_boxed_slice();
+
+        Self {
+            injector: Injector::new(),
+            executor_id,
+            executor_unparker,
+            pool_manager: PoolManager::new(
+                worker_unparkers.len(),
+                stealers.into_boxed_slice(),
+                worker_unparkers,
+            ),
+        }
     }
 }
 
@@ -301,15 +345,20 @@ impl<T: Future> Drop for CancellableFuture<T> {
 fn schedule_task(task: Runnable, executor_id: usize) {
     LOCAL_WORKER
         .map(|worker| {
+            let pool_manager = &worker.executor_context.pool_manager;
+            let injector = &worker.executor_context.injector;
+            let local_queue = &worker.local_queue;
+            let fast_slot = &worker.fast_slot;
+
             // Check that this task was indeed spawned on this executor.
             assert_eq!(
-                executor_id, worker.pool.executor_id,
+                executor_id, worker.executor_context.executor_id,
                 "Tasks must be awaken on the same executor they are spawned on"
             );
 
             // Store the task in the fast slot and retrieve the one that was
             // formerly stored, if any.
-            let prev_task = match worker.fast_slot.replace(Some(task)) {
+            let prev_task = match fast_slot.replace(Some(task)) {
                 // If there already was a task in the slot, proceed so it can be
                 // moved to a task queue.
                 Some(t) => t,
@@ -319,26 +368,24 @@ fn schedule_task(task: Runnable, executor_id: usize) {
             };
 
             // Push the previous task to the local queue if possible or on the
-            // global queue otherwise.
-            if let Err(prev_task) = worker.local_queue.push(prev_task) {
-                // The local queue is full. Try to move half of it to the global
-                // queue; if this fails, just push one task to the global queue.
-                if let Ok(drain) = worker.local_queue.drain(|_| Bucket::capacity()) {
-                    worker
-                        .pool
-                        .global_queue
-                        .push_bucket(Bucket::from_iter(drain));
-                    worker.local_queue.push(prev_task).unwrap();
+            // injector queue otherwise.
+            if let Err(prev_task) = local_queue.push(prev_task) {
+                // The local queue is full. Try to move half of it to the
+                // injector queue; if this fails, just push one task to the
+                // injector queue.
+                if let Ok(drain) = local_queue.drain(|_| Bucket::capacity()) {
+                    injector.push_bucket(Bucket::from_iter(drain));
+                    local_queue.push(prev_task).unwrap();
                 } else {
-                    worker.pool.global_queue.insert_task(prev_task);
+                    injector.insert_task(prev_task);
                 }
             }
 
-            // A task has been pushed to the local or global queue: try to
+            // A task has been pushed to the local or injector queue: try to
             // activate another worker if no worker is currently searching for a
             // task.
-            if worker.pool.searching_worker_count() == 0 {
-                worker.pool.activate_worker_relaxed();
+            if pool_manager.searching_worker_count() == 0 {
+                pool_manager.activate_worker_relaxed();
             }
         })
         .expect("Tasks may not be awaken outside executor threads");
@@ -347,6 +394,12 @@ fn schedule_task(task: Runnable, executor_id: usize) {
 /// Processes all incoming tasks on a worker thread until the `Terminate` signal
 /// is received or until it panics.
 fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
+    let pool_manager = &worker.executor_context.pool_manager;
+    let injector = &worker.executor_context.injector;
+    let executor_unparker = &worker.executor_context.executor_unparker;
+    let local_queue = &worker.local_queue;
+    let fast_slot = &worker.fast_slot;
+
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         // Set how long to spin when searching for a task.
         const MAX_SEARCH_DURATION: Duration = Duration::from_nanos(1000);
@@ -356,22 +409,30 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
 
         loop {
             // Signal barrier: park until notified to continue or terminate.
-            if worker.pool.try_set_worker_inactive(id) {
+
+            // Try to deactivate the worker.
+            if pool_manager.try_set_worker_inactive(id) {
                 parker.park();
+                // No need to call `begin_worker_search()`: this was done by the
+                // thread that unparked the worker.
+            } else if injector.is_empty() {
+                // This worker could not be deactivated because it was the last
+                // active worker. In such case, the call to
+                // `try_set_worker_inactive` establishes a synchronization with
+                // all threads that pushed tasks to the injector queue but could
+                // not activate a new worker, which is why some tasks may now be
+                // visible in the injector queue.
+                pool_manager.set_all_workers_inactive();
+                executor_unparker.unpark();
+                parker.park();
+                // No need to call `begin_worker_search()`: this was done by the
+                // thread that unparked the worker.
             } else {
-                // This worker is the last active worker so it is necessary to
-                // check if the global queue is populated. This could happen if
-                // the executor thread pushed a task to the global queue but
-                // could not activate a new worker because all workers were then
-                // activated.
-                if worker.pool.global_queue.is_empty() {
-                    worker.pool.set_all_workers_inactive();
-                    worker.pool.executor_unparker.unpark();
-                    parker.park();
-                }
+                // There are tasks in the injector: resume the search.
+                pool_manager.begin_worker_search();
             }
 
-            if worker.pool.termination_is_triggered() {
+            if pool_manager.termination_is_triggered() {
                 return;
             }
 
@@ -379,8 +440,8 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
 
             // Process the tasks one by one.
             loop {
-                // Check the global queue first.
-                if let Some(bucket) = worker.pool.global_queue.pop_bucket() {
+                // Check the injector queue first.
+                if let Some(bucket) = injector.pop_bucket() {
                     let bucket_iter = bucket.into_iter();
 
                     // There is a _very_ remote possibility that, even though
@@ -390,42 +451,43 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
                     // it took to pop and process the remaining tasks and it
                     // hasn't released the stolen capacity yet.
                     //
-                    // Unfortunately, we cannot just skip checking the global
+                    // Unfortunately, we cannot just skip checking the injector
                     // queue altogether when there isn't enough spare capacity
                     // in the local queue because this could lead to a race:
                     // suppose that (1) this thread has earlier pushed tasks
-                    // onto the global queue, and (2) the stealer has processed
-                    // all stolen tasks before this thread sees the capacity
-                    // restored and at the same time (3) the stealer does not
-                    // yet see the tasks this thread pushed to the global queue;
-                    // in such scenario, both this thread and the stealer thread
-                    // may park and leave unprocessed tasks in the global queue.
+                    // onto the injector queue, and (2) the stealer has
+                    // processed all stolen tasks before this thread sees the
+                    // capacity restored and at the same time (3) the stealer
+                    // does not yet see the tasks this thread pushed to the
+                    // injector queue; in such scenario, both this thread and
+                    // the stealer thread may park and leave unprocessed tasks
+                    // in the injector queue.
                     //
                     // This is the only instance where spinning is used, as the
                     // probability of this happening is close to zero and the
                     // complexity of a signaling mechanism (condvar & friends)
                     // wouldn't carry its weight.
-                    while worker.local_queue.spare_capacity() < bucket_iter.len() {}
+                    while local_queue.spare_capacity() < bucket_iter.len() {}
 
-                    // Since empty buckets are never pushed onto the global
+                    // Since empty buckets are never pushed onto the injector
                     // queue, we should now have at least one task to process.
-                    worker.local_queue.extend(bucket_iter);
+                    local_queue.extend(bucket_iter);
                 } else {
-                    // The global queue is empty. Try to steal from active
+                    // The injector queue is empty. Try to steal from active
                     // siblings.
-                    let mut stealers = worker.pool.shuffled_stealers(Some(id), &rng);
+                    let mut stealers = pool_manager.shuffled_stealers(Some(id), &rng);
                     if stealers.all(|stealer| {
                         stealer
-                            .steal_and_pop(&worker.local_queue, |n| n - n / 2)
+                            .steal_and_pop(local_queue, |n| n - n / 2)
                             .map(|task| {
-                                let prev_task = worker.fast_slot.replace(Some(task));
+                                let prev_task = fast_slot.replace(Some(task));
                                 assert!(prev_task.is_none());
                             })
                             .is_err()
                     }) {
                         // Give up if unsuccessful for too long.
                         if (Instant::now() - search_start) > MAX_SEARCH_DURATION {
-                            worker.pool.end_worker_search();
+                            pool_manager.end_worker_search();
                             break;
                         }
 
@@ -436,19 +498,18 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
 
                 // Signal the end of the search so that another worker can be
                 // activated when a new task is scheduled.
-                worker.pool.end_worker_search();
+                pool_manager.end_worker_search();
 
                 // Pop tasks from the fast slot or the local queue.
-                while let Some(task) = worker.fast_slot.take().or_else(|| worker.local_queue.pop())
-                {
-                    if worker.pool.termination_is_triggered() {
+                while let Some(task) = fast_slot.take().or_else(|| local_queue.pop()) {
+                    if pool_manager.termination_is_triggered() {
                         return;
                     }
                     task.run();
                 }
 
                 // Resume the search for tasks.
-                worker.pool.begin_worker_search();
+                pool_manager.begin_worker_search();
                 search_start = Instant::now();
             }
         }
@@ -456,8 +517,8 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
 
     // Propagate the panic, if any.
     if let Err(panic) = result {
-        worker.pool.register_panic(panic);
-        worker.pool.trigger_termination();
-        worker.pool.executor_unparker.unpark();
+        pool_manager.register_panic(panic);
+        pool_manager.trigger_termination();
+        executor_unparker.unpark();
     }
 }
