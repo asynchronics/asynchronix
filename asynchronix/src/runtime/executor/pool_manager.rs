@@ -90,6 +90,7 @@ impl PoolManager {
                 self.record.increment(first_idle_worker);
                 self.begin_worker_search();
                 self.worker_unparkers[first_idle_worker].unpark();
+                return;
             }
         }
     }
@@ -121,6 +122,7 @@ impl PoolManager {
                     self.record.increment(first_idle_worker);
                     self.begin_worker_search();
                     self.worker_unparkers[first_idle_worker].unpark();
+                    return;
                 }
             }
         }
