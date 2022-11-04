@@ -19,16 +19,9 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Install toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Run cargo test (Loom)
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --tests --release
+        run: cargo test --tests --release
         env:
           RUSTFLAGS: --cfg asynchronix_loom
