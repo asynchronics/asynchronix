@@ -5,10 +5,16 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'asynchronix/src/runtime/executor/queue.rs'
-      - 'asynchronix/src/runtime/executor/queue/**'
-      - 'asynchronix/src/runtime/executor/task.rs'
-      - 'asynchronix/src/runtime/executor/task/**'
+      - 'asynchronix/src/channel.rs'
+      - 'asynchronix/src/channel/**'
+      - 'asynchronix/src/executor/task.rs'
+      - 'asynchronix/src/executor/task/**'
+      - 'asynchronix/src/loom_exports.rs'
+      - 'asynchronix/src/model/ports/broadcaster.rs'
+      - 'asynchronix/src/model/ports/broadcaster/**'
+      - 'asynchronix/src/util/slot.rs'
+      - 'asynchronix/src/util/spsc_queue.rs'
+      - 'asynchronix/src/util/sync_cell.rs'
 
 jobs:
   loom:

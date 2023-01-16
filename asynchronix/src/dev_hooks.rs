@@ -4,7 +4,7 @@
 
 use std::future::Future;
 
-use crate::runtime::executor;
+use crate::executor;
 
 /// A multi-threaded `async` executor.
 #[derive(Debug)]

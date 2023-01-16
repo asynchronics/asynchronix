@@ -5,9 +5,8 @@ on:
   push:
     branches: [ main ]
 
-# Uncomment before first release.
-#env:
-#  RUSTFLAGS: -Dwarnings
+env:
+  RUSTFLAGS: -Dwarnings
 
 jobs:
   check:
@@ -58,6 +57,38 @@ jobs:
         run: cargo test --no-run --tests
         env:
           RUSTFLAGS: --cfg asynchronix_loom
+
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v3
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Run cargo miri tests
+        run: cargo miri test --tests --lib
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+
+      - name: Run cargo miri example1
+        run: cargo miri run --example espresso_machine
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=4
+
+      - name: Run cargo miri example2
+        run: cargo miri run --example power_supply
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=4
+
+      - name: Run cargo miri example3
+        run: cargo miri run --example stepper_motor
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=4
 
   lints:
     name: Lints
