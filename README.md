@@ -49,7 +49,7 @@ The [API] documentation is relatively exhaustive and includes a practical
 overview which should provide all necessary information to get started.
 
 More fleshed out examples can also be found in the dedicated
-[directory](examples).
+[directory](asynchronix/examples).
 
 [API]: https://docs.rs/asynchronix
 
@@ -136,11 +136,11 @@ assert_eq!(output_slot.take(), Some(14.0));
 # Implementation notes
 
 Under the hood, Asynchronix is based on an asynchronous implementation of the
-actor model, where each simulation model is an actor. The messages actually
-exchanged between models are `async` closures which capture the event's or
-request's value and take the model as `&mut self` argument. The mailbox
-associated to a model and to which closures are forwarded is the receiver of an
-async, bounded MPSC channel.
+[actor model][actor_model], where each simulation model is an actor. The
+messages actually exchanged between models are `async` closures which capture
+the event's or request's value and take the model as `&mut self` argument. The
+mailbox associated to a model and to which closures are forwarded is the
+receiver of an async, bounded MPSC channel.
 
 Computations proceed at discrete times. When executed, models can request the
 scheduler to send an event (or rather, a closure capturing such event) at a
@@ -163,11 +163,13 @@ the typically message-passing-heavy workloads seen in discrete-event simulation
 very fast custom MPSC channel, which performance has been demonstrated through
 [Tachyonix][tachyonix], a general-purpose offshoot of this channel.
 
+[actor_model]: https://en.wikipedia.org/wiki/Actor_model
+
 [tokio]: https://github.com/tokio-rs/tokio
 
 [tachyonix]: https://github.com/asynchronics/tachyonix
 
-[benchmark]: https://github.com/asynchronics/tachyonix/tree/main/bench
+[benchmark]: https://github.com/asynchronics/tachyobench
 
 
 ## License
