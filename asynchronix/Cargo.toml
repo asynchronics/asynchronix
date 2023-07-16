@@ -25,6 +25,7 @@ dev-hooks = []
 dev-logs = []
 
 [dependencies]
+async-event = "0.1"
 crossbeam-utils = "0.8"
 diatomic-waker = "0.1"
 futures-task = "0.3"

@@ -2,7 +2,6 @@
 //! simulation models.
 #![warn(missing_docs, missing_debug_implementations, unreachable_pub)]
 
-mod event;
 mod queue;
 
 use std::error;
@@ -13,10 +12,10 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::{self, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use async_event::Event;
 use diatomic_waker::primitives::DiatomicWaker;
 use recycle_box::RecycleBox;
 
-use event::Event;
 use queue::{PopError, PushError, Queue};
 use recycle_box::coerce_box;
 
@@ -113,7 +112,7 @@ impl<M: Model> Receiver<M> {
                 // Now that `msg` was consumed and its slot in the queue was
                 // freed, signal to one awaiting sender that one slot is
                 // available for sending.
-                self.inner.sender_signal.notify(1);
+                self.inner.sender_signal.notify_one();
 
                 // Await the future provided by the message.
                 let mut fut = RecycleBox::into_pin(fut);
@@ -145,7 +144,7 @@ impl<M: Model> Receiver<M> {
             self.inner.queue.close();
 
             // Notify all blocked senders that the channel is closed.
-            self.inner.sender_signal.notify(usize::MAX);
+            self.inner.sender_signal.notify_all();
         }
     }
 
@@ -164,7 +163,7 @@ impl<M> Drop for Receiver<M> {
         self.inner.queue.close();
 
         // Notify all blocked senders that the channel is closed.
-        self.inner.sender_signal.notify(usize::MAX);
+        self.inner.sender_signal.notify_all();
     }
 }
 
@@ -239,7 +238,7 @@ impl<M: Model> Sender<M> {
         // Notify the receiver and all blocked senders that the channel is
         // closed.
         self.inner.receiver_signal.notify();
-        self.inner.sender_signal.notify(usize::MAX);
+        self.inner.sender_signal.notify_all();
     }
 
     /// Checks if the channel is closed.
