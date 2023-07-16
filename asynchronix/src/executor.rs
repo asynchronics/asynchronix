@@ -140,7 +140,6 @@ impl Executor {
         let worker_handles: Vec<_> = local_queues_and_parkers
             .into_iter()
             .enumerate()
-            .into_iter()
             .map(|(id, (local_queue, worker_parker))| {
                 let thread_builder = thread::Builder::new().name(format!("Worker #{}", id));
 
