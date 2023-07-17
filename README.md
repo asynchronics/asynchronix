@@ -157,11 +157,12 @@ the posted events. For these reasons, Asynchronix relies on a fully custom
 runtime.
 
 Even though the runtime was largely influenced by Tokio, it features additional
-optimization that make its faster than any other multi-threaded Rust executor on
-the typically message-passing-heavy workloads seen in discrete-event simulation
-(see [benchmark]). Asynchronix also improves over the state of the art with a
-very fast custom MPSC channel, which performance has been demonstrated through
-[Tachyonix][tachyonix], a general-purpose offshoot of this channel.
+optimizations that make its faster than any other multi-threaded Rust executor
+on the typically message-passing-heavy workloads seen in discrete-event
+simulation (see [benchmark]). Asynchronix also improves over the state of the
+art with a very fast custom MPSC channel, which performance has been
+demonstrated through [Tachyonix][tachyonix], a general-purpose offshoot of this
+channel.
 
 [actor_model]: https://en.wikipedia.org/wiki/Actor_model
 
