@@ -3,7 +3,7 @@
 //! This example demonstrates in particular:
 //!
 //! * non-trivial state machines,
-//! * cancellation of calls scheduled at the current time step using epochs,
+//! * cancellation of events,
 //! * model initialization,
 //! * simulation monitoring with event slots.
 //!
@@ -37,7 +37,7 @@ use std::time::Duration;
 
 use asynchronix::model::{InitializedModel, Model, Output};
 use asynchronix::simulation::{Mailbox, SimInit};
-use asynchronix::time::{MonotonicTime, Scheduler, SchedulerKey};
+use asynchronix::time::{EventKey, MonotonicTime, Scheduler};
 
 /// Water pump.
 pub struct Pump {
@@ -79,12 +79,9 @@ pub struct Controller {
     brew_time: Duration,
     /// Current water sense state.
     water_sense: WaterSenseState,
-    /// Scheduler key, which if present indicates that the machine is current
+    /// Event key, which if present indicates that the machine is currently
     /// brewing -- internal state.
-    stop_brew_key: Option<SchedulerKey>,
-    /// An epoch incremented when the scheduled 'stop_brew` callback must be
-    /// ignored -- internal state.
-    stop_brew_epoch: u64,
+    stop_brew_key: Option<EventKey>,
 }
 
 impl Controller {
@@ -98,22 +95,16 @@ impl Controller {
             pump_cmd: Output::default(),
             stop_brew_key: None,
             water_sense: WaterSenseState::Empty, // will be overridden during init
-            stop_brew_epoch: 0,
         }
     }
 
     /// Signals a change in the water sensing state -- input port.
-    pub async fn water_sense(&mut self, state: WaterSenseState, scheduler: &Scheduler<Self>) {
+    pub async fn water_sense(&mut self, state: WaterSenseState) {
         // Check if the tank just got empty.
         if state == WaterSenseState::Empty && self.water_sense == WaterSenseState::NotEmpty {
             // If a brew was ongoing, we must cancel it.
             if let Some(key) = self.stop_brew_key.take() {
-                // Try to abort the scheduled call to `stop_brew()`. If this will
-                // fails, increment the epoch so that the call is ignored.
-                if scheduler.cancel(key).is_err() {
-                    self.stop_brew_epoch = self.stop_brew_epoch.wrapping_add(1);
-                };
-
+                key.cancel_event();
                 self.pump_cmd.send(PumpCommand::Off).await;
             }
         }
@@ -136,11 +127,8 @@ impl Controller {
         if let Some(key) = self.stop_brew_key.take() {
             self.pump_cmd.send(PumpCommand::Off).await;
 
-            // Try to abort the scheduled call to `stop_brew()`. If this will
-            // fails, increment the epoch so that the call is ignored.
-            if scheduler.cancel(key).is_err() {
-                self.stop_brew_epoch = self.stop_brew_epoch.wrapping_add(1);
-            };
+            // Abort the scheduled call to `stop_brew()`.
+            key.cancel_event();
 
             return;
         }
@@ -153,19 +141,14 @@ impl Controller {
         // Schedule the `stop_brew()` method and turn on the pump.
         self.stop_brew_key = Some(
             scheduler
-                .schedule_in(self.brew_time, Self::stop_brew, self.stop_brew_epoch)
+                .schedule_keyed_event_in(self.brew_time, Self::stop_brew, ())
                 .unwrap(),
         );
         self.pump_cmd.send(PumpCommand::On).await;
     }
 
     /// Stops brewing.
-    async fn stop_brew(&mut self, epoch: u64) {
-        // Ignore this call if the epoch has been incremented.
-        if self.stop_brew_epoch != epoch {
-            return;
-        }
-
+    async fn stop_brew(&mut self) {
         if self.stop_brew_key.take().is_some() {
             self.pump_cmd.send(PumpCommand::Off).await;
         }
@@ -190,9 +173,6 @@ pub struct Tank {
     volume: f64,
     /// State that exists when the mass flow rate is non-zero -- internal state.
     dynamic_state: Option<TankDynamicState>,
-    /// An epoch incremented when the pending call to `set_empty()` must be
-    /// ignored -- internal state.
-    set_empty_epoch: u64,
 }
 impl Tank {
     /// Creates a new tank with the specified amount of water [m³].
@@ -204,7 +184,6 @@ impl Tank {
         Self {
             volume: water_volume,
             dynamic_state: None,
-            set_empty_epoch: 0,
             water_sense: Output::default(),
         }
     }
@@ -224,11 +203,8 @@ impl Tank {
         // If the current flow rate is non-zero, compute the current volume and
         // schedule a new update.
         if let Some(state) = self.dynamic_state.take() {
-            // Try to abort the scheduled call to `set_empty()`. If this will
-            // fails, increment the epoch so that the call is ignored.
-            if scheduler.cancel(state.set_empty_key).is_err() {
-                self.set_empty_epoch = self.set_empty_epoch.wrapping_add(1);
-            }
+            // Abort the scheduled call to `set_empty()`.
+            state.set_empty_key.cancel_event();
 
             // Update the volume, saturating at 0 in case of rounding errors.
             let time = scheduler.time();
@@ -260,11 +236,8 @@ impl Tank {
 
         // If the flow rate was non-zero up to now, update the volume.
         if let Some(state) = self.dynamic_state.take() {
-            // Try to abort the scheduled call to `set_empty()`. If this will
-            // fails, increment the epoch so that the call is ignored.
-            if scheduler.cancel(state.set_empty_key).is_err() {
-                self.set_empty_epoch = self.set_empty_epoch.wrapping_add(1);
-            }
+            // Abort the scheduled call to `set_empty()`.
+            state.set_empty_key.cancel_event();
 
             // Update the volume, saturating at 0 in case of rounding errors.
             let elapsed_time = time.duration_since(state.last_volume_update).as_secs_f64();
@@ -301,7 +274,7 @@ impl Tank {
         let duration_until_empty = Duration::from_secs_f64(duration_until_empty);
 
         // Schedule the next update.
-        match scheduler.schedule_in(duration_until_empty, Self::set_empty, self.set_empty_epoch) {
+        match scheduler.schedule_keyed_event_in(duration_until_empty, Self::set_empty, ()) {
             Ok(set_empty_key) => {
                 let state = TankDynamicState {
                     last_volume_update: time,
@@ -319,12 +292,7 @@ impl Tank {
     }
 
     /// Updates the state of the tank to indicate that there is no more water.
-    async fn set_empty(&mut self, epoch: u64) {
-        // Ignore this call if the epoch has been incremented.
-        if epoch != self.set_empty_epoch {
-            return;
-        }
-
+    async fn set_empty(&mut self) {
         self.volume = 0.0;
         self.dynamic_state = None;
         self.water_sense.send(WaterSenseState::Empty).await;
@@ -355,7 +323,7 @@ impl Model for Tank {
 /// is non-zero.
 struct TankDynamicState {
     last_volume_update: MonotonicTime,
-    set_empty_key: SchedulerKey,
+    set_empty_key: EventKey,
     flow_rate: f64,
 }
 
@@ -429,7 +397,7 @@ fn main() {
 
     // Drink too much coffee.
     let volume_per_shot = pump_flow_rate * Controller::DEFAULT_BREW_TIME.as_secs_f64();
-    let shots_per_tank = (init_tank_volume / volume_per_shot) as u64; // YOLO--who care about floating-point rounding errors?
+    let shots_per_tank = (init_tank_volume / volume_per_shot) as u64; // YOLO--who cares about floating-point rounding errors?
     for _ in 0..(shots_per_tank - 1) {
         simu.send_event(Controller::brew_cmd, (), &controller_addr);
         assert_eq!(flow_rate.take(), Some(pump_flow_rate));
@@ -463,7 +431,7 @@ fn main() {
     assert_eq!(flow_rate.take(), Some(0.0));
 
     // Interrupt the brew after 15s by pressing again the brew button.
-    simu.schedule_in(
+    simu.schedule_event_in(
         Duration::from_secs(15),
         Controller::brew_cmd,
         (),

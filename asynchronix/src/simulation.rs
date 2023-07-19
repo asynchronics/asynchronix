@@ -73,7 +73,7 @@
 //!
 //! At the moment, Asynchronix is unfortunately not able to discriminate between
 //! such pathological deadlocks and the "expected" deadlock that occurs when all
-//! tasks in a given time slice have completed and all models are starved on an
+//! events in a given time slice have completed and all models are starved on an
 //! empty mailbox. Consequently, blocking method such as [`SimInit::init()`],
 //! [`Simulation::step()`], [`Simulation::send_event()`], etc., will return
 //! without error after a pathological deadlock, leaving the user responsible
@@ -91,8 +91,8 @@
 //! There is actually a very simple solution to this problem: since the
 //! [`InputFn`](crate::model::InputFn) trait also matches closures of type
 //! `FnOnce(&mut impl Model)`, it is enough to invoke
-//! [`Simulation::send_event()`] with a closure that connects or disconnects
-//! a port, such as:
+//! [`Simulation::send_event()`] with a closure that connects or disconnects a
+//! port, such as:
 //!
 //! ```
 //! # use asynchronix::model::{Model, Output};
@@ -129,15 +129,15 @@ pub use sim_init::SimInit;
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use recycle_box::{coerce_box, RecycleBox};
 
 use crate::executor::Executor;
 use crate::model::{InputFn, Model, ReplierFn};
-use crate::time::{self, CancellationError, MonotonicTime, TearableAtomicTime};
-use crate::time::{ScheduledTimeError, SchedulerKey, SchedulerQueue};
+use crate::time::{self, MonotonicTime, TearableAtomicTime};
+use crate::time::{EventKey, ScheduledTimeError, SchedulerQueue};
 use crate::util::futures::SeqFuture;
 use crate::util::slot;
 use crate::util::sync_cell::SyncCell;
@@ -164,9 +164,9 @@ use crate::util::sync_cell::SyncCell;
 /// the case of queries, the response is returned.
 ///
 /// Events can also be scheduled at a future simulation time using
-/// [`schedule_in()`](Simulation::schedule_in) or
-/// [`schedule_at()`](Simulation::schedule_at). These methods queue an event
-/// without blocking.
+/// [`schedule_event_in()`](Simulation::schedule_event_in) or
+/// [`schedule_event_at()`](Simulation::schedule_event_at). These methods queue
+/// an event without blocking.
 ///
 /// Finally, the [`Simulation`] instance manages simulation time. Calling
 /// [`step()`](Simulation::step) will increment simulation time until that of
@@ -201,20 +201,20 @@ impl Simulation {
         self.time.read()
     }
 
-    /// Advances simulation time to that of the next scheduled task, processing
-    /// that task as well as all other tasks scheduled for the same time.
+    /// Advances simulation time to that of the next scheduled event, processing
+    /// that event as well as all other event scheduled for the same time.
     ///
     /// This method may block. Once it returns, it is guaranteed that all newly
-    /// processed tasks (if any) have completed.
+    /// processed event (if any) have completed.
     pub fn step(&mut self) {
         self.step_to_next_bounded(MonotonicTime::MAX);
     }
 
     /// Iteratively advances the simulation time by the specified duration and
-    /// processes all tasks scheduled up to the target time.
+    /// processes all events scheduled up to the target time.
     ///
     /// This method may block. Once it returns, it is guaranteed that (i) all
-    /// tasks scheduled up to the specified target time have completed and (ii)
+    /// events scheduled up to the specified target time have completed and (ii)
     /// the final simulation time has been incremented by the specified
     /// duration.
     pub fn step_by(&mut self, duration: Duration) {
@@ -223,11 +223,11 @@ impl Simulation {
         self.step_until_unchecked(target_time);
     }
 
-    /// Iteratively advances the simulation time and processes all tasks
+    /// Iteratively advances the simulation time and processes all events
     /// scheduled up to the specified target time.
     ///
     /// This method may block. Once it returns, it is guaranteed that (i) all
-    /// tasks scheduled up to the specified target time have completed and (ii)
+    /// events scheduled up to the specified target time have completed and (ii)
     /// the final simulation time matches the target time.
     pub fn step_until(&mut self, target_time: MonotonicTime) -> Result<(), ScheduledTimeError<()>> {
         if self.time.read() >= target_time {
@@ -244,13 +244,13 @@ impl Simulation {
     ///
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
-    pub fn schedule_in<M, F, T, S>(
+    pub fn schedule_event_in<M, F, T, S>(
         &mut self,
         duration: Duration,
         func: F,
         arg: T,
         address: impl Into<Address<M>>,
-    ) -> Result<SchedulerKey, ScheduledTimeError<T>>
+    ) -> Result<(), ScheduledTimeError<T>>
     where
         M: Model,
         F: for<'a> InputFn<'a, M, T, S>,
@@ -261,7 +261,36 @@ impl Simulation {
         }
         let time = self.time.read() + duration;
 
-        let schedule_key = time::schedule_event_at_unchecked(
+        time::schedule_event_at_unchecked(time, func, arg, address.into().0, &self.scheduler_queue);
+
+        Ok(())
+    }
+
+    /// Schedules an event at the lapse of the specified duration and returns an
+    /// event key.
+    ///
+    /// An error is returned if the specified duration is null.
+    ///
+    /// Events scheduled for the same time and targeting the same model are
+    /// guaranteed to be processed according to the scheduling order.
+    pub fn schedule_keyed_event_in<M, F, T, S>(
+        &mut self,
+        duration: Duration,
+        func: F,
+        arg: T,
+        address: impl Into<Address<M>>,
+    ) -> Result<EventKey, ScheduledTimeError<T>>
+    where
+        M: Model,
+        F: for<'a> InputFn<'a, M, T, S>,
+        T: Send + Clone + 'static,
+    {
+        if duration.is_zero() {
+            return Err(ScheduledTimeError(arg));
+        }
+        let time = self.time.read() + duration;
+
+        let event_key = time::schedule_keyed_event_at_unchecked(
             time,
             func,
             arg,
@@ -269,7 +298,7 @@ impl Simulation {
             &self.scheduler_queue,
         );
 
-        Ok(schedule_key)
+        Ok(event_key)
     }
 
     /// Schedules an event at a future time.
@@ -279,13 +308,13 @@ impl Simulation {
     ///
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
-    pub fn schedule_at<M, F, T, S>(
+    pub fn schedule_event_at<M, F, T, S>(
         &mut self,
         time: MonotonicTime,
         func: F,
         arg: T,
         address: impl Into<Address<M>>,
-    ) -> Result<SchedulerKey, ScheduledTimeError<T>>
+    ) -> Result<(), ScheduledTimeError<T>>
     where
         M: Model,
         F: for<'a> InputFn<'a, M, T, S>,
@@ -294,7 +323,34 @@ impl Simulation {
         if self.time.read() >= time {
             return Err(ScheduledTimeError(arg));
         }
-        let schedule_key = time::schedule_event_at_unchecked(
+        time::schedule_event_at_unchecked(time, func, arg, address.into().0, &self.scheduler_queue);
+
+        Ok(())
+    }
+
+    /// Schedules an event at a future time and returns an event key.
+    ///
+    /// An error is returned if the specified time is not in the future of the
+    /// current simulation time.
+    ///
+    /// Events scheduled for the same time and targeting the same model are
+    /// guaranteed to be processed according to the scheduling order.
+    pub fn schedule_keyed_event_at<M, F, T, S>(
+        &mut self,
+        time: MonotonicTime,
+        func: F,
+        arg: T,
+        address: impl Into<Address<M>>,
+    ) -> Result<EventKey, ScheduledTimeError<T>>
+    where
+        M: Model,
+        F: for<'a> InputFn<'a, M, T, S>,
+        T: Send + Clone + 'static,
+    {
+        if self.time.read() >= time {
+            return Err(ScheduledTimeError(arg));
+        }
+        let event_key = time::schedule_keyed_event_at_unchecked(
             time,
             func,
             arg,
@@ -302,16 +358,7 @@ impl Simulation {
             &self.scheduler_queue,
         );
 
-        Ok(schedule_key)
-    }
-
-    /// Cancels an event with a scheduled time in the future of the current
-    /// simulation time.
-    ///
-    /// If the corresponding event was already executed, or if it is scheduled
-    /// for the current simulation time, an error is returned.
-    pub fn cancel(&self, scheduler_key: SchedulerKey) -> Result<(), CancellationError> {
-        time::cancel_scheduled(scheduler_key, &self.scheduler_queue)
+        Ok(event_key)
     }
 
     /// Sends and processes an event, blocking until completion.
@@ -387,72 +434,84 @@ impl Simulation {
         reply_reader.try_read().map_err(|_| QueryError {})
     }
 
-    /// Advances simulation time to that of the next scheduled task if its
+    /// Advances simulation time to that of the next scheduled event if its
     /// scheduling time does not exceed the specified bound, processing that
-    /// task as well as all other tasks scheduled for the same time.
+    /// event as well as all other events scheduled for the same time.
     ///
-    /// If at least one task was found that satisfied the time bound, the
+    /// If at least one event was found that satisfied the time bound, the
     /// corresponding new simulation time is returned.
     fn step_to_next_bounded(&mut self, upper_time_bound: MonotonicTime) -> Option<MonotonicTime> {
-        let mut scheduler_queue = self.scheduler_queue.lock().unwrap();
-
-        let mut current_key = match scheduler_queue.peek_key() {
-            Some(&k) if k.0 <= upper_time_bound => k,
-            _ => return None,
+        // Closure returning the next key which time stamp is no older than the
+        // upper bound, if any. Cancelled events are discarded.
+        let get_next_key = |scheduler_queue: &mut MutexGuard<SchedulerQueue>| {
+            loop {
+                match scheduler_queue.peek() {
+                    Some((&k, t)) if k.0 <= upper_time_bound => {
+                        if !t.is_cancelled() {
+                            break Some(k);
+                        }
+                        // Discard cancelled events.
+                        scheduler_queue.pull();
+                    }
+                    _ => break None,
+                }
+            }
         };
 
-        // Set the simulation time to that of the next scheduled task
+        // Move to the next scheduled time.
+        let mut scheduler_queue = self.scheduler_queue.lock().unwrap();
+        let mut current_key = get_next_key(&mut scheduler_queue)?;
         self.time.write(current_key.0);
 
         loop {
-            let task = scheduler_queue.pull().unwrap().1;
+            let event = scheduler_queue.pull().unwrap().1;
 
-            let mut next_key = scheduler_queue.peek_key();
-            if next_key != Some(&current_key) {
-                // Since there are no other tasks targeting the same mailbox
-                // and the same time, the task is spawned immediately.
-                self.executor.spawn_and_forget(Box::into_pin(task));
+            let mut next_key = get_next_key(&mut scheduler_queue);
+            if next_key != Some(current_key) {
+                // Since there are no other events targeting the same mailbox
+                // and the same time, the event is spawned immediately.
+                self.executor.spawn_and_forget(Box::into_pin(event));
             } else {
                 // To ensure that their relative order of execution is
-                // preserved, all tasks targeting the same mailbox are
-                // concatenated into a single future.
-                let mut task_sequence = SeqFuture::new();
+                // preserved, all event targeting the same mailbox are executed
+                // sequentially within a single compound future.
+                let mut event_sequence = SeqFuture::new();
 
-                task_sequence.push(Box::into_pin(task));
+                event_sequence.push(Box::into_pin(event));
                 loop {
-                    let task = scheduler_queue.pull().unwrap().1;
-                    task_sequence.push(Box::into_pin(task));
-                    next_key = scheduler_queue.peek_key();
-                    if next_key != Some(&current_key) {
+                    let event = scheduler_queue.pull().unwrap().1;
+                    event_sequence.push(Box::into_pin(event));
+                    next_key = get_next_key(&mut scheduler_queue);
+                    if next_key != Some(current_key) {
                         break;
                     }
                 }
 
-                // Spawn a parent task that sequentially polls all sub-tasks.
-                self.executor.spawn_and_forget(task_sequence);
+                // Spawn a parent event that sequentially polls all events
+                // targeting the same mailbox.
+                self.executor.spawn_and_forget(event_sequence);
             }
 
-            match next_key {
-                // If the next task is scheduled at the same time, update the key and continue.
-                Some(k) if k.0 == current_key.0 => {
-                    current_key = *k;
-                }
-                // Otherwise wait until all tasks have completed and return.
+            current_key = match next_key {
+                // If the next event is scheduled at the same time, update the
+                // key and continue.
+                Some(k) if k.0 == current_key.0 => k,
+                // Otherwise wait until all events have completed and return.
                 _ => {
-                    drop(scheduler_queue); // make sure the queue's mutex is unlocked.
+                    drop(scheduler_queue); // make sure the queue's mutex is released.
                     self.executor.run();
 
                     return Some(current_key.0);
                 }
-            }
+            };
         }
     }
 
-    /// Iteratively advances simulation time and processes all tasks scheduled
+    /// Iteratively advances simulation time and processes all events scheduled
     /// up to the specified target time.
     ///
-    /// Once the method returns it is guaranteed that (i) all tasks scheduled up
-    /// to the specified target time have completed and (ii) the final
+    /// Once the method returns it is guaranteed that (i) all events scheduled
+    /// up to the specified target time have completed and (ii) the final
     /// simulation time matches the target time.
     ///
     /// This method does not check whether the specified time lies in the future
@@ -462,7 +521,7 @@ impl Simulation {
             match self.step_to_next_bounded(target_time) {
                 // The target time was reached exactly.
                 Some(t) if t == target_time => return,
-                // No tasks are scheduled before or at the target time.
+                // No events are scheduled before or at the target time.
                 None => {
                     // Update the simulation time.
                     self.time.write(target_time);

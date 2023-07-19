@@ -4,6 +4,8 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 /// An owned future which sequentially polls a collection of futures.
@@ -50,4 +52,40 @@ impl<F: Future + Unpin> Future for SeqFuture<F> {
 
         Poll::Pending
     }
+}
+
+trait RevocableFuture: Future {
+    fn is_revoked() -> bool;
+}
+
+struct NeverRevokedFuture<F> {
+    inner: F,
+}
+
+impl<F: Future> NeverRevokedFuture<F> {
+    fn new(fut: F) -> Self {
+        Self { inner: fut }
+    }
+}
+impl<T: Future> Future for NeverRevokedFuture<T> {
+    type Output = T::Output;
+
+    #[inline(always)]
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        unsafe { self.map_unchecked_mut(|s| &mut s.inner).poll(cx) }
+    }
+}
+
+impl<T: Future> RevocableFuture for NeverRevokedFuture<T> {
+    fn is_revoked() -> bool {
+        false
+    }
+}
+
+struct ConcurrentlyRevocableFuture<F> {
+    inner: F,
+    is_revoked: Arc<AtomicBool>,
 }
