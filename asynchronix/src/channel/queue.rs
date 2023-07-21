@@ -79,7 +79,7 @@ enum MessageBox<T: ?Sized> {
     None,
 }
 
-/// A queue slot that a stamp and either a boxed messaged or an empty box.
+/// A queue slot with a stamp and either a boxed messaged or an empty box.
 struct Slot<T: ?Sized> {
     stamp: AtomicUsize,
     message: UnsafeCell<MessageBox<T>>,
