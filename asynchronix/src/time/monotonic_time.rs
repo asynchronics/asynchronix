@@ -128,9 +128,11 @@ impl MonotonicTime {
     /// The argument is the current difference between TAI and UTC time in
     /// seconds (a.k.a. leap seconds). For reference, this offset has been +37s
     /// since 2017-01-01, a value which is to remain valid until at least
-    /// 2023-06-30. See the IETF's [leap second
-    /// data](https://www.ietf.org/timezones/data/leap-seconds.list) for current
-    /// and historical values.
+    /// 2024-06-29. See the [official IERS bulletin
+    /// C](https://datacenter.iers.org/data/latestVersion/bulletinC.txt) for
+    /// leap second announcements or the [IETF
+    /// table](https://www.ietf.org/timezones/data/leap-seconds.list) for
+    /// current and historical values.
     ///
     /// # Errors
     ///
@@ -183,9 +185,11 @@ impl MonotonicTime {
     ///
     /// The argument is the difference between TAI and UTC time in seconds
     /// (a.k.a. leap seconds) applicable at the date represented by the
-    /// timestamp. See the IETF's [leap second
-    /// data](https://www.ietf.org/timezones/data/leap-seconds.list) for current
-    /// and historical values.
+    /// timestamp. See the [official IERS bulletin
+    /// C](https://datacenter.iers.org/data/latestVersion/bulletinC.txt) for
+    /// leap second announcements or the [IETF
+    /// table](https://www.ietf.org/timezones/data/leap-seconds.list) for
+    /// current and historical values.
     ///
     /// This method merely subtracts the offset from the value returned by
     /// [`as_secs`](Self::as_secs) and checks for potential overflow; its main
