@@ -353,13 +353,11 @@
 //!    process `M1` before `M3`.
 //!
 //! The first guarantee (and only the first) also extends to events scheduled
-//! from a simulation with
-//! [`Simulation::schedule_event_in()`](simulation::Simulation::schedule_event_in)
-//! or
-//! [`Simulation::schedule_event_at()`](simulation::Simulation::schedule_event_at):
-//! if the scheduler contains several events to be delivered at the same time to
-//! the same model, these events will always be processed in the order in which
-//! they were scheduled.
+//! from a simulation with a
+//! [`Simulation::schedule_*()`](simulation::Simulation::schedule_event_at)
+//! method: if the scheduler contains several events to be delivered at the same
+//! time to the same model, these events will always be processed in the order
+//! in which they were scheduled.
 //!
 //! [actor_model]: https://en.wikipedia.org/wiki/Actor_model
 //! [pony]: https://www.ponylang.io/

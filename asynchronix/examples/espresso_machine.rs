@@ -104,7 +104,7 @@ impl Controller {
         if state == WaterSenseState::Empty && self.water_sense == WaterSenseState::NotEmpty {
             // If a brew was ongoing, we must cancel it.
             if let Some(key) = self.stop_brew_key.take() {
-                key.cancel_event();
+                key.cancel();
                 self.pump_cmd.send(PumpCommand::Off).await;
             }
         }
@@ -128,7 +128,7 @@ impl Controller {
             self.pump_cmd.send(PumpCommand::Off).await;
 
             // Abort the scheduled call to `stop_brew()`.
-            key.cancel_event();
+            key.cancel();
 
             return;
         }
@@ -204,7 +204,7 @@ impl Tank {
         // schedule a new update.
         if let Some(state) = self.dynamic_state.take() {
             // Abort the scheduled call to `set_empty()`.
-            state.set_empty_key.cancel_event();
+            state.set_empty_key.cancel();
 
             // Update the volume, saturating at 0 in case of rounding errors.
             let time = scheduler.time();
@@ -237,7 +237,7 @@ impl Tank {
         // If the flow rate was non-zero up to now, update the volume.
         if let Some(state) = self.dynamic_state.take() {
             // Abort the scheduled call to `set_empty()`.
-            state.set_empty_key.cancel_event();
+            state.set_empty_key.cancel();
 
             // Update the volume, saturating at 0 in case of rounding errors.
             let elapsed_time = time.duration_since(state.last_volume_update).as_secs_f64();

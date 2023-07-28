@@ -51,6 +51,8 @@ mod scheduler;
 pub(crate) use monotonic_time::TearableAtomicTime;
 pub use monotonic_time::{MonotonicTime, SystemTimeError};
 pub(crate) use scheduler::{
-    schedule_event_at_unchecked, schedule_keyed_event_at_unchecked, SchedulerQueue,
+    schedule_event_at_unchecked, schedule_keyed_event_at_unchecked,
+    schedule_periodic_event_at_unchecked, schedule_periodic_keyed_event_at_unchecked,
+    ScheduledEvent, SchedulerQueue,
 };
-pub use scheduler::{EventKey, ScheduledTimeError, Scheduler};
+pub use scheduler::{EventKey, Scheduler, SchedulingError};
