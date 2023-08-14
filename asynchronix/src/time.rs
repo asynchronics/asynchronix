@@ -31,7 +31,7 @@
 //!
 //!     // Sets an alarm [input port].
 //!     pub fn set(&mut self, setting: MonotonicTime, scheduler: &Scheduler<Self>) {
-//!         if scheduler.schedule_event_at(setting, Self::ring, ()).is_err() {
+//!         if scheduler.schedule_event(setting, Self::ring, ()).is_err() {
 //!             println!("The alarm clock can only be set for a future time");
 //!         }
 //!     }
@@ -55,4 +55,4 @@ pub(crate) use scheduler::{
     schedule_periodic_event_at_unchecked, schedule_periodic_keyed_event_at_unchecked,
     ScheduledEvent, SchedulerQueue,
 };
-pub use scheduler::{EventKey, Scheduler, SchedulingError};
+pub use scheduler::{Deadline, EventKey, Scheduler, SchedulingError};

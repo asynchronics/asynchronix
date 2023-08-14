@@ -113,7 +113,7 @@
 //! }
 //! impl Delay {
 //!     pub fn input(&mut self, value: f64, scheduler: &Scheduler<Self>) {
-//!         scheduler.schedule_event_in(Duration::from_secs(1), Self::send, value).unwrap();
+//!         scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //!     }
 //!
 //!     async fn send(&mut self, value: f64) {
@@ -184,7 +184,7 @@
 //! #     }
 //! #     impl Delay {
 //! #         pub fn input(&mut self, value: f64, scheduler: &Scheduler<Self>) {
-//! #             scheduler.schedule_event_in(Duration::from_secs(1), Self::send, value).unwrap();
+//! #             scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //! #         }
 //! #         async fn send(&mut self, value: f64) { // this method can be private
 //! #             self.output.send(value).await;
@@ -242,7 +242,7 @@
 //!    [`Simulation::send_event()`](simulation::Simulation::send_event) or
 //!    [`Simulation::send_query()`](simulation::Simulation::send_query),
 //! 3. by scheduling events, using for instance
-//!    [`Simulation::schedule_event_in()`](simulation::Simulation::schedule_event_in).
+//!    [`Simulation::schedule_event()`](simulation::Simulation::schedule_event).
 //!
 //! Simulation outputs can be monitored using
 //! [`EventSlot`](simulation::EventSlot)s and
@@ -275,7 +275,7 @@
 //! #     }
 //! #     impl Delay {
 //! #         pub fn input(&mut self, value: f64, scheduler: &Scheduler<Self>) {
-//! #             scheduler.schedule_event_in(Duration::from_secs(1), Self::send, value).unwrap();
+//! #             scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //! #         }
 //! #         async fn send(&mut self, value: f64) { // this method can be private
 //! #             self.output.send(value).await;
@@ -354,10 +354,10 @@
 //!
 //! The first guarantee (and only the first) also extends to events scheduled
 //! from a simulation with a
-//! [`Simulation::schedule_*()`](simulation::Simulation::schedule_event_at)
-//! method: if the scheduler contains several events to be delivered at the same
-//! time to the same model, these events will always be processed in the order
-//! in which they were scheduled.
+//! [`Simulation::schedule_*()`](simulation::Simulation::schedule_event) method:
+//! if the scheduler contains several events to be delivered at the same time to
+//! the same model, these events will always be processed in the order in which
+//! they were scheduled.
 //!
 //! [actor_model]: https://en.wikipedia.org/wiki/Actor_model
 //! [pony]: https://www.ponylang.io/

@@ -137,7 +137,7 @@ use recycle_box::{coerce_box, RecycleBox};
 use crate::executor::Executor;
 use crate::model::{InputFn, Model, ReplierFn};
 use crate::time::{
-    self, EventKey, MonotonicTime, ScheduledEvent, SchedulerQueue, SchedulingError,
+    self, Deadline, EventKey, MonotonicTime, ScheduledEvent, SchedulerQueue, SchedulingError,
     TearableAtomicTime,
 };
 use crate::util::futures::SeqFuture;
@@ -156,8 +156,8 @@ use crate::util::sync_cell::SyncCell;
 /// itself, but also from models via the optional
 /// [`&Scheduler`][time::Scheduler] argument of input and replier port methods.
 /// Likewise, simulation time can be accessed with the [`Simulation::time()`]
-/// method, or from models with the
-/// [`Scheduler::time()`](time::Scheduler::time) method.
+/// method, or from models with the [`Scheduler::time()`](time::Scheduler::time)
+/// method.
 ///
 /// Events and queries can be scheduled immediately, *i.e.* for the current
 /// simulation time, using [`send_event()`](Simulation::send_event) and
@@ -166,8 +166,8 @@ use crate::util::sync_cell::SyncCell;
 /// the case of queries, the response is returned.
 ///
 /// Events can also be scheduled at a future simulation time using one of the
-/// [`schedule_*()`](Simulation::schedule_event_at) method. These methods queue
-/// an event without blocking.
+/// [`schedule_*()`](Simulation::schedule_event) method. These methods queue an
+/// event without blocking.
 ///
 /// Finally, the [`Simulation`] instance manages simulation time. Calling
 /// [`step()`](Simulation::step) will increment simulation time until that of
@@ -247,10 +247,10 @@ impl Simulation {
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
     ///
-    /// See also: [`time::Scheduler::schedule_event_at`].
-    pub fn schedule_event_at<M, F, T, S>(
+    /// See also: [`time::Scheduler::schedule_event`].
+    pub fn schedule_event<M, F, T, S>(
         &mut self,
-        time: MonotonicTime,
+        deadline: impl Deadline,
         func: F,
         arg: T,
         address: impl Into<Address<M>>,
@@ -261,40 +261,11 @@ impl Simulation {
         T: Send + Clone + 'static,
         S: Send + 'static,
     {
-        if self.time.read() >= time {
+        let now = self.time();
+        let time = deadline.into_time(now);
+        if now >= time {
             return Err(SchedulingError::InvalidScheduledTime);
         }
-        time::schedule_event_at_unchecked(time, func, arg, address.into().0, &self.scheduler_queue);
-
-        Ok(())
-    }
-
-    /// Schedules an event at the lapse of the specified duration.
-    ///
-    /// An error is returned if the specified delay is null.
-    ///
-    /// Events scheduled for the same time and targeting the same model are
-    /// guaranteed to be processed according to the scheduling order.
-    ///
-    /// See also: [`time::Scheduler::schedule_event_in`].
-    pub fn schedule_event_in<M, F, T, S>(
-        &mut self,
-        delay: Duration,
-        func: F,
-        arg: T,
-        address: impl Into<Address<M>>,
-    ) -> Result<(), SchedulingError>
-    where
-        M: Model,
-        F: for<'a> InputFn<'a, M, T, S>,
-        T: Send + Clone + 'static,
-        S: Send + 'static,
-    {
-        if delay.is_zero() {
-            return Err(SchedulingError::InvalidScheduledTime);
-        }
-        let time = self.time.read() + delay;
-
         time::schedule_event_at_unchecked(time, func, arg, address.into().0, &self.scheduler_queue);
 
         Ok(())
@@ -308,10 +279,10 @@ impl Simulation {
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
     ///
-    /// See also: [`time::Scheduler::schedule_keyed_event_at`].
-    pub fn schedule_keyed_event_at<M, F, T, S>(
+    /// See also: [`time::Scheduler::schedule_keyed_event`].
+    pub fn schedule_keyed_event<M, F, T, S>(
         &mut self,
-        time: MonotonicTime,
+        deadline: impl Deadline,
         func: F,
         arg: T,
         address: impl Into<Address<M>>,
@@ -322,47 +293,11 @@ impl Simulation {
         T: Send + Clone + 'static,
         S: Send + 'static,
     {
-        if self.time.read() >= time {
+        let now = self.time();
+        let time = deadline.into_time(now);
+        if now >= time {
             return Err(SchedulingError::InvalidScheduledTime);
         }
-        let event_key = time::schedule_keyed_event_at_unchecked(
-            time,
-            func,
-            arg,
-            address.into().0,
-            &self.scheduler_queue,
-        );
-
-        Ok(event_key)
-    }
-
-    /// Schedules a cancellable event at the lapse of the specified duration and
-    /// returns an event key.
-    ///
-    /// An error is returned if the specified delay is null.
-    ///
-    /// Events scheduled for the same time and targeting the same model are
-    /// guaranteed to be processed according to the scheduling order.
-    ///
-    /// See also: [`time::Scheduler::schedule_keyed_event_in`].
-    pub fn schedule_keyed_event_in<M, F, T, S>(
-        &mut self,
-        delay: Duration,
-        func: F,
-        arg: T,
-        address: impl Into<Address<M>>,
-    ) -> Result<EventKey, SchedulingError>
-    where
-        M: Model,
-        F: for<'a> InputFn<'a, M, T, S>,
-        T: Send + Clone + 'static,
-        S: Send + 'static,
-    {
-        if delay.is_zero() {
-            return Err(SchedulingError::InvalidScheduledTime);
-        }
-        let time = self.time.read() + delay;
-
         let event_key = time::schedule_keyed_event_at_unchecked(
             time,
             func,
@@ -382,10 +317,10 @@ impl Simulation {
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
     ///
-    /// See also: [`time::Scheduler::schedule_periodic_event_at`].
-    pub fn schedule_periodic_event_at<M, F, T, S>(
+    /// See also: [`time::Scheduler::schedule_periodic_event`].
+    pub fn schedule_periodic_event<M, F, T, S>(
         &mut self,
-        time: MonotonicTime,
+        deadline: impl Deadline,
         period: Duration,
         func: F,
         arg: T,
@@ -397,56 +332,14 @@ impl Simulation {
         T: Send + Clone + 'static,
         S: Send + 'static,
     {
-        if self.time.read() >= time {
+        let now = self.time();
+        let time = deadline.into_time(now);
+        if now >= time {
             return Err(SchedulingError::InvalidScheduledTime);
         }
         if period.is_zero() {
             return Err(SchedulingError::NullRepetitionPeriod);
         }
-        time::schedule_periodic_event_at_unchecked(
-            time,
-            period,
-            func,
-            arg,
-            address.into().0,
-            &self.scheduler_queue,
-        );
-
-        Ok(())
-    }
-
-    /// Schedules a periodically recurring event at the lapse of the specified
-    /// duration.
-    ///
-    /// An error is returned if the specified delay or the specified period are
-    /// null.
-    ///
-    /// Events scheduled for the same time and targeting the same model are
-    /// guaranteed to be processed according to the scheduling order.
-    ///
-    /// See also: [`time::Scheduler::schedule_periodic_event_in`].
-    pub fn schedule_periodic_event_in<M, F, T, S>(
-        &mut self,
-        delay: Duration,
-        period: Duration,
-        func: F,
-        arg: T,
-        address: impl Into<Address<M>>,
-    ) -> Result<(), SchedulingError>
-    where
-        M: Model,
-        F: for<'a> InputFn<'a, M, T, S> + Clone,
-        T: Send + Clone + 'static,
-        S: Send + 'static,
-    {
-        if delay.is_zero() {
-            return Err(SchedulingError::InvalidScheduledTime);
-        }
-        if period.is_zero() {
-            return Err(SchedulingError::NullRepetitionPeriod);
-        }
-        let time = self.time.read() + delay;
-
         time::schedule_periodic_event_at_unchecked(
             time,
             period,
@@ -468,10 +361,10 @@ impl Simulation {
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
     ///
-    /// See also: [`time::Scheduler::schedule_periodic_keyed_event_at`].
-    pub fn schedule_periodic_keyed_event_at<M, F, T, S>(
+    /// See also: [`time::Scheduler::schedule_keyed_periodic_event`].
+    pub fn schedule_keyed_periodic_event<M, F, T, S>(
         &mut self,
-        time: MonotonicTime,
+        deadline: impl Deadline,
         period: Duration,
         func: F,
         arg: T,
@@ -483,56 +376,14 @@ impl Simulation {
         T: Send + Clone + 'static,
         S: Send + 'static,
     {
-        if self.time.read() >= time {
+        let now = self.time();
+        let time = deadline.into_time(now);
+        if now >= time {
             return Err(SchedulingError::InvalidScheduledTime);
         }
         if period.is_zero() {
             return Err(SchedulingError::NullRepetitionPeriod);
         }
-        let event_key = time::schedule_periodic_keyed_event_at_unchecked(
-            time,
-            period,
-            func,
-            arg,
-            address.into().0,
-            &self.scheduler_queue,
-        );
-
-        Ok(event_key)
-    }
-
-    /// Schedules a cancellable, periodically recurring event at the lapse of
-    /// the specified duration and returns an event key.
-    ///
-    /// An error is returned if the specified delay or the specified period are
-    /// null.
-    ///
-    /// Events scheduled for the same time and targeting the same model are
-    /// guaranteed to be processed according to the scheduling order.
-    ///
-    /// See also: [`time::Scheduler::schedule_periodic_keyed_event_in`].
-    pub fn schedule_periodic_keyed_event_in<M, F, T, S>(
-        &mut self,
-        delay: Duration,
-        period: Duration,
-        func: F,
-        arg: T,
-        address: impl Into<Address<M>>,
-    ) -> Result<EventKey, SchedulingError>
-    where
-        M: Model,
-        F: for<'a> InputFn<'a, M, T, S> + Clone,
-        T: Send + Clone + 'static,
-        S: Send + 'static,
-    {
-        if delay.is_zero() {
-            return Err(SchedulingError::InvalidScheduledTime);
-        }
-        if period.is_zero() {
-            return Err(SchedulingError::NullRepetitionPeriod);
-        }
-        let time = self.time.read() + delay;
-
         let event_key = time::schedule_periodic_keyed_event_at_unchecked(
             time,
             period,

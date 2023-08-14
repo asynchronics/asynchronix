@@ -15,7 +15,7 @@ fn model_schedule_event() {
     impl TestModel {
         fn trigger(&mut self, _: (), scheduler: &Scheduler<Self>) {
             scheduler
-                .schedule_event_at(scheduler.time() + Duration::from_secs(2), Self::action, ())
+                .schedule_event(scheduler.time() + Duration::from_secs(2), Self::action, ())
                 .unwrap();
         }
         async fn action(&mut self) {
@@ -51,14 +51,10 @@ fn model_cancel_future_keyed_event() {
     impl TestModel {
         fn trigger(&mut self, _: (), scheduler: &Scheduler<Self>) {
             scheduler
-                .schedule_event_at(scheduler.time() + Duration::from_secs(1), Self::action1, ())
+                .schedule_event(scheduler.time() + Duration::from_secs(1), Self::action1, ())
                 .unwrap();
             self.key = scheduler
-                .schedule_keyed_event_at(
-                    scheduler.time() + Duration::from_secs(2),
-                    Self::action2,
-                    (),
-                )
+                .schedule_keyed_event(scheduler.time() + Duration::from_secs(2), Self::action2, ())
                 .ok();
         }
         async fn action1(&mut self) {
@@ -100,14 +96,10 @@ fn model_cancel_same_time_keyed_event() {
     impl TestModel {
         fn trigger(&mut self, _: (), scheduler: &Scheduler<Self>) {
             scheduler
-                .schedule_event_at(scheduler.time() + Duration::from_secs(2), Self::action1, ())
+                .schedule_event(scheduler.time() + Duration::from_secs(2), Self::action1, ())
                 .unwrap();
             self.key = scheduler
-                .schedule_keyed_event_at(
-                    scheduler.time() + Duration::from_secs(2),
-                    Self::action2,
-                    (),
-                )
+                .schedule_keyed_event(scheduler.time() + Duration::from_secs(2), Self::action2, ())
                 .ok();
         }
         async fn action1(&mut self) {
@@ -148,7 +140,7 @@ fn model_schedule_periodic_event() {
     impl TestModel {
         fn trigger(&mut self, _: (), scheduler: &Scheduler<Self>) {
             scheduler
-                .schedule_periodic_event_at(
+                .schedule_periodic_event(
                     scheduler.time() + Duration::from_secs(2),
                     Duration::from_secs(3),
                     Self::action,
@@ -195,7 +187,7 @@ fn model_cancel_periodic_event() {
     impl TestModel {
         fn trigger(&mut self, _: (), scheduler: &Scheduler<Self>) {
             self.key = scheduler
-                .schedule_periodic_keyed_event_at(
+                .schedule_keyed_periodic_event(
                     scheduler.time() + Duration::from_secs(2),
                     Duration::from_secs(3),
                     Self::action,
