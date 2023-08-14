@@ -23,6 +23,30 @@ use crate::util::sync_cell::SyncCellReader;
 /// Shorthand for the scheduler queue type.
 pub(crate) type SchedulerQueue = PriorityQueue<(MonotonicTime, ChannelId), Box<dyn ScheduledEvent>>;
 
+/// Trait abstracting over time-absolute and time-relative deadlines.
+///
+/// This trait is implemented by [`std::time::Duration`] and
+/// [`MonotonicTime`].
+pub trait Deadline {
+    /// Make this deadline into an absolute timestamp, using the provided
+    /// current time as a reference.
+    fn into_time(self, now: MonotonicTime) -> MonotonicTime;
+}
+
+impl Deadline for Duration {
+    #[inline(always)]
+    fn into_time(self, now: MonotonicTime) -> MonotonicTime {
+        now + self
+    }
+}
+
+impl Deadline for MonotonicTime {
+    #[inline(always)]
+    fn into_time(self, _: MonotonicTime) -> MonotonicTime {
+        self
+    }
+}
+
 /// A local scheduler for models.
 ///
 /// A `Scheduler` is a handle to the global scheduler associated to a model
@@ -73,7 +97,7 @@ pub(crate) type SchedulerQueue = PriorityQueue<(MonotonicTime, ChannelId), Box<d
 ///         if delay.is_zero() {
 ///             self.msg_out.send(greeting).await;
 ///         } else {
-///             scheduler.schedule_event_in(delay, Self::send_msg, greeting).unwrap();
+///             scheduler.schedule_event(delay, Self::send_msg, greeting).unwrap();
 ///         }
 ///     }
 ///
@@ -127,87 +151,39 @@ impl<M: Model> Scheduler<M> {
 
     /// Schedules an event at a future time.
     ///
-    /// An error is returned if the specified time is not in the future of the
-    /// current simulation time.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use asynchronix::model::Model;
-    /// use asynchronix::time::{MonotonicTime, Scheduler};
-    ///
-    /// // An alarm clock.
-    /// pub struct AlarmClock {}
-    ///
-    /// impl AlarmClock {
-    ///     // Sets an alarm [input port].
-    ///     pub fn set(&mut self, setting: MonotonicTime, scheduler: &Scheduler<Self>) {
-    ///         if scheduler.schedule_event_at(setting, Self::ring, ()).is_err() {
-    ///             println!("The alarm clock can only be set for a future time");
-    ///         }
-    ///     }
-    ///
-    ///     // Rings the alarm [private input port].
-    ///     fn ring(&mut self) {
-    ///         println!("Brringggg");
-    ///     }
-    /// }
-    ///
-    /// impl Model for AlarmClock {}
-    /// ```
-    pub fn schedule_event_at<F, T, S>(
-        &self,
-        time: MonotonicTime,
-        func: F,
-        arg: T,
-    ) -> Result<(), SchedulingError>
-    where
-        F: for<'a> InputFn<'a, M, T, S>,
-        T: Send + Clone + 'static,
-        S: Send + 'static,
-    {
-        if self.time() >= time {
-            return Err(SchedulingError::InvalidScheduledTime);
-        }
-        let sender = self.sender.clone();
-        schedule_event_at_unchecked(time, func, arg, sender, &self.scheduler_queue);
-
-        Ok(())
-    }
-
-    /// Schedules an event at the lapse of the specified duration.
-    ///
-    /// An error is returned if the specified delay is null.
+    /// An error is returned if the specified deadline is not in the future of
+    /// the current simulation time.
     ///
     /// # Examples
     ///
     /// ```
     /// use std::time::Duration;
-    /// use std::future::Future;
+    ///
     /// use asynchronix::model::Model;
     /// use asynchronix::time::Scheduler;
     ///
-    /// // A model that logs the value of a counter every second after being
-    /// // triggered the first time.
-    /// pub struct CounterLogger {}
+    /// // A timer.
+    /// pub struct Timer {}
     ///
-    /// impl CounterLogger {
-    ///     // Triggers the logging of a timestamp every second [input port].
-    ///     pub fn trigger(&mut self, counter: u64, scheduler: &Scheduler<Self>) {
-    ///         println!("counter: {}", counter);
+    /// impl Timer {
+    ///     // Sets an alarm [input port].
+    ///     pub fn set(&mut self, setting: Duration, scheduler: &Scheduler<Self>) {
+    ///         if scheduler.schedule_event(setting, Self::ring, ()).is_err() {
+    ///             println!("The alarm clock can only be set for a future time");
+    ///         }
+    ///     }
     ///
-    ///         // Schedule this method again in 1s with an incremented counter.
-    ///         scheduler
-    ///             .schedule_event_in(Duration::from_secs(1), Self::trigger, counter + 1)
-    ///             .unwrap();
+    ///     // Rings [private input port].
+    ///     fn ring(&mut self) {
+    ///         println!("Brringggg");
     ///     }
     /// }
     ///
-    /// impl Model for CounterLogger {}
+    /// impl Model for Timer {}
     /// ```
-    pub fn schedule_event_in<F, T, S>(
+    pub fn schedule_event<F, T, S>(
         &self,
-        delay: Duration,
+        deadline: impl Deadline,
         func: F,
         arg: T,
     ) -> Result<(), SchedulingError>
@@ -216,10 +192,11 @@ impl<M: Model> Scheduler<M> {
         T: Send + Clone + 'static,
         S: Send + 'static,
     {
-        if delay.is_zero() {
+        let now = self.time();
+        let time = deadline.into_time(now);
+        if now >= time {
             return Err(SchedulingError::InvalidScheduledTime);
         }
-        let time = self.time() + delay;
         let sender = self.sender.clone();
         schedule_event_at_unchecked(time, func, arg, sender, &self.scheduler_queue);
 
@@ -228,8 +205,8 @@ impl<M: Model> Scheduler<M> {
 
     /// Schedules a cancellable event at a future time and returns an event key.
     ///
-    /// An error is returned if the specified time is not in the future of the
-    /// current simulation time.
+    /// An error is returned if the specified deadline is not in the future of
+    /// the current simulation time.
     ///
     /// # Examples
     ///
@@ -247,7 +224,7 @@ impl<M: Model> Scheduler<M> {
     ///     // Sets an alarm [input port].
     ///     pub fn set(&mut self, setting: MonotonicTime, scheduler: &Scheduler<Self>) {
     ///         self.cancel();
-    ///         match scheduler.schedule_keyed_event_at(setting, Self::ring, ()) {
+    ///         match scheduler.schedule_keyed_event(setting, Self::ring, ()) {
     ///             Ok(event_key) => self.event_key = Some(event_key),
     ///             Err(_) => println!("The alarm clock can only be set for a future time"),
     ///         };
@@ -266,9 +243,9 @@ impl<M: Model> Scheduler<M> {
     ///
     /// impl Model for CancellableAlarmClock {}
     /// ```
-    pub fn schedule_keyed_event_at<F, T, S>(
+    pub fn schedule_keyed_event<F, T, S>(
         &self,
-        time: MonotonicTime,
+        deadline: impl Deadline,
         func: F,
         arg: T,
     ) -> Result<EventKey, SchedulingError>
@@ -277,39 +254,11 @@ impl<M: Model> Scheduler<M> {
         T: Send + Clone + 'static,
         S: Send + 'static,
     {
-        if self.time() >= time {
+        let now = self.time();
+        let time = deadline.into_time(now);
+        if now >= time {
             return Err(SchedulingError::InvalidScheduledTime);
         }
-        let sender = self.sender.clone();
-        let event_key =
-            schedule_keyed_event_at_unchecked(time, func, arg, sender, &self.scheduler_queue);
-
-        Ok(event_key)
-    }
-
-    /// Schedules a cancellable event at the lapse of the specified duration and
-    /// returns an event key.
-    ///
-    /// An error is returned if the specified delay is null.
-    ///
-    /// See also:
-    /// [`schedule_keyed_event_at`][Scheduler::schedule_keyed_event_at],
-    /// [`schedule_event_in`][Scheduler::schedule_event_in].
-    pub fn schedule_keyed_event_in<F, T, S>(
-        &self,
-        delay: Duration,
-        func: F,
-        arg: T,
-    ) -> Result<EventKey, SchedulingError>
-    where
-        F: for<'a> InputFn<'a, M, T, S>,
-        T: Send + Clone + 'static,
-        S: Send + 'static,
-    {
-        if delay.is_zero() {
-            return Err(SchedulingError::InvalidScheduledTime);
-        }
-        let time = self.time() + delay;
         let sender = self.sender.clone();
         let event_key =
             schedule_keyed_event_at_unchecked(time, func, arg, sender, &self.scheduler_queue);
@@ -319,8 +268,8 @@ impl<M: Model> Scheduler<M> {
 
     /// Schedules a periodically recurring event at a future time.
     ///
-    /// An error is returned if the specified time is not in the future of the
-    /// current simulation time or if the specified period is null.
+    /// An error is returned if the specified deadline is not in the future of
+    /// the current simulation time or if the specified period is null.
     ///
     /// # Examples
     ///
@@ -336,7 +285,7 @@ impl<M: Model> Scheduler<M> {
     /// impl BeepingAlarmClock {
     ///     // Sets an alarm [input port].
     ///     pub fn set(&mut self, setting: MonotonicTime, scheduler: &Scheduler<Self>) {
-    ///         if scheduler.schedule_periodic_event_at(
+    ///         if scheduler.schedule_periodic_event(
     ///             setting,
     ///             Duration::from_secs(1), // 1Hz = 1/1s
     ///             Self::beep,
@@ -354,9 +303,9 @@ impl<M: Model> Scheduler<M> {
     ///
     /// impl Model for BeepingAlarmClock {}
     /// ```
-    pub fn schedule_periodic_event_at<F, T, S>(
+    pub fn schedule_periodic_event<F, T, S>(
         &self,
-        time: MonotonicTime,
+        deadline: impl Deadline,
         period: Duration,
         func: F,
         arg: T,
@@ -366,53 +315,14 @@ impl<M: Model> Scheduler<M> {
         T: Send + Clone + 'static,
         S: Send + 'static,
     {
-        if self.time() >= time {
+        let now = self.time();
+        let time = deadline.into_time(now);
+        if now >= time {
             return Err(SchedulingError::InvalidScheduledTime);
         }
         if period.is_zero() {
             return Err(SchedulingError::NullRepetitionPeriod);
         }
-        let sender = self.sender.clone();
-        schedule_periodic_event_at_unchecked(
-            time,
-            period,
-            func,
-            arg,
-            sender,
-            &self.scheduler_queue,
-        );
-
-        Ok(())
-    }
-
-    /// Schedules a periodically recurring event at the lapse of the specified
-    /// duration.
-    ///
-    /// An error is returned if the specified delay or the specified period are
-    /// null.
-    ///
-    /// See also:
-    /// [`schedule_periodic_event_at`][Scheduler::schedule_periodic_event_at],
-    /// [`schedule_event_in`][Scheduler::schedule_event_in].
-    pub fn schedule_periodic_event_in<F, T, S>(
-        &self,
-        delay: Duration,
-        period: Duration,
-        func: F,
-        arg: T,
-    ) -> Result<(), SchedulingError>
-    where
-        F: for<'a> InputFn<'a, M, T, S> + Clone,
-        T: Send + Clone + 'static,
-        S: Send + 'static,
-    {
-        if delay.is_zero() {
-            return Err(SchedulingError::InvalidScheduledTime);
-        }
-        if period.is_zero() {
-            return Err(SchedulingError::NullRepetitionPeriod);
-        }
-        let time = self.time() + delay;
         let sender = self.sender.clone();
         schedule_periodic_event_at_unchecked(
             time,
@@ -429,8 +339,8 @@ impl<M: Model> Scheduler<M> {
     /// Schedules a cancellable, periodically recurring event at a future time
     /// and returns an event key.
     ///
-    /// An error is returned if the specified time is not in the future of the
-    /// current simulation time or if the specified period is null.
+    /// An error is returned if the specified deadline is not in the future of
+    /// the current simulation time or if the specified period is null.
     ///
     /// # Examples
     ///
@@ -451,7 +361,7 @@ impl<M: Model> Scheduler<M> {
     ///     // Sets an alarm [input port].
     ///     pub fn set(&mut self, setting: MonotonicTime, scheduler: &Scheduler<Self>) {
     ///         self.cancel();
-    ///         match scheduler.schedule_periodic_keyed_event_at(
+    ///         match scheduler.schedule_keyed_periodic_event(
     ///             setting,
     ///             Duration::from_secs(1), // 1Hz = 1/1s
     ///             Self::beep,
@@ -475,9 +385,9 @@ impl<M: Model> Scheduler<M> {
     ///
     /// impl Model for CancellableBeepingAlarmClock {}
     /// ```
-    pub fn schedule_periodic_keyed_event_at<F, T, S>(
+    pub fn schedule_keyed_periodic_event<F, T, S>(
         &self,
-        time: MonotonicTime,
+        deadline: impl Deadline,
         period: Duration,
         func: F,
         arg: T,
@@ -487,53 +397,14 @@ impl<M: Model> Scheduler<M> {
         T: Send + Clone + 'static,
         S: Send + 'static,
     {
-        if self.time() >= time {
+        let now = self.time();
+        let time = deadline.into_time(now);
+        if now >= time {
             return Err(SchedulingError::InvalidScheduledTime);
         }
         if period.is_zero() {
             return Err(SchedulingError::NullRepetitionPeriod);
         }
-        let sender = self.sender.clone();
-        let event_key = schedule_periodic_keyed_event_at_unchecked(
-            time,
-            period,
-            func,
-            arg,
-            sender,
-            &self.scheduler_queue,
-        );
-
-        Ok(event_key)
-    }
-
-    /// Schedules a cancellable, periodically recurring event at the lapse of
-    /// the specified duration and returns an event key.
-    ///
-    /// An error is returned if the specified delay or the specified period are
-    /// null.
-    ///
-    /// See also:
-    /// [`schedule_periodic_keyed_event_at`][Scheduler::schedule_periodic_keyed_event_at],
-    /// [`schedule_event_in`][Scheduler::schedule_event_in].
-    pub fn schedule_periodic_keyed_event_in<F, T, S>(
-        &self,
-        delay: Duration,
-        period: Duration,
-        func: F,
-        arg: T,
-    ) -> Result<EventKey, SchedulingError>
-    where
-        F: for<'a> InputFn<'a, M, T, S> + Clone,
-        T: Send + Clone + 'static,
-        S: Send + 'static,
-    {
-        if delay.is_zero() {
-            return Err(SchedulingError::InvalidScheduledTime);
-        }
-        if period.is_zero() {
-            return Err(SchedulingError::NullRepetitionPeriod);
-        }
-        let time = self.time() + delay;
         let sender = self.sender.clone();
         let event_key = schedule_periodic_keyed_event_at_unchecked(
             time,

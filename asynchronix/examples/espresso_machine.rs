@@ -141,7 +141,7 @@ impl Controller {
         // Schedule the `stop_brew()` method and turn on the pump.
         self.stop_brew_key = Some(
             scheduler
-                .schedule_keyed_event_in(self.brew_time, Self::stop_brew, ())
+                .schedule_keyed_event(self.brew_time, Self::stop_brew, ())
                 .unwrap(),
         );
         self.pump_cmd.send(PumpCommand::On).await;
@@ -274,7 +274,7 @@ impl Tank {
         let duration_until_empty = Duration::from_secs_f64(duration_until_empty);
 
         // Schedule the next update.
-        match scheduler.schedule_keyed_event_in(duration_until_empty, Self::set_empty, ()) {
+        match scheduler.schedule_keyed_event(duration_until_empty, Self::set_empty, ()) {
             Ok(set_empty_key) => {
                 let state = TankDynamicState {
                     last_volume_update: time,
@@ -431,7 +431,7 @@ fn main() {
     assert_eq!(flow_rate.take(), Some(0.0));
 
     // Interrupt the brew after 15s by pressing again the brew button.
-    simu.schedule_event_in(
+    simu.schedule_event(
         Duration::from_secs(15),
         Controller::brew_cmd,
         (),

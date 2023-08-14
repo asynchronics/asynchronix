@@ -88,7 +88,7 @@ pub struct DelayedMultiplier {
 impl DelayedMultiplier {
     pub fn input(&mut self, value: f64, scheduler: &Scheduler<Self>) {
         scheduler
-            .schedule_event_in(Duration::from_secs(1), Self::send, 2.0 * value)
+            .schedule_event(Duration::from_secs(1), Self::send, 2.0 * value)
             .unwrap();
     }
     async fn send(&mut self, value: f64) {

@@ -49,9 +49,9 @@ fn simulation_schedule_events() {
     let (mut simu, t0, addr, mut output) = simple_bench();
 
     // Queue 2 events at t0+3s and t0+2s, in reverse order.
-    simu.schedule_event_in(Duration::from_secs(3), PassThroughModel::input, (), &addr)
+    simu.schedule_event(Duration::from_secs(3), PassThroughModel::input, (), &addr)
         .unwrap();
-    simu.schedule_event_at(
+    simu.schedule_event(
         t0 + Duration::from_secs(2),
         PassThroughModel::input,
         (),
@@ -65,7 +65,7 @@ fn simulation_schedule_events() {
     assert!(output.next().is_some());
 
     // Schedule another event in 4s (at t0+6s).
-    simu.schedule_event_in(Duration::from_secs(4), PassThroughModel::input, (), &addr)
+    simu.schedule_event(Duration::from_secs(4), PassThroughModel::input, (), &addr)
         .unwrap();
 
     // Move to the 2nd event at t0+3s.
@@ -85,7 +85,7 @@ fn simulation_schedule_keyed_events() {
     let (mut simu, t0, addr, mut output) = simple_bench();
 
     let event_t1 = simu
-        .schedule_keyed_event_at(
+        .schedule_keyed_event(
             t0 + Duration::from_secs(1),
             PassThroughModel::input,
             1,
@@ -94,10 +94,10 @@ fn simulation_schedule_keyed_events() {
         .unwrap();
 
     let event_t2_1 = simu
-        .schedule_keyed_event_in(Duration::from_secs(2), PassThroughModel::input, 21, &addr)
+        .schedule_keyed_event(Duration::from_secs(2), PassThroughModel::input, 21, &addr)
         .unwrap();
 
-    simu.schedule_event_in(Duration::from_secs(2), PassThroughModel::input, 22, &addr)
+    simu.schedule_event(Duration::from_secs(2), PassThroughModel::input, 22, &addr)
         .unwrap();
 
     // Move to the 1st event at t0+1.
@@ -123,7 +123,7 @@ fn simulation_schedule_periodic_events() {
     let (mut simu, t0, addr, mut output) = simple_bench();
 
     // Queue 2 periodic events at t0 + 3s + k*2s.
-    simu.schedule_periodic_event_in(
+    simu.schedule_periodic_event(
         Duration::from_secs(3),
         Duration::from_secs(2),
         PassThroughModel::input,
@@ -131,7 +131,7 @@ fn simulation_schedule_periodic_events() {
         &addr,
     )
     .unwrap();
-    simu.schedule_periodic_event_at(
+    simu.schedule_periodic_event(
         t0 + Duration::from_secs(3),
         Duration::from_secs(2),
         PassThroughModel::input,
@@ -158,7 +158,7 @@ fn simulation_schedule_periodic_keyed_events() {
     let (mut simu, t0, addr, mut output) = simple_bench();
 
     // Queue 2 periodic events at t0 + 3s + k*2s.
-    simu.schedule_periodic_event_in(
+    simu.schedule_periodic_event(
         Duration::from_secs(3),
         Duration::from_secs(2),
         PassThroughModel::input,
@@ -167,7 +167,7 @@ fn simulation_schedule_periodic_keyed_events() {
     )
     .unwrap();
     let event2_key = simu
-        .schedule_periodic_keyed_event_at(
+        .schedule_keyed_periodic_event(
             t0 + Duration::from_secs(3),
             Duration::from_secs(2),
             PassThroughModel::input,

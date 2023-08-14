@@ -174,7 +174,7 @@ impl Driver {
 
             // Schedule the next pulse.
             scheduler
-                .schedule_event_in(pulse_duration, Self::send_pulse, ())
+                .schedule_event(pulse_duration, Self::send_pulse, ())
                 .unwrap();
         }
     }
@@ -224,7 +224,7 @@ fn main() {
     assert!(position.next().is_none());
 
     // Start the motor in 2s with a PPS of 10Hz.
-    simu.schedule_event_in(
+    simu.schedule_event(
         Duration::from_secs(2),
         Driver::pulse_rate,
         10.0,
