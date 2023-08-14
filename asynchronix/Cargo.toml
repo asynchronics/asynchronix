@@ -17,6 +17,7 @@ A high performance asychronous compute framework for system simulation.
 """
 categories = ["simulation", "aerospace", "science"]
 keywords = ["simulation", "discrete-event", "systems", "cyberphysical", "real-time"]
+autotests = false
 
 [features]
 # API-unstable public exports meant for external test/benchmarking; development only.
@@ -44,3 +45,7 @@ waker-fn = "1.1"
 futures-util = "0.3"
 futures-channel = "0.3"
 futures-executor = "0.3"
+
+[[test]]
+name = "integration"
+path = "tests/tests.rs"
