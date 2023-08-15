@@ -429,6 +429,7 @@ impl<M: Model> fmt::Debug for Scheduler<M> {
 ///
 /// An `EventKey` can be used to cancel a future event.
 #[derive(Clone, Debug)]
+#[must_use = "prefer unkeyed scheduling methods if the event is never cancelled"]
 pub struct EventKey {
     is_cancelled: Arc<AtomicBool>,
 }
