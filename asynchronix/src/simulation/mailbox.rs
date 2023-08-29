@@ -8,7 +8,7 @@ use crate::model::Model;
 /// A mailbox is an entity associated to a model instance that collects all
 /// messages sent to that model. The size of its internal buffer can be
 /// optionally specified at construction time using
-/// [`with_capacity`](Mailbox::with_capacity).
+/// [`with_capacity()`](Mailbox::with_capacity).
 pub struct Mailbox<M: Model>(pub(crate) Receiver<M>);
 
 impl<M: Model> Mailbox<M> {

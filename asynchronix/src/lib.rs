@@ -235,14 +235,23 @@
 //! The simulation can be controlled in several ways:
 //!
 //! 1. by advancing time, either until the next scheduled event with
-//!    [`Simulation::step()`](simulation::Simulation::step), or by a specific
-//!    duration using for instance
+//!    [`Simulation::step()`](simulation::Simulation::step), or until a specific
+//!    deadline using for instance
 //!    [`Simulation::step_by()`](simulation::Simulation::step_by).
 //! 2. by sending events or queries without advancing simulation time, using
 //!    [`Simulation::send_event()`](simulation::Simulation::send_event) or
 //!    [`Simulation::send_query()`](simulation::Simulation::send_query),
 //! 3. by scheduling events, using for instance
 //!    [`Simulation::schedule_event()`](simulation::Simulation::schedule_event).
+//!
+//! When a simulation is initialized via
+//! [`SimInit::init()`](simulation::SimInit::init) then the simulation will run
+//! as fast as possible, without regard for the actual wall clock time.
+//! Alternatively, it is possible to initialize a simulation via
+//! [`SimInit::init_with_clock()`](simulation::SimInit::init_with_clock) to bind
+//! the simulation time to the wall clock time using a custom
+//! [`Clock`](time::Clock) type or a readily-available real-time clock such as
+//! [`AutoSystemClock`](time::AutoSystemClock).
 //!
 //! Simulation outputs can be monitored using
 //! [`EventSlot`](simulation::EventSlot)s and

@@ -9,13 +9,14 @@
 //! The lifecycle of a simulation bench typically comprises the following
 //! stages:
 //!
-//! 1) instantiation of models and their [`Mailbox`]es,
-//! 2) connection of the models' output/requestor ports to input/replier ports
+//! 1. instantiation of models and their [`Mailbox`]es,
+//! 2. connection of the models' output/requestor ports to input/replier ports
 //!    using the [`Address`]es of the target models,
-//! 3) instantiation of a [`SimInit`] simulation builder and migration of all
+//! 3. instantiation of a [`SimInit`] simulation builder and migration of all
 //!    models and mailboxes to the builder with [`SimInit::add_model()`],
-//! 4) initialization of a [`Simulation`] instance with [`SimInit::init()`],
-//! 5) discrete-time simulation, which typically involves scheduling events and
+//! 4. initialization of a [`Simulation`] instance with [`SimInit::init()`] or
+//!    [`SimInit::init_with_clock()`],
+//! 5. discrete-time simulation, which typically involves scheduling events and
 //!    incrementing simulation time while observing the models outputs.
 //!
 //! Most information necessary to run a simulation is available in the root
@@ -137,8 +138,8 @@ use recycle_box::{coerce_box, RecycleBox};
 use crate::executor::Executor;
 use crate::model::{InputFn, Model, ReplierFn};
 use crate::time::{
-    self, Deadline, EventKey, MonotonicTime, ScheduledEvent, SchedulerQueue, SchedulingError,
-    TearableAtomicTime,
+    self, Clock, Deadline, EventKey, MonotonicTime, NoClock, ScheduledEvent, SchedulerQueue,
+    SchedulingError, TearableAtomicTime,
 };
 use crate::util::futures::SeqFuture;
 use crate::util::slot;
@@ -146,15 +147,17 @@ use crate::util::sync_cell::SyncCell;
 
 /// Simulation environment.
 ///
-/// A `Simulation` is created by calling the
-/// [`SimInit::init()`](crate::simulation::SimInit::init) method on a simulation
-/// initializer. It contains an asynchronous executor that runs all simulation
-/// models added beforehand to [`SimInit`](crate::simulation::SimInit).
+/// A `Simulation` is created by calling
+/// [`SimInit::init()`](crate::simulation::SimInit::init) or
+/// [`SimInit::init_with_clock()`](crate::simulation::SimInit::init_with_clock)
+/// method on a simulation initializer. It contains an asynchronous executor
+/// that runs all simulation models added beforehand to
+/// [`SimInit`](crate::simulation::SimInit).
 ///
 /// A [`Simulation`] object also manages an event scheduling queue and
 /// simulation time. The scheduling queue can be accessed from the simulation
 /// itself, but also from models via the optional
-/// [`&Scheduler`][time::Scheduler] argument of input and replier port methods.
+/// [`&Scheduler`](time::Scheduler) argument of input and replier port methods.
 /// Likewise, simulation time can be accessed with the [`Simulation::time()`]
 /// method, or from models with the [`Scheduler::time()`](time::Scheduler::time)
 /// method.
@@ -169,18 +172,24 @@ use crate::util::sync_cell::SyncCell;
 /// [`schedule_*()`](Simulation::schedule_event) method. These methods queue an
 /// event without blocking.
 ///
-/// Finally, the [`Simulation`] instance manages simulation time. Calling
-/// [`step()`](Simulation::step) will increment simulation time until that of
-/// the next scheduled event in chronological order, whereas
-/// [`step_by()`](Simulation::step_by) and
-/// [`step_until()`](Simulation::step_until) can increment time by an arbitrary
-/// duration, running the computations for all intermediate time slices
-/// sequentially. These methods will block until all computations for the
-/// relevant time slice(s) have completed.
+/// Finally, the [`Simulation`] instance manages simulation time. A call to
+/// [`step()`](Simulation::step) will:
+///
+/// 1. increment simulation time until that of the next scheduled event in
+///    chronological order, then
+/// 2. call [`Clock::synchronize()`](time::Clock::synchronize) which, unless the
+///    simulation is configured to run as fast as possible, blocks until the
+///    desired wall clock time, and finally
+/// 3. run all computations scheduled for the new simulation time.
+///
+/// The [`step_by()`](Simulation::step_by) and
+/// [`step_until()`](Simulation::step_until) methods operate similarly but
+/// iterate until the target simulation time has been reached.
 pub struct Simulation {
     executor: Executor,
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
     time: SyncCell<TearableAtomicTime>,
+    clock: Box<dyn Clock>,
 }
 
 impl Simulation {
@@ -194,6 +203,22 @@ impl Simulation {
             executor,
             scheduler_queue,
             time,
+            clock: Box::new(NoClock::new()),
+        }
+    }
+
+    /// Creates a new `Simulation` with the specified clock.
+    pub(crate) fn with_clock(
+        executor: Executor,
+        scheduler_queue: Arc<Mutex<SchedulerQueue>>,
+        time: SyncCell<TearableAtomicTime>,
+        clock: impl Clock + 'static,
+    ) -> Self {
+        Self {
+            executor,
+            scheduler_queue,
+            time,
+            clock: Box::new(clock),
         }
     }
 
@@ -205,31 +230,34 @@ impl Simulation {
     /// Advances simulation time to that of the next scheduled event, processing
     /// that event as well as all other event scheduled for the same time.
     ///
-    /// This method may block. Once it returns, it is guaranteed that all newly
-    /// processed event (if any) have completed.
+    /// Processing is gated by a (possibly blocking) call to
+    /// [`Clock::synchronize()`](time::Clock::synchronize) on the configured
+    /// simulation clock. This method blocks until all newly processed events
+    /// have completed.
     pub fn step(&mut self) {
         self.step_to_next_bounded(MonotonicTime::MAX);
     }
 
-    /// Iteratively advances the simulation time by the specified duration and
-    /// processes all events scheduled up to the target time.
+    /// Iteratively advances the simulation time by the specified duration, as
+    /// if by calling [`Simulation::step()`] repeatedly.
     ///
-    /// This method may block. Once it returns, it is guaranteed that (i) all
-    /// events scheduled up to the specified target time have completed and (ii)
-    /// the final simulation time has been incremented by the specified
-    /// duration.
+    /// This method block until all events scheduled up to the specified target
+    /// time have completed. The simulation time upon completion is equal to the
+    /// initial simulation time incremented by the specified duration, whether
+    /// or not an event was scheduled for that time.
     pub fn step_by(&mut self, duration: Duration) {
         let target_time = self.time.read() + duration;
 
         self.step_until_unchecked(target_time);
     }
 
-    /// Iteratively advances the simulation time and processes all events
-    /// scheduled up to the specified target time.
+    /// Iteratively advances the simulation time until the specified deadline,
+    /// as if by calling [`Simulation::step()`] repeatedly.
     ///
-    /// This method may block. Once it returns, it is guaranteed that (i) all
-    /// events scheduled up to the specified target time have completed and (ii)
-    /// the final simulation time matches the target time.
+    /// This method block until all events scheduled up to the specified target
+    /// time have completed. The simulation time upon completion is equal to the
+    /// specified target time, whether or not an event was scheduled for that
+    /// time.
     pub fn step_until(&mut self, target_time: MonotonicTime) -> Result<(), SchedulingError> {
         if self.time.read() >= target_time {
             return Err(SchedulingError::InvalidScheduledTime);
@@ -477,7 +505,7 @@ impl Simulation {
     /// corresponding new simulation time is returned.
     fn step_to_next_bounded(&mut self, upper_time_bound: MonotonicTime) -> Option<MonotonicTime> {
         // Function pulling the next event. If the event is periodic, it is
-        // immediately cloned and re-scheduled.
+        // immediately re-scheduled.
         fn pull_next_event(
             scheduler_queue: &mut MutexGuard<SchedulerQueue>,
         ) -> Box<dyn ScheduledEvent> {
@@ -545,9 +573,12 @@ impl Simulation {
                 // Otherwise wait until all events have completed and return.
                 _ => {
                     drop(scheduler_queue); // make sure the queue's mutex is released.
+                    let current_time = current_key.0;
+                    // TODO: check synchronization status?
+                    self.clock.synchronize(current_time);
                     self.executor.run();
 
-                    return Some(current_key.0);
+                    return Some(current_time);
                 }
             };
         }

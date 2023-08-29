@@ -73,7 +73,7 @@ jobs:
       - name: Run cargo miri tests
         run: cargo miri test --tests --lib
         env:
-          MIRIFLAGS: -Zmiri-strict-provenance
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=4
 
       - name: Run cargo miri example1
         run: cargo miri run --example espresso_machine
