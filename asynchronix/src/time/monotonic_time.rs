@@ -24,7 +24,7 @@ const NANOS_PER_SEC: u32 = 1_000_000_000;
 /// - if required, exact conversion to a Unix timestamp is trivial and only
 ///   requires subtracting from this timestamp the number of leap seconds
 ///   between TAI and UTC time (see also the
-///   [`as_unix_secs`](MonotonicTime::as_unix_secs) method).
+///   [`as_unix_secs()`](MonotonicTime::as_unix_secs) method).
 ///
 /// Although no date-time conversion methods are provided, conversion from
 /// timestamp to TAI date-time representations and back can be easily performed
@@ -163,7 +163,8 @@ impl MonotonicTime {
     /// [`EPOCH`](MonotonicTime::EPOCH) (1970-01-01 00:00:00 TAI).
     ///
     /// Consistently with the interpretation of seconds and nanoseconds in the
-    /// [`new`][Self::new] constructor, seconds are always rounded towards `-∞`.
+    /// [`new()`](Self::new) constructor, seconds are always rounded towards
+    /// `-∞`.
     ///
     /// # Examples
     ///
@@ -192,12 +193,12 @@ impl MonotonicTime {
     /// current and historical values.
     ///
     /// This method merely subtracts the offset from the value returned by
-    /// [`as_secs`](Self::as_secs) and checks for potential overflow; its main
+    /// [`as_secs()`](Self::as_secs) and checks for potential overflow; its main
     /// purpose is to prevent mistakes regarding the direction in which the
     /// offset should be applied.
     ///
     /// Note that the nanosecond part of a Unix timestamp can be simply
-    /// retrieved with [`subsec_nanos`][Self::subsec_nanos] since UTC and TAI
+    /// retrieved with [`subsec_nanos()`](Self::subsec_nanos) since UTC and TAI
     /// differ by a whole number of seconds.
     ///
     /// # Panics

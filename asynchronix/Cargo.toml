@@ -35,6 +35,7 @@ num_cpus = "1.13"
 pin-project-lite = "0.2"
 recycle-box = "0.2"
 slab = "0.4"
+spin_sleep = "1"
 st3 = "0.4"
 
 [target.'cfg(asynchronix_loom)'.dependencies]

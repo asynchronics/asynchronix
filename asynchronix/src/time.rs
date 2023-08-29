@@ -3,6 +3,8 @@
 //! This module provides most notably:
 //!
 //! * [`MonotonicTime`]: a monotonic timestamp based on the [TAI] time standard,
+//! * [`Clock`]: a trait for types that can synchronize a simulation,
+//!       implemented for instance by [`SystemClock`] and [`AutoSystemClock`],
 //! * [`Scheduler`]: a model-local handle to the global scheduler that can be
 //!   used by models to schedule future actions onto themselves.
 //!
@@ -45,9 +47,11 @@
 //! impl Model for AlarmClock {}
 //! ```
 
+mod clock;
 mod monotonic_time;
 mod scheduler;
 
+pub use clock::{AutoSystemClock, Clock, NoClock, SyncStatus, SystemClock};
 pub(crate) use monotonic_time::TearableAtomicTime;
 pub use monotonic_time::{MonotonicTime, SystemTimeError};
 pub(crate) use scheduler::{

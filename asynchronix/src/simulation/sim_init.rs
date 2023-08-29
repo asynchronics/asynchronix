@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::executor::Executor;
 use crate::model::Model;
-use crate::time::Scheduler;
+use crate::time::{Clock, Scheduler};
 use crate::time::{MonotonicTime, SchedulerQueue, TearableAtomicTime};
 use crate::util::priority_queue::PriorityQueue;
 use crate::util::sync_cell::SyncCell;
@@ -58,11 +58,32 @@ impl SimInit {
     /// Builds a simulation initialized at the specified simulation time,
     /// executing the [`Model::init()`](crate::model::Model::init) method on all
     /// model initializers.
+    ///
+    /// This is equivalent to calling [`SimInit::init_with_clock()`] with a
+    /// [`NoClock`](crate::time::NoClock) argument and effectively makes the
+    /// simulation run as fast as possible.
     pub fn init(mut self, start_time: MonotonicTime) -> Simulation {
         self.time.write(start_time);
         self.executor.run();
 
         Simulation::new(self.executor, self.scheduler_queue, self.time)
+    }
+
+    /// Builds a simulation synchronized with the provided
+    /// [`Clock`](crate::time::Clock) and initialized at the specified
+    /// simulation time, executing the
+    /// [`Model::init()`](crate::model::Model::init) method on all model
+    /// initializers.
+    pub fn init_with_clock(
+        mut self,
+        start_time: MonotonicTime,
+        mut clock: impl Clock + 'static,
+    ) -> Simulation {
+        self.time.write(start_time);
+        clock.synchronize(start_time);
+        self.executor.run();
+
+        Simulation::with_clock(self.executor, self.scheduler_queue, self.time, clock)
     }
 }
 
