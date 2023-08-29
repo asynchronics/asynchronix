@@ -241,7 +241,7 @@ impl Simulation {
     /// Iteratively advances the simulation time by the specified duration, as
     /// if by calling [`Simulation::step()`] repeatedly.
     ///
-    /// This method block until all events scheduled up to the specified target
+    /// This method blocks until all events scheduled up to the specified target
     /// time have completed. The simulation time upon completion is equal to the
     /// initial simulation time incremented by the specified duration, whether
     /// or not an event was scheduled for that time.
@@ -254,7 +254,7 @@ impl Simulation {
     /// Iteratively advances the simulation time until the specified deadline,
     /// as if by calling [`Simulation::step()`] repeatedly.
     ///
-    /// This method block until all events scheduled up to the specified target
+    /// This method blocks until all events scheduled up to the specified target
     /// time have completed. The simulation time upon completion is equal to the
     /// specified target time, whether or not an event was scheduled for that
     /// time.
