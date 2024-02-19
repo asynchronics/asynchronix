@@ -36,7 +36,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use asynchronix::model::{InitializedModel, Model, Output};
-use asynchronix::simulation::{Mailbox, SimInit};
+use asynchronix::simulation::{EventSlot, Mailbox, SimInit};
 use asynchronix::time::{EventKey, MonotonicTime, Scheduler};
 
 /// Water pump.
@@ -364,7 +364,8 @@ fn main() {
     pump.flow_rate.connect(Tank::set_flow_rate, &tank_mbox);
 
     // Model handles for simulation.
-    let mut flow_rate = pump.flow_rate.connect_slot().0;
+    let mut flow_rate = EventSlot::new();
+    pump.flow_rate.connect_sink(&flow_rate);
     let controller_addr = controller_mbox.address();
     let tank_addr = tank_mbox.address();
 

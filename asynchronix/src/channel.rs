@@ -255,8 +255,8 @@ impl<M: Model> Sender<M> {
     /// All channels are guaranteed to have different identifiers at any given
     /// time, but an identifier may be reused after all handles to a channel
     /// have been dropped.
-    pub(crate) fn channel_id(&self) -> ChannelId {
-        ChannelId(NonZeroUsize::new(&*self.inner as *const Inner<M> as usize).unwrap())
+    pub(crate) fn channel_id(&self) -> NonZeroUsize {
+        NonZeroUsize::new(Arc::as_ptr(&self.inner) as usize).unwrap()
     }
 }
 

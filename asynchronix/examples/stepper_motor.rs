@@ -19,7 +19,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use asynchronix::model::{InitializedModel, Model, Output};
-use asynchronix::simulation::{Mailbox, SimInit};
+use asynchronix::simulation::{EventQueue, Mailbox, SimInit};
 use asynchronix::time::{MonotonicTime, Scheduler};
 
 /// Stepper motor.
@@ -200,7 +200,8 @@ fn main() {
     driver.current_out.connect(Motor::current_in, &motor_mbox);
 
     // Model handles for simulation.
-    let mut position = motor.position.connect_stream().0;
+    let mut position = EventQueue::new();
+    motor.position.connect_sink(&position);
     let motor_addr = motor_mbox.address();
     let driver_addr = driver_mbox.address();
 

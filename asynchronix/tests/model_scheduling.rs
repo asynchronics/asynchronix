@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use asynchronix::model::{Model, Output};
-use asynchronix::simulation::{Mailbox, SimInit};
+use asynchronix::simulation::{EventQueue, Mailbox, SimInit};
 use asynchronix::time::{EventKey, MonotonicTime, Scheduler};
 
 #[test]
@@ -27,7 +27,8 @@ fn model_schedule_event() {
     let mut model = TestModel::default();
     let mbox = Mailbox::new();
 
-    let mut output = model.output.connect_stream().0;
+    let mut output = EventQueue::new();
+    model.output.connect_sink(&output);
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
@@ -71,7 +72,8 @@ fn model_cancel_future_keyed_event() {
     let mut model = TestModel::default();
     let mbox = Mailbox::new();
 
-    let mut output = model.output.connect_stream().0;
+    let mut output = EventQueue::new();
+    model.output.connect_sink(&output);
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
@@ -116,7 +118,8 @@ fn model_cancel_same_time_keyed_event() {
     let mut model = TestModel::default();
     let mbox = Mailbox::new();
 
-    let mut output = model.output.connect_stream().0;
+    let mut output = EventQueue::new();
+    model.output.connect_sink(&output);
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
@@ -157,7 +160,8 @@ fn model_schedule_periodic_event() {
     let mut model = TestModel::default();
     let mbox = Mailbox::new();
 
-    let mut output = model.output.connect_stream().0;
+    let mut output = EventQueue::new();
+    model.output.connect_sink(&output);
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
@@ -206,7 +210,8 @@ fn model_cancel_periodic_event() {
     let mut model = TestModel::default();
     let mbox = Mailbox::new();
 
-    let mut output = model.output.connect_stream().0;
+    let mut output = EventQueue::new();
+    model.output.connect_sink(&output);
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
