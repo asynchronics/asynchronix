@@ -28,6 +28,7 @@ dev-logs = []
 [dependencies]
 async-event = "0.1"
 crossbeam-utils = "0.8"
+crossbeam-queue = "0.3"
 diatomic-waker = "0.1"
 futures-task = "0.3"
 multishot = "0.3"
