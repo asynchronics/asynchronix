@@ -1,6 +1,6 @@
 //! Associative priority queue.
 
-use std::cmp::{Eq, Ord, Ordering, PartialOrd};
+use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 /// A key-value pair ordered by keys in inverse order, with epoch-based ordering
