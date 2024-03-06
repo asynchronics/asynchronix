@@ -60,7 +60,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-asynchronix = "0.2.0"
+asynchronix = "0.2.1"
 ```
 
 

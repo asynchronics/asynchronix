@@ -1,3 +1,18 @@
+# 0.2.1 (2024-03-06)
+
+### Added
+
+- Add support for custom clocks and provide an optional real-time clock
+  ([#9], [#15]).
+
+[#9]: https://github.com/asynchronics/asynchronix/pull/9
+[#15]: https://github.com/asynchronics/asynchronix/pull/15
+
+### Misc
+
+- Update copyright in MIT license to include contributors.
+
+
 # 0.2.0 (2023-08-15)
 
 ### Added (API-breaking changes)
