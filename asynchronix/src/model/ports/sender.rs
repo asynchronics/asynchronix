@@ -4,23 +4,22 @@ use std::future::Future;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use recycle_box::{coerce_box, RecycleBox};
 
 use crate::channel;
 use crate::model::{InputFn, Model, ReplierFn};
-use crate::simulation::EventSinkWriter;
+use crate::util::spsc_queue;
 
-/// An event or query sender abstracting over the target model and input or
-/// replier method.
+/// Abstraction over `EventSender` and `QuerySender`.
 pub(super) trait Sender<T, R>: Send {
-    /// Asynchronously send the event or request.
     fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<R, SendError>>;
 }
 
-/// An object that can send events to an input port.
-pub(super) struct InputSender<M: 'static, F, T, S> {
+/// An object that can send a payload to a model.
+pub(super) struct EventSender<M: 'static, F, T, S> {
     func: F,
     sender: channel::Sender<M>,
     fut_storage: Option<RecycleBox<()>>,
@@ -28,7 +27,7 @@ pub(super) struct InputSender<M: 'static, F, T, S> {
     _phantom_closure_marker: PhantomData<S>,
 }
 
-impl<M: Send, F, T, S> InputSender<M, F, T, S>
+impl<M: Send, F, T, S> EventSender<M, F, T, S>
 where
     M: Model,
     F: for<'a> InputFn<'a, M, T, S>,
@@ -45,15 +44,15 @@ where
     }
 }
 
-impl<M: Send, F, T, S> Sender<T, ()> for InputSender<M, F, T, S>
+impl<M: Send, F, T, S> Sender<T, ()> for EventSender<M, F, T, S>
 where
     M: Model,
-    F: for<'a> InputFn<'a, M, T, S> + Clone,
+    F: for<'a> InputFn<'a, M, T, S> + Copy,
     T: Send + 'static,
-    S: Send + 'static,
+    S: Send,
 {
     fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
-        let func = self.func.clone();
+        let func = self.func;
 
         let fut = self.sender.send(move |model, scheduler, recycle_box| {
             let fut = func.call(model, arg, scheduler);
@@ -67,8 +66,8 @@ where
     }
 }
 
-/// An object that can send a request to a replier port and retrieve a response.
-pub(super) struct ReplierSender<M: 'static, F, T, R, S> {
+/// An object that can send a payload to a model and retrieve a response.
+pub(super) struct QuerySender<M: 'static, F, T, R, S> {
     func: F,
     sender: channel::Sender<M>,
     receiver: multishot::Receiver<R>,
@@ -77,7 +76,7 @@ pub(super) struct ReplierSender<M: 'static, F, T, R, S> {
     _phantom_closure_marker: PhantomData<S>,
 }
 
-impl<M, F, T, R, S> ReplierSender<M, F, T, R, S>
+impl<M, F, T, R, S> QuerySender<M, F, T, R, S>
 where
     M: Model,
     F: for<'a> ReplierFn<'a, M, T, R, S>,
@@ -96,16 +95,16 @@ where
     }
 }
 
-impl<M, F, T, R, S> Sender<T, R> for ReplierSender<M, F, T, R, S>
+impl<M, F, T, R, S> Sender<T, R> for QuerySender<M, F, T, R, S>
 where
     M: Model,
-    F: for<'a> ReplierFn<'a, M, T, R, S> + Clone,
+    F: for<'a> ReplierFn<'a, M, T, R, S> + Copy,
     T: Send + 'static,
     R: Send + 'static,
     S: Send,
 {
     fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<R, SendError>> {
-        let func = self.func.clone();
+        let func = self.func;
         let sender = &mut self.sender;
         let reply_receiver = &mut self.receiver;
         let fut_storage = &mut self.fut_storage;
@@ -135,32 +134,59 @@ where
     }
 }
 
-/// An object that can send a payload to a mutex-protected slot.
-pub(super) struct EventSinkSender<T: Send + 'static, W: EventSinkWriter<T>> {
-    writer: W,
+/// An object that can send a payload to an unbounded queue.
+pub(super) struct EventStreamSender<T> {
+    producer: spsc_queue::Producer<T>,
     fut_storage: Option<RecycleBox<()>>,
-    _phantom_event: PhantomData<T>,
 }
 
-impl<T: Send + 'static, W: EventSinkWriter<T>> EventSinkSender<T, W> {
-    pub(super) fn new(writer: W) -> Self {
+impl<T> EventStreamSender<T> {
+    pub(super) fn new(producer: spsc_queue::Producer<T>) -> Self {
         Self {
-            writer,
+            producer,
             fut_storage: None,
-            _phantom_event: PhantomData,
         }
     }
 }
 
-impl<T, W: EventSinkWriter<T>> Sender<T, ()> for EventSinkSender<T, W>
+impl<T> Sender<T, ()> for EventStreamSender<T>
 where
     T: Send + 'static,
 {
     fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
-        let writer = &self.writer;
+        let producer = &mut self.producer;
 
         RecycledFuture::new(&mut self.fut_storage, async move {
-            writer.write(arg);
+            producer.push(arg).map_err(|_| SendError {})
+        })
+    }
+}
+
+/// An object that can send a payload to a mutex-protected slot.
+pub(super) struct EventSlotSender<T> {
+    slot: Arc<Mutex<Option<T>>>,
+    fut_storage: Option<RecycleBox<()>>,
+}
+
+impl<T> EventSlotSender<T> {
+    pub(super) fn new(slot: Arc<Mutex<Option<T>>>) -> Self {
+        Self {
+            slot,
+            fut_storage: None,
+        }
+    }
+}
+
+impl<T> Sender<T, ()> for EventSlotSender<T>
+where
+    T: Send + 'static,
+{
+    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
+        let slot = &*self.slot;
+
+        RecycledFuture::new(&mut self.fut_storage, async move {
+            let mut slot = slot.lock().unwrap();
+            *slot = Some(arg);
 
             Ok(())
         })

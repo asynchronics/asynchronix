@@ -132,7 +132,7 @@
 //! can be connected to input and requestor ports when assembling the simulation
 //! bench. However, input ports may instead be defined as private methods if
 //! they are only used by the model itself to schedule future actions (see the
-//! [`Scheduler`] examples).
+//! [`Scheduler`](crate::time::Scheduler) examples).
 //!
 //! Changing the signature of an input or replier port is not considered to
 //! alter the public interface of a model provided that the event, request and

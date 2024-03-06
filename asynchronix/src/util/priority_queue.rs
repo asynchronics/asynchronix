@@ -1,6 +1,6 @@
 //! Associative priority queue.
 
-use std::cmp::Ordering;
+use std::cmp::{Eq, Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
 
 /// A key-value pair ordered by keys in inverse order, with epoch-based ordering
@@ -111,7 +111,7 @@ impl<K: Copy + Ord, V> PriorityQueue<K, V> {
 
 #[cfg(all(test, not(asynchronix_loom)))]
 mod tests {
-    use super::PriorityQueue;
+    use super::*;
 
     #[test]
     fn priority_smoke() {

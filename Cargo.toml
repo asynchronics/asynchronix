@@ -1,3 +1,2 @@
 [workspace]
 members = ["asynchronix"]
-resolver = "2"

@@ -193,7 +193,7 @@
 //! #     impl Model for Delay {}
 //! # }
 //! use std::time::Duration;
-//! use asynchronix::simulation::{EventSlot, Mailbox, SimInit};
+//! use asynchronix::simulation::{Mailbox, SimInit};
 //! use asynchronix::time::MonotonicTime;
 //!
 //! use models::{Delay, Multiplier};
@@ -217,8 +217,7 @@
 //! delay1.output.connect(Delay::input, &delay2_mbox);
 //!
 //! // Keep handles to the system input and output for the simulation.
-//! let mut output_slot = EventSlot::new();
-//! delay2.output.connect_sink(&output_slot);
+//! let mut output_slot = delay2.output.connect_slot().0;
 //! let input_address = multiplier1_mbox.address();
 //!
 //! // Pick an arbitrary simulation start time and build the simulation.
@@ -256,7 +255,7 @@
 //!
 //! Simulation outputs can be monitored using
 //! [`EventSlot`](simulation::EventSlot)s and
-//! [`EventQueue`](simulation::EventQueue)s, which can be connected to any
+//! [`EventStream`](simulation::EventStream)s, which can be connected to any
 //! model's output port. While an event slot only gives access to the last value
 //! sent from a port, an event stream is an iterator that yields all events that
 //! were sent in first-in-first-out order.
@@ -294,7 +293,7 @@
 //! #     impl Model for Delay {}
 //! # }
 //! # use std::time::Duration;
-//! # use asynchronix::simulation::{EventSlot, Mailbox, SimInit};
+//! # use asynchronix::simulation::{Mailbox, SimInit};
 //! # use asynchronix::time::MonotonicTime;
 //! # use models::{Delay, Multiplier};
 //! # let mut multiplier1 = Multiplier::default();
@@ -309,8 +308,7 @@
 //! # multiplier1.output.connect(Multiplier::input, &multiplier2_mbox);
 //! # multiplier2.output.connect(Delay::input, &delay2_mbox);
 //! # delay1.output.connect(Delay::input, &delay2_mbox);
-//! # let mut output_slot = EventSlot::new();
-//! # delay2.output.connect_sink(&output_slot);
+//! # let mut output_slot = delay2.output.connect_slot().0;
 //! # let input_address = multiplier1_mbox.address();
 //! # let t0 = MonotonicTime::EPOCH;
 //! # let mut simu = SimInit::new()

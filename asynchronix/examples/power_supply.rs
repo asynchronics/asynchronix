@@ -27,7 +27,7 @@
 //!                       └──────────┘    
 //! ```
 use asynchronix::model::{Model, Output, Requestor};
-use asynchronix::simulation::{EventSlot, Mailbox, SimInit};
+use asynchronix::simulation::{Mailbox, SimInit};
 use asynchronix::time::MonotonicTime;
 
 /// Power supply.
@@ -124,14 +124,10 @@ fn main() {
     psu.pwr_out.connect(Load::pwr_in, &load3_mbox);
 
     // Model handles for simulation.
-    let mut psu_power = EventSlot::new();
-    let mut load1_power = EventSlot::new();
-    let mut load2_power = EventSlot::new();
-    let mut load3_power = EventSlot::new();
-    psu.power.connect_sink(&psu_power);
-    load1.power.connect_sink(&load1_power);
-    load2.power.connect_sink(&load2_power);
-    load3.power.connect_sink(&load3_power);
+    let mut psu_power = psu.power.connect_slot().0;
+    let mut load1_power = load1.power.connect_slot().0;
+    let mut load2_power = load2.power.connect_slot().0;
+    let mut load3_power = load3.power.connect_slot().0;
     let psu_addr = psu_mbox.address();
 
     // Start time (arbitrary since models do not depend on absolute time).

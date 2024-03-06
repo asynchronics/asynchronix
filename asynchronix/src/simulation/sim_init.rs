@@ -69,8 +69,9 @@ impl SimInit {
         Simulation::new(self.executor, self.scheduler_queue, self.time)
     }
 
-    /// Builds a simulation synchronized with the provided [`Clock`] and
-    /// initialized at the specified simulation time, executing the
+    /// Builds a simulation synchronized with the provided
+    /// [`Clock`](crate::time::Clock) and initialized at the specified
+    /// simulation time, executing the
     /// [`Model::init()`](crate::model::Model::init) method on all model
     /// initializers.
     pub fn init_with_clock(

@@ -14,17 +14,18 @@
 //! ports should generally be preferred over requestor ports when possible.
 
 use std::fmt;
+use std::sync::{Arc, Mutex};
 
 mod broadcaster;
 mod sender;
 
-use crate::model::ports::sender::EventSinkSender;
 use crate::model::{InputFn, Model, ReplierFn};
-use crate::simulation::{Address, EventSink};
+use crate::simulation::{Address, EventSlot, EventStream};
+use crate::util::spsc_queue;
 
-use broadcaster::{EventBroadcaster, QueryBroadcaster};
+use broadcaster::Broadcaster;
 
-use self::sender::{InputSender, ReplierSender};
+use self::sender::{EventSender, EventSlotSender, EventStreamSender, QuerySender};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 /// Unique identifier for a connection between two ports.
@@ -36,7 +37,7 @@ pub struct LineId(u64);
 /// methods that return no value. They broadcast events to all connected input
 /// ports.
 pub struct Output<T: Clone + Send + 'static> {
-    broadcaster: EventBroadcaster<T>,
+    broadcaster: Broadcaster<T, ()>,
     next_line_id: u64,
 }
 
@@ -61,23 +62,40 @@ impl<T: Clone + Send + 'static> Output<T> {
         assert!(self.next_line_id != u64::MAX);
         let line_id = LineId(self.next_line_id);
         self.next_line_id += 1;
-        let sender = Box::new(InputSender::new(input, address.into().0));
+        let sender = Box::new(EventSender::new(input, address.into().0));
         self.broadcaster.add(sender, line_id);
 
         line_id
     }
 
-    /// Adds a connection to an event sink such as an
-    /// [`EventSlot`](crate::simulation::EventSlot) or
-    /// [`EventQueue`](crate::simulation::EventQueue).
-    pub fn connect_sink<S: EventSink<T>>(&mut self, sink: &S) -> LineId {
+    /// Adds a connection to an event stream iterator.
+    pub fn connect_stream(&mut self) -> (EventStream<T>, LineId) {
         assert!(self.next_line_id != u64::MAX);
         let line_id = LineId(self.next_line_id);
         self.next_line_id += 1;
-        let sender = Box::new(EventSinkSender::new(sink.writer()));
+
+        let (producer, consumer) = spsc_queue::spsc_queue();
+        let sender = Box::new(EventStreamSender::new(producer));
+        let event_stream = EventStream::new(consumer);
+
         self.broadcaster.add(sender, line_id);
 
-        line_id
+        (event_stream, line_id)
+    }
+
+    /// Adds a connection to an event slot.
+    pub fn connect_slot(&mut self) -> (EventSlot<T>, LineId) {
+        assert!(self.next_line_id != u64::MAX);
+        let line_id = LineId(self.next_line_id);
+        self.next_line_id += 1;
+
+        let slot = Arc::new(Mutex::new(None));
+        let sender = Box::new(EventSlotSender::new(slot.clone()));
+        let event_slot = EventSlot::new(slot);
+
+        self.broadcaster.add(sender, line_id);
+
+        (event_slot, line_id)
     }
 
     /// Removes the connection specified by the `LineId` parameter.
@@ -100,14 +118,14 @@ impl<T: Clone + Send + 'static> Output<T> {
 
     /// Broadcasts an event to all connected input ports.
     pub async fn send(&mut self, arg: T) {
-        self.broadcaster.broadcast(arg).await.unwrap();
+        self.broadcaster.broadcast_event(arg).await.unwrap();
     }
 }
 
 impl<T: Clone + Send + 'static> Default for Output<T> {
     fn default() -> Self {
         Self {
-            broadcaster: EventBroadcaster::default(),
+            broadcaster: Broadcaster::default(),
             next_line_id: 0,
         }
     }
@@ -125,7 +143,7 @@ impl<T: Clone + Send + 'static> fmt::Debug for Output<T> {
 /// model methods that return a value. They broadcast queries to all connected
 /// replier ports.
 pub struct Requestor<T: Clone + Send + 'static, R: Send + 'static> {
-    broadcaster: QueryBroadcaster<T, R>,
+    broadcaster: Broadcaster<T, R>,
     next_line_id: u64,
 }
 
@@ -150,7 +168,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> Requestor<T, R> {
         assert!(self.next_line_id != u64::MAX);
         let line_id = LineId(self.next_line_id);
         self.next_line_id += 1;
-        let sender = Box::new(ReplierSender::new(replier, address.into().0));
+        let sender = Box::new(QuerySender::new(replier, address.into().0));
         self.broadcaster.add(sender, line_id);
 
         line_id
@@ -176,14 +194,14 @@ impl<T: Clone + Send + 'static, R: Send + 'static> Requestor<T, R> {
 
     /// Broadcasts a query to all connected replier ports.
     pub async fn send(&mut self, arg: T) -> impl Iterator<Item = R> + '_ {
-        self.broadcaster.broadcast(arg).await.unwrap()
+        self.broadcaster.broadcast_query(arg).await.unwrap()
     }
 }
 
 impl<T: Clone + Send + 'static, R: Send + 'static> Default for Requestor<T, R> {
     fn default() -> Self {
         Self {
-            broadcaster: QueryBroadcaster::default(),
+            broadcaster: Broadcaster::default(),
             next_line_id: 0,
         }
     }

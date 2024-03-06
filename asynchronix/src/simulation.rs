@@ -87,12 +87,13 @@
 //! Although uncommon, there is sometimes a need for connecting and/or
 //! disconnecting models after they have been migrated to the simulation.
 //! Likewise, one may want to connect or disconnect an [`EventSlot`] or
-//! [`EventQueue`] after the simulation has been instantiated.
+//! [`EventStream`] after the simulation has been instantiated.
 //!
 //! There is actually a very simple solution to this problem: since the
-//! [`InputFn`] trait also matches closures of type `FnOnce(&mut impl Model)`,
-//! it is enough to invoke [`Simulation::send_event()`] with a closure that
-//! connects or disconnects a port, such as:
+//! [`InputFn`](crate::model::InputFn) trait also matches closures of type
+//! `FnOnce(&mut impl Model)`, it is enough to invoke
+//! [`Simulation::send_event()`] with a closure that connects or disconnects a
+//! port, such as:
 //!
 //! ```
 //! # use asynchronix::model::{Model, Output};
@@ -118,13 +119,13 @@
 //!     &modelA_addr
 //! );
 //! ```
+mod endpoints;
 mod mailbox;
 mod sim_init;
-mod sink;
 
+pub use endpoints::{EventSlot, EventStream};
 pub use mailbox::{Address, Mailbox};
 pub use sim_init::SimInit;
-pub use sink::{EventQueue, EventSink, EventSinkWriter, EventSlot};
 
 use std::error::Error;
 use std::fmt;
@@ -150,7 +151,8 @@ use crate::util::sync_cell::SyncCell;
 /// [`SimInit::init()`](crate::simulation::SimInit::init) or
 /// [`SimInit::init_with_clock()`](crate::simulation::SimInit::init_with_clock)
 /// method on a simulation initializer. It contains an asynchronous executor
-/// that runs all simulation models added beforehand to [`SimInit`].
+/// that runs all simulation models added beforehand to
+/// [`SimInit`](crate::simulation::SimInit).
 ///
 /// A [`Simulation`] object also manages an event scheduling queue and
 /// simulation time. The scheduling queue can be accessed from the simulation

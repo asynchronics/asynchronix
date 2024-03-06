@@ -21,37 +21,31 @@ const COUNTDOWN_MASK: u64 = !INDEX_MASK;
 /// scheduled tasks.
 const COUNTDOWN_ONE: u64 = 1 << 32;
 
-/// An object for the efficient management of a set of tasks scheduled
-/// concurrently.
+/// A set of tasks that may be scheduled cheaply and can be requested to wake a
+/// parent task only when a given amount of tasks have been scheduled.
 ///
-/// The algorithm used by `TaskSet` is designed to wake up the parent task as
-/// seldom as possible, ideally only when all non-completed sub-tasks have been
-/// scheduled (awaken).
-///
-/// A `TaskSet` maintains both a vector-based list of tasks (or more accurately,
-/// task waker handles) and a linked list of the subset of tasks that are
-/// currently scheduled. The latter is stored in a vector-based Treiber stack
-/// which links tasks through indices rather than pointers. Using indices has
-/// two advantages: (i) it makes a fully safe implementation possible and (ii)
-/// it can take advantage of a single CAS to simultaneously move the head and
-/// decrement the outstanding amount of tasks to be scheduled before the parent
-/// task is notified.
+/// This object maintains both a list of all active tasks and a list of the
+/// subset of active tasks currently scheduled. The latter is stored in a
+/// Treiber stack which links tasks through indices rather than pointers. Using
+/// indices has two advantages: (i) it enables a fully safe implementation and
+/// (ii) it makes it possible to use a single CAS to simultaneously move the
+/// head and decrement the outstanding amount of tasks to be scheduled before
+/// the parent task is notified.
 pub(super) struct TaskSet {
-    /// Set of all tasks, scheduled or not.
+    /// Set of all active tasks, scheduled or not.
     ///
-    /// In some cases, the use of `resize()` to shrink the task set may leave
-    /// inactive tasks at the back of the vector, in which case the length of
-    /// the vector will exceed `task_count`.
+    /// In some rare cases, the back of the vector can also contain inactive
+    /// (retired) tasks.
     tasks: Vec<Arc<Task>>,
     /// Head of the Treiber stack for scheduled tasks.
     ///
-    /// The lower 32 bits specify the index of the last scheduled task (head),
-    /// if any, whereas the upper 32 bits specify the countdown of tasks still
-    /// to be scheduled before the parent task is notified.
+    /// The lower bits specify the index of the last scheduled task, if any,
+    /// whereas the upper bits specify the countdown of tasks still to be
+    /// scheduled before the parent task is notified.
     head: Arc<AtomicU64>,
     /// A notifier used to wake the parent task.
     notifier: WakeSource,
-    /// Count of all tasks, scheduled or not.
+    /// Count of all active tasks, scheduled or not.
     task_count: usize,
 }
 
@@ -71,25 +65,21 @@ impl TaskSet {
         }
     }
 
-    /// Take all scheduled tasks and returns an iterator over their indices, or
-    /// if there are no currently scheduled tasks returns `None` and requests a
-    /// notification to be sent after `pending_task_count` tasks have been
-    /// scheduled.
+    /// Steals scheduled tasks if any and returns an iterator over their
+    /// indices, otherwise returns `None` and requests a notification to be sent
+    /// after `notify_count` tasks have been scheduled.
     ///
-    /// In all cases, the list of scheduled tasks will be empty right after this
-    /// call.
+    /// In all cases, the list of scheduled tasks is guaranteed to be empty
+    /// after this call.
     ///
-    /// If there were scheduled tasks, no notification is requested because this
-    /// method is expected to be called repeatedly until it returns `None`.
-    /// Failure to do so will result in missed notifications.
+    /// If some tasks were stolen, no notification is requested.
     ///
-    /// If no tasks were scheduled, the notification is guaranteed to be
-    /// triggered no later than after `pending_task_count` tasks have been
-    /// scheduled, though it may in some cases be triggered earlier. If the
-    /// specified `pending_task_count` is zero then no notification is
-    /// requested.
-    pub(super) fn take_scheduled(&self, pending_task_count: usize) -> Option<TaskIterator<'_>> {
-        let countdown = u32::try_from(pending_task_count).unwrap();
+    /// If no tasks were stolen, the notification is guaranteed to be triggered
+    /// no later than after `notify_count` tasks have been scheduled, though it
+    /// may in some cases be triggered earlier. If the specified `notify_count`
+    /// is zero then no notification is requested.
+    pub(super) fn steal_scheduled(&self, notify_count: usize) -> Option<TaskIterator<'_>> {
+        let countdown = u32::try_from(notify_count).unwrap();
 
         let mut head = self.head.load(Ordering::Relaxed);
         loop {
@@ -136,13 +126,13 @@ impl TaskSet {
         if self.head.load(Ordering::Relaxed) != EMPTY as u64 {
             // Dropping the iterator ensures that all tasks are put in the
             // sleeping state.
-            let _ = self.take_scheduled(0);
+            let _ = self.steal_scheduled(0);
         }
     }
 
-    /// Set the number of active tasks.
+    /// Modify the number of active tasks.
     ///
-    /// Note that this method may discard already scheduled tasks.
+    /// Note that this method may discard all scheduled tasks.
     ///
     /// # Panic
     ///
@@ -210,7 +200,7 @@ impl TaskSet {
         }
     }
 
-    /// Returns `true` if one or more sub-tasks are currently scheduled.
+    /// Returns `true` if one or more tasks are currently scheduled.
     pub(super) fn has_scheduled(&self) -> bool {
         // Ordering: the content of the head is only used as an advisory flag so
         // Relaxed ordering is sufficient.
