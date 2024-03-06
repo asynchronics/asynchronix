@@ -403,14 +403,11 @@ fn recycle_vec<T, U>(mut v: Vec<T>) -> Vec<U> {
 #[cfg(all(test, not(asynchronix_loom)))]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
     use std::thread;
 
     use futures_executor::block_on;
 
-    use super::super::sender::QuerySender;
     use crate::channel::Receiver;
-    use crate::model::Model;
     use crate::time::Scheduler;
     use crate::time::{MonotonicTime, TearableAtomicTime};
     use crate::util::priority_queue::PriorityQueue;
