@@ -1,3 +1,7 @@
+# unreleased
+
+- Add `serde` feature and serialization support for `MonotonicTime`.
+
 # 0.2.1 (2024-03-06)
 
 ### Added
@@ -11,7 +15,6 @@
 ### Misc
 
 - Update copyright in MIT license to include contributors.
-
 
 # 0.2.0 (2023-08-15)
 

@@ -25,6 +25,7 @@ autotests = false
 dev-hooks = []
 # Logging of performance-related statistics; development only.
 dev-logs = []
+serde = ["dep:serde"]
 
 [dependencies]
 async-event = "0.1"
@@ -38,6 +39,10 @@ recycle-box = "0.2"
 slab = "0.4"
 spin_sleep = "1"
 st3 = "0.4"
+
+[dependencies.serde]
+version = "1"
+optional = true
 
 [target.'cfg(asynchronix_loom)'.dependencies]
 loom = "0.5"

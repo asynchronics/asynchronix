@@ -52,6 +52,7 @@ const NANOS_PER_SEC: u32 = 1_000_000_000;
 /// assert_eq!(timestamp.subsec_nanos(), 443_654_321);
 /// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MonotonicTime {
     /// The number of whole seconds in the future (if positive) or in the past
     /// (if negative) of 1970-01-01 00:00:00 TAI.
