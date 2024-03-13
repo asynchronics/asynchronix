@@ -29,6 +29,7 @@ jobs:
 
       - name: Run cargo check
         run: cargo check
+        args: --all-features
 
   test:
     name: Test suite
