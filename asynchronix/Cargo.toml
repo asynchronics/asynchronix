@@ -21,11 +21,11 @@ keywords = ["simulation", "discrete-event", "systems", "cyberphysical", "real-ti
 autotests = false
 
 [features]
+serde = ["dep:serde"]
 # API-unstable public exports meant for external test/benchmarking; development only.
 dev-hooks = []
 # Logging of performance-related statistics; development only.
 dev-logs = []
-serde = ["dep:serde"]
 
 [dependencies]
 async-event = "0.1"
@@ -43,6 +43,7 @@ st3 = "0.4"
 [dependencies.serde]
 version = "1"
 optional = true
+features = ["derive"]
 
 [target.'cfg(asynchronix_loom)'.dependencies]
 loom = "0.5"
