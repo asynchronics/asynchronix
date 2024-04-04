@@ -1,7 +1,10 @@
-# unreleased
+# 0.2.2 (2024-04-04)
 
-- Add `serde` feature and serialization support for `MonotonicTime`.
-- Update `multishot` dependency due to soundness issue in older version.
+- Add `serde` feature and serialization support for `MonotonicTime` ([#19]).
+- Update `multishot` dependency due to soundness issue in older version ([#23]).
+
+[#19]: https://github.com/asynchronics/asynchronix/pull/19
+[#23]: https://github.com/asynchronics/asynchronix/pull/23
 
 # 0.2.1 (2024-03-06)
 

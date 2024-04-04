@@ -7,7 +7,7 @@ name = "asynchronix"
 # - Update if necessary copyright notice in LICENSE-MIT
 # - Create a "vX.Y.Z" git tag
 authors = ["Serge Barral <serge.barral@asynchronics.com>"]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 rust-version = "1.64"
 license = "MIT OR Apache-2.0"
