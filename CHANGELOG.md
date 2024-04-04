@@ -1,6 +1,7 @@
 # unreleased
 
 - Add `serde` feature and serialization support for `MonotonicTime`.
+- Update `multishot` dependency due to soundness issue in older version.
 
 # 0.2.1 (2024-03-06)
 
