@@ -15,13 +15,12 @@
 //! ```
 
 use std::future::Future;
-use std::pin::Pin;
 use std::time::Duration;
 
-use asynchronix::model::{InitializedModel, Model};
+use asynchronix::model::{Context, InitializedModel, Model};
 use asynchronix::ports::{EventBuffer, Output};
 use asynchronix::simulation::{Mailbox, SimInit};
-use asynchronix::time::{MonotonicTime, Scheduler};
+use asynchronix::time::MonotonicTime;
 
 /// Stepper motor.
 pub struct Motor {
@@ -88,15 +87,9 @@ impl Motor {
 
 impl Model for Motor {
     /// Broadcasts the initial position of the motor.
-    fn init(
-        mut self,
-        _scheduler: &Scheduler<Self>,
-    ) -> Pin<Box<dyn Future<Output = InitializedModel<Self>> + Send + '_>> {
-        Box::pin(async move {
-            self.position.send(self.pos).await;
-
-            self.into()
-        })
+    async fn init(mut self, _: &Context<Self>) -> InitializedModel<Self> {
+        self.position.send(self.pos).await;
+        self.into()
     }
 }
 
@@ -130,7 +123,7 @@ impl Driver {
     }
 
     /// Sets the pulse rate (sign = direction) [Hz] -- input port.
-    pub async fn pulse_rate(&mut self, pps: f64, scheduler: &Scheduler<Self>) {
+    pub async fn pulse_rate(&mut self, pps: f64, context: &Context<Self>) {
         let pps = pps.signum() * pps.abs().clamp(Self::MIN_PPS, Self::MAX_PPS);
         if pps == self.pps {
             return;
@@ -142,7 +135,7 @@ impl Driver {
         // Trigger the rotation if the motor is currently idle. Otherwise the
         // new value will be accounted for at the next pulse.
         if is_idle {
-            self.send_pulse((), scheduler).await;
+            self.send_pulse((), context).await;
         }
     }
 
@@ -153,7 +146,7 @@ impl Driver {
     fn send_pulse<'a>(
         &'a mut self,
         _: (),
-        scheduler: &'a Scheduler<Self>,
+        context: &'a Context<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
             let current_out = match self.next_phase {
@@ -174,7 +167,7 @@ impl Driver {
             let pulse_duration = Duration::from_secs_f64(1.0 / self.pps.abs());
 
             // Schedule the next pulse.
-            scheduler
+            context
                 .schedule_event(pulse_duration, Self::send_pulse, ())
                 .unwrap();
         }

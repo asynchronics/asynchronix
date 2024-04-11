@@ -2,8 +2,7 @@
 
 use std::future::{ready, Future, Ready};
 
-use crate::model::Model;
-use crate::time::Scheduler;
+use crate::model::{Context, Model};
 
 use super::markers;
 
@@ -15,9 +14,9 @@ use super::markers;
 ///
 /// ```ignore
 /// FnOnce(&mut M, T)
-/// FnOnce(&mut M, T, &Scheduler<M>)
+/// FnOnce(&mut M, T, &Context<M>)
 /// async fn(&mut M, T)
-/// async fn(&mut M, T, &Scheduler<M>)
+/// async fn(&mut M, T, &Context<M>)
 /// where
 ///     M: Model
 /// ```
@@ -35,7 +34,7 @@ pub trait InputFn<'a, M: Model, T, S>: Send + 'static {
     type Future: Future<Output = ()> + Send + 'a;
 
     /// Calls the method.
-    fn call(self, model: &'a mut M, arg: T, scheduler: &'a Scheduler<M>) -> Self::Future;
+    fn call(self, model: &'a mut M, arg: T, context: &'a Context<M>) -> Self::Future;
 }
 
 impl<'a, M, F> InputFn<'a, M, (), markers::WithoutArguments> for F
@@ -45,36 +44,36 @@ where
 {
     type Future = Ready<()>;
 
-    fn call(self, model: &'a mut M, _arg: (), _scheduler: &'a Scheduler<M>) -> Self::Future {
+    fn call(self, model: &'a mut M, _arg: (), _context: &'a Context<M>) -> Self::Future {
         self(model);
 
         ready(())
     }
 }
 
-impl<'a, M, T, F> InputFn<'a, M, T, markers::WithoutScheduler> for F
+impl<'a, M, T, F> InputFn<'a, M, T, markers::WithoutContext> for F
 where
     M: Model,
     F: FnOnce(&'a mut M, T) + Send + 'static,
 {
     type Future = Ready<()>;
 
-    fn call(self, model: &'a mut M, arg: T, _scheduler: &'a Scheduler<M>) -> Self::Future {
+    fn call(self, model: &'a mut M, arg: T, _context: &'a Context<M>) -> Self::Future {
         self(model, arg);
 
         ready(())
     }
 }
 
-impl<'a, M, T, F> InputFn<'a, M, T, markers::WithScheduler> for F
+impl<'a, M, T, F> InputFn<'a, M, T, markers::WithContext> for F
 where
     M: Model,
-    F: FnOnce(&'a mut M, T, &'a Scheduler<M>) + Send + 'static,
+    F: FnOnce(&'a mut M, T, &'a Context<M>) + Send + 'static,
 {
     type Future = Ready<()>;
 
-    fn call(self, model: &'a mut M, arg: T, scheduler: &'a Scheduler<M>) -> Self::Future {
-        self(model, arg, scheduler);
+    fn call(self, model: &'a mut M, arg: T, context: &'a Context<M>) -> Self::Future {
+        self(model, arg, context);
 
         ready(())
     }
@@ -88,12 +87,12 @@ where
 {
     type Future = Fut;
 
-    fn call(self, model: &'a mut M, _arg: (), _scheduler: &'a Scheduler<M>) -> Self::Future {
+    fn call(self, model: &'a mut M, _arg: (), _context: &'a Context<M>) -> Self::Future {
         self(model)
     }
 }
 
-impl<'a, M, T, Fut, F> InputFn<'a, M, T, markers::AsyncWithoutScheduler> for F
+impl<'a, M, T, Fut, F> InputFn<'a, M, T, markers::AsyncWithoutContext> for F
 where
     M: Model,
     Fut: Future<Output = ()> + Send + 'a,
@@ -101,21 +100,21 @@ where
 {
     type Future = Fut;
 
-    fn call(self, model: &'a mut M, arg: T, _scheduler: &'a Scheduler<M>) -> Self::Future {
+    fn call(self, model: &'a mut M, arg: T, _context: &'a Context<M>) -> Self::Future {
         self(model, arg)
     }
 }
 
-impl<'a, M, T, Fut, F> InputFn<'a, M, T, markers::AsyncWithScheduler> for F
+impl<'a, M, T, Fut, F> InputFn<'a, M, T, markers::AsyncWithContext> for F
 where
     M: Model,
     Fut: Future<Output = ()> + Send + 'a,
-    F: FnOnce(&'a mut M, T, &'a Scheduler<M>) -> Fut + Send + 'static,
+    F: FnOnce(&'a mut M, T, &'a Context<M>) -> Fut + Send + 'static,
 {
     type Future = Fut;
 
-    fn call(self, model: &'a mut M, arg: T, scheduler: &'a Scheduler<M>) -> Self::Future {
-        self(model, arg, scheduler)
+    fn call(self, model: &'a mut M, arg: T, context: &'a Context<M>) -> Self::Future {
+        self(model, arg, context)
     }
 }
 
@@ -127,7 +126,7 @@ where
 ///
 /// ```ignore
 /// async fn(&mut M, T) -> R
-/// async fn(&mut M, T, &Scheduler<M>) -> R
+/// async fn(&mut M, T, &Context<M>) -> R
 /// where
 ///     M: Model
 /// ```
@@ -144,7 +143,7 @@ pub trait ReplierFn<'a, M: Model, T, R, S>: Send + 'static {
     type Future: Future<Output = R> + Send + 'a;
 
     /// Calls the method.
-    fn call(self, model: &'a mut M, arg: T, scheduler: &'a Scheduler<M>) -> Self::Future;
+    fn call(self, model: &'a mut M, arg: T, context: &'a Context<M>) -> Self::Future;
 }
 
 impl<'a, M, R, Fut, F> ReplierFn<'a, M, (), R, markers::AsyncWithoutArguments> for F
@@ -155,12 +154,12 @@ where
 {
     type Future = Fut;
 
-    fn call(self, model: &'a mut M, _arg: (), _scheduler: &'a Scheduler<M>) -> Self::Future {
+    fn call(self, model: &'a mut M, _arg: (), _context: &'a Context<M>) -> Self::Future {
         self(model)
     }
 }
 
-impl<'a, M, T, R, Fut, F> ReplierFn<'a, M, T, R, markers::AsyncWithoutScheduler> for F
+impl<'a, M, T, R, Fut, F> ReplierFn<'a, M, T, R, markers::AsyncWithoutContext> for F
 where
     M: Model,
     Fut: Future<Output = R> + Send + 'a,
@@ -168,20 +167,20 @@ where
 {
     type Future = Fut;
 
-    fn call(self, model: &'a mut M, arg: T, _scheduler: &'a Scheduler<M>) -> Self::Future {
+    fn call(self, model: &'a mut M, arg: T, _context: &'a Context<M>) -> Self::Future {
         self(model, arg)
     }
 }
 
-impl<'a, M, T, R, Fut, F> ReplierFn<'a, M, T, R, markers::AsyncWithScheduler> for F
+impl<'a, M, T, R, Fut, F> ReplierFn<'a, M, T, R, markers::AsyncWithContext> for F
 where
     M: Model,
     Fut: Future<Output = R> + Send + 'a,
-    F: FnOnce(&'a mut M, T, &'a Scheduler<M>) -> Fut + Send + 'static,
+    F: FnOnce(&'a mut M, T, &'a Context<M>) -> Fut + Send + 'static,
 {
     type Future = Fut;
 
-    fn call(self, model: &'a mut M, arg: T, scheduler: &'a Scheduler<M>) -> Self::Future {
-        self(model, arg, scheduler)
+    fn call(self, model: &'a mut M, arg: T, context: &'a Context<M>) -> Self::Future {
+        self(model, arg, context)
     }
 }

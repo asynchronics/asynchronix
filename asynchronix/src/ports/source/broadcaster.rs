@@ -430,7 +430,7 @@ mod tests {
     use futures_executor::block_on;
 
     use crate::channel::Receiver;
-    use crate::time::Scheduler;
+    use crate::model::Context;
     use crate::time::{MonotonicTime, TearableAtomicTime};
     use crate::util::priority_queue::PriorityQueue;
     use crate::util::sync_cell::SyncCell;
@@ -488,9 +488,9 @@ mod tests {
                         let dummy_priority_queue = Arc::new(Mutex::new(PriorityQueue::new()));
                         let dummy_time =
                             SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH)).reader();
-                        let dummy_scheduler =
-                            Scheduler::new(dummy_address, dummy_priority_queue, dummy_time);
-                        block_on(mailbox.recv(&mut counter, &dummy_scheduler)).unwrap();
+                        let dummy_context =
+                            Context::new(dummy_address, dummy_priority_queue, dummy_time);
+                        block_on(mailbox.recv(&mut counter, &dummy_context)).unwrap();
                     }
                 })
             })
@@ -539,9 +539,9 @@ mod tests {
                         let dummy_priority_queue = Arc::new(Mutex::new(PriorityQueue::new()));
                         let dummy_time =
                             SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH)).reader();
-                        let dummy_scheduler =
-                            Scheduler::new(dummy_address, dummy_priority_queue, dummy_time);
-                        block_on(mailbox.recv(&mut counter, &dummy_scheduler)).unwrap();
+                        let dummy_context =
+                            Context::new(dummy_address, dummy_priority_queue, dummy_time);
+                        block_on(mailbox.recv(&mut counter, &dummy_context)).unwrap();
                         thread::sleep(std::time::Duration::from_millis(100));
                     }
                 })
