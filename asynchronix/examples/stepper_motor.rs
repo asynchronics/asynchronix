@@ -18,7 +18,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
-use asynchronix::model::{InitializedModel, Model, Output};
+use asynchronix::model::{InitializedModel, Model};
+use asynchronix::ports::{EventBuffer, Output};
 use asynchronix::simulation::{Mailbox, SimInit};
 use asynchronix::time::{MonotonicTime, Scheduler};
 
@@ -200,7 +201,8 @@ fn main() {
     driver.current_out.connect(Motor::current_in, &motor_mbox);
 
     // Model handles for simulation.
-    let mut position = motor.position.connect_stream().0;
+    let mut position = EventBuffer::new();
+    motor.position.connect_sink(&position);
     let motor_addr = motor_mbox.address();
     let driver_addr = driver_mbox.address();
 
@@ -258,7 +260,7 @@ fn main() {
     assert!(position.next().is_none());
 
     // Increase the load beyond the torque limit for a 1A driver current.
-    simu.send_event(Motor::load, 2.0, &motor_addr);
+    simu.process_event(Motor::load, 2.0, &motor_addr);
 
     // Advance simulation time and check that the motor is blocked.
     simu.step();
@@ -274,7 +276,7 @@ fn main() {
 
     // Decrease the load below the torque limit for a 1A driver current and
     // advance simulation time.
-    simu.send_event(Motor::load, 0.5, &motor_addr);
+    simu.process_event(Motor::load, 0.5, &motor_addr);
     simu.step();
     t += Duration::new(0, 100_000_000);
 
@@ -298,7 +300,7 @@ fn main() {
 
     // Now make the motor rotate in the opposite direction. Note that this
     // driver only accounts for a new PPS at the next pulse.
-    simu.send_event(Driver::pulse_rate, -10.0, &driver_addr);
+    simu.process_event(Driver::pulse_rate, -10.0, &driver_addr);
     simu.step();
     t += Duration::new(0, 100_000_000);
     assert_eq!(simu.time(), t);

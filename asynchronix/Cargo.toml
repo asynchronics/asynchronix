@@ -20,17 +20,26 @@ categories = ["simulation", "aerospace", "science"]
 keywords = ["simulation", "discrete-event", "systems", "cyberphysical", "real-time"]
 autotests = false
 
+
 [features]
-serde = ["dep:serde"]
+# Remote procedure call API.
+rpc = ["dep:rmp-serde", "dep:serde", "dep:tonic", "dep:prost", "dep:prost-types", "dep:bytes"]
+# This feature forces protobuf/gRPC code (re-)generation.
+rpc-codegen = ["dep:tonic-build"]
+# gRPC server.
+grpc-server = ["rpc", "dep:tokio"]
 # API-unstable public exports meant for external test/benchmarking; development only.
 dev-hooks = []
 # Logging of performance-related statistics; development only.
 dev-logs = []
 
+
 [dependencies]
+# Mandatory dependencies.
 async-event = "0.1"
 crossbeam-utils = "0.8"
 diatomic-waker = "0.1"
+futures-channel = "0.3"
 futures-task = "0.3"
 multishot = "0.3.2"
 num_cpus = "1.13"
@@ -39,20 +48,33 @@ recycle-box = "0.2"
 slab = "0.4"
 spin_sleep = "1"
 st3 = "0.4"
+tai-time = "0.3"
 
-[dependencies.serde]
-version = "1"
-optional = true
-features = ["derive"]
+# Common RPC dependencies.
+bytes = { version = "1", default-features = false, optional = true }
+prost = { version = "0.12", optional = true }
+prost-types = { version = "0.12", optional = true }
+rmp-serde = { version = "1.1", optional = true }
+serde = { version = "1", optional = true }
+
+# gRPC dependencies.
+tokio = { version = "1.0", optional = true }
+tonic = { version = "0.11", optional = true }
+
 
 [target.'cfg(asynchronix_loom)'.dependencies]
 loom = "0.5"
 waker-fn = "1.1"
 
+
 [dev-dependencies]
 futures-util = "0.3"
-futures-channel = "0.3"
 futures-executor = "0.3"
+
+
+[build-dependencies]
+tonic-build = { version = "0.11", optional = true }
+
 
 [[test]]
 name = "integration"

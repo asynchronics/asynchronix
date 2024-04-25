@@ -51,12 +51,13 @@ mod clock;
 mod monotonic_time;
 mod scheduler;
 
+pub use tai_time::MonotonicTime;
+
 pub use clock::{AutoSystemClock, Clock, NoClock, SyncStatus, SystemClock};
 pub(crate) use monotonic_time::TearableAtomicTime;
-pub use monotonic_time::{MonotonicTime, SystemTimeError};
 pub(crate) use scheduler::{
     schedule_event_at_unchecked, schedule_keyed_event_at_unchecked,
     schedule_periodic_event_at_unchecked, schedule_periodic_keyed_event_at_unchecked,
-    ScheduledEvent, SchedulerQueue,
+    KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction, SchedulerQueue,
 };
-pub use scheduler::{Deadline, EventKey, Scheduler, SchedulingError};
+pub use scheduler::{Action, ActionKey, Deadline, Scheduler, SchedulingError};

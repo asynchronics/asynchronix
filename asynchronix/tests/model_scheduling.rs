@@ -2,9 +2,10 @@
 
 use std::time::Duration;
 
-use asynchronix::model::{Model, Output};
+use asynchronix::model::Model;
+use asynchronix::ports::{EventBuffer, Output};
 use asynchronix::simulation::{Mailbox, SimInit};
-use asynchronix::time::{EventKey, MonotonicTime, Scheduler};
+use asynchronix::time::{ActionKey, MonotonicTime, Scheduler};
 
 #[test]
 fn model_schedule_event() {
@@ -27,13 +28,14 @@ fn model_schedule_event() {
     let mut model = TestModel::default();
     let mbox = Mailbox::new();
 
-    let mut output = model.output.connect_stream().0;
+    let mut output = EventBuffer::new();
+    model.output.connect_sink(&output);
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
     let mut simu = SimInit::new().add_model(model, mbox).init(t0);
 
-    simu.send_event(TestModel::trigger, (), addr);
+    simu.process_event(TestModel::trigger, (), addr);
     simu.step();
     assert_eq!(simu.time(), t0 + Duration::from_secs(2));
     assert!(output.next().is_some());
@@ -46,7 +48,7 @@ fn model_cancel_future_keyed_event() {
     #[derive(Default)]
     struct TestModel {
         output: Output<i32>,
-        key: Option<EventKey>,
+        key: Option<ActionKey>,
     }
     impl TestModel {
         fn trigger(&mut self, _: (), scheduler: &Scheduler<Self>) {
@@ -71,13 +73,14 @@ fn model_cancel_future_keyed_event() {
     let mut model = TestModel::default();
     let mbox = Mailbox::new();
 
-    let mut output = model.output.connect_stream().0;
+    let mut output = EventBuffer::new();
+    model.output.connect_sink(&output);
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
     let mut simu = SimInit::new().add_model(model, mbox).init(t0);
 
-    simu.send_event(TestModel::trigger, (), addr);
+    simu.process_event(TestModel::trigger, (), addr);
     simu.step();
     assert_eq!(simu.time(), t0 + Duration::from_secs(1));
     assert_eq!(output.next(), Some(1));
@@ -91,7 +94,7 @@ fn model_cancel_same_time_keyed_event() {
     #[derive(Default)]
     struct TestModel {
         output: Output<i32>,
-        key: Option<EventKey>,
+        key: Option<ActionKey>,
     }
     impl TestModel {
         fn trigger(&mut self, _: (), scheduler: &Scheduler<Self>) {
@@ -116,13 +119,14 @@ fn model_cancel_same_time_keyed_event() {
     let mut model = TestModel::default();
     let mbox = Mailbox::new();
 
-    let mut output = model.output.connect_stream().0;
+    let mut output = EventBuffer::new();
+    model.output.connect_sink(&output);
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
     let mut simu = SimInit::new().add_model(model, mbox).init(t0);
 
-    simu.send_event(TestModel::trigger, (), addr);
+    simu.process_event(TestModel::trigger, (), addr);
     simu.step();
     assert_eq!(simu.time(), t0 + Duration::from_secs(2));
     assert_eq!(output.next(), Some(1));
@@ -157,13 +161,14 @@ fn model_schedule_periodic_event() {
     let mut model = TestModel::default();
     let mbox = Mailbox::new();
 
-    let mut output = model.output.connect_stream().0;
+    let mut output = EventBuffer::new();
+    model.output.connect_sink(&output);
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
     let mut simu = SimInit::new().add_model(model, mbox).init(t0);
 
-    simu.send_event(TestModel::trigger, (), addr);
+    simu.process_event(TestModel::trigger, (), addr);
 
     // Move to the next events at t0 + 2s + k*3s.
     for k in 0..10 {
@@ -182,7 +187,7 @@ fn model_cancel_periodic_event() {
     #[derive(Default)]
     struct TestModel {
         output: Output<()>,
-        key: Option<EventKey>,
+        key: Option<ActionKey>,
     }
     impl TestModel {
         fn trigger(&mut self, _: (), scheduler: &Scheduler<Self>) {
@@ -206,13 +211,14 @@ fn model_cancel_periodic_event() {
     let mut model = TestModel::default();
     let mbox = Mailbox::new();
 
-    let mut output = model.output.connect_stream().0;
+    let mut output = EventBuffer::new();
+    model.output.connect_sink(&output);
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
     let mut simu = SimInit::new().add_model(model, mbox).init(t0);
 
-    simu.send_event(TestModel::trigger, (), addr);
+    simu.process_event(TestModel::trigger, (), addr);
 
     simu.step();
     assert_eq!(simu.time(), t0 + Duration::from_secs(2));

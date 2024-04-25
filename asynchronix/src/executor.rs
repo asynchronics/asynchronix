@@ -88,7 +88,7 @@ pub(crate) struct Executor {
     active_tasks: Arc<Mutex<Slab<CancelToken>>>,
     /// Parker for the main executor thread.
     parker: Parker,
-    /// Join handles of the worker threads.
+    /// Handles to the worker threads.
     worker_handles: Vec<JoinHandle<()>>,
 }
 

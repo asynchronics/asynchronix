@@ -65,8 +65,9 @@
 //! ### Output and requestor ports
 //!
 //! Output and requestor ports can be added to a model using composition, adding
-//! [`Output`] and [`Requestor`] objects as members. They are parametrized by
-//! the event, request and reply types.
+//! [`Output`](crate::ports::Output) and [`Requestor`](crate::ports::Requestor)
+//! objects as members. They are parametrized by the event, request and reply
+//! types.
 //!
 //! Models are expected to expose their output and requestor ports as public
 //! members so they can be connected to input and replier ports when assembling
@@ -75,7 +76,8 @@
 //! #### Example
 //!
 //! ```
-//! use asynchronix::model::{Model, Output, Requestor};
+//! use asynchronix::model::Model;
+//! use asynchronix::ports::{Output, Requestor};
 //!
 //! pub struct MyModel {
 //!     pub my_output: Output<String>,
@@ -90,9 +92,9 @@
 //!
 //! ### Input and replier ports
 //!
-//! Input ports and replier ports are methods that implement the [`InputFn`] or
-//! [`ReplierFn`] traits with appropriate bounds on their argument and return
-//! types.
+//! Input ports and replier ports are methods that implement the
+//! [`InputFn`](crate::ports::InputFn) or [`ReplierFn`](crate::ports::ReplierFn)
+//! traits with appropriate bounds on their argument and return types.
 //!
 //! In practice, an input port method for an event of type `T` may have any of
 //! the following signatures, where the futures returned by the `async` variants
@@ -132,7 +134,7 @@
 //! can be connected to input and requestor ports when assembling the simulation
 //! bench. However, input ports may instead be defined as private methods if
 //! they are only used by the model itself to schedule future actions (see the
-//! [`Scheduler`](crate::time::Scheduler) examples).
+//! [`Scheduler`] examples).
 //!
 //! Changing the signature of an input or replier port is not considered to
 //! alter the public interface of a model provided that the event, request and
@@ -164,13 +166,6 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::time::Scheduler;
-
-pub use model_fn::{InputFn, ReplierFn};
-pub use ports::{LineError, LineId, Output, Requestor};
-
-pub mod markers;
-mod model_fn;
-mod ports;
 
 /// Trait to be implemented by all models.
 ///

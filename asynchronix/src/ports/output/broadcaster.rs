@@ -8,46 +8,30 @@ use recycle_box::{coerce_box, RecycleBox};
 
 use super::sender::{SendError, Sender};
 use super::LineId;
-use task_set::TaskSet;
-
-mod task_set;
+use crate::util::task_set::TaskSet;
 
 /// An object that can efficiently broadcast messages to several addresses.
 ///
+/// This is very similar to `source::broadcaster::BroadcasterInner`, but
+/// generates non-owned futures instead.
+///
 /// This object maintains a list of senders associated to each target address.
-/// When a message is broadcasted, the sender futures are awaited in parallel.
+/// When a message is broadcast, the sender futures are awaited in parallel.
 /// This is somewhat similar to what `FuturesOrdered` in the `futures` crate
 /// does, but with some key differences:
 ///
 /// - tasks and future storage are reusable to avoid repeated allocation, so
 ///   allocation occurs only after a new sender is added,
 /// - the outputs of all sender futures are returned all at once rather than
-///   with an asynchronous iterator (a.k.a. async stream); the implementation
-///   exploits this behavior by waking the main broadcast future only when all
-///   sender futures have been awaken, which strongly reduces overhead since
-///   waking a sender task does not actually schedule it on the executor.
-pub(super) struct Broadcaster<T: Clone + 'static, R: 'static> {
+///   with an asynchronous iterator (a.k.a. async stream).
+pub(super) struct BroadcasterInner<T: Clone, R> {
     /// The list of senders with their associated line identifier.
     senders: Vec<(LineId, Box<dyn Sender<T, R>>)>,
     /// Fields explicitly borrowed by the `BroadcastFuture`.
     shared: Shared<R>,
 }
 
-impl<T: Clone + 'static> Broadcaster<T, ()> {
-    /// Broadcasts an event to all addresses.
-    pub(super) async fn broadcast_event(&mut self, arg: T) -> Result<(), BroadcastError> {
-        match self.senders.as_mut_slice() {
-            // No sender.
-            [] => Ok(()),
-            // One sender.
-            [sender] => sender.1.send(arg).await.map_err(|_| BroadcastError {}),
-            // Multiple senders.
-            _ => self.broadcast(arg).await,
-        }
-    }
-}
-
-impl<T: Clone + 'static, R> Broadcaster<T, R> {
+impl<T: Clone, R> BroadcasterInner<T, R> {
     /// Adds a new sender associated to the specified identifier.
     ///
     /// # Panics
@@ -93,55 +77,25 @@ impl<T: Clone + 'static, R> Broadcaster<T, R> {
         self.senders.len()
     }
 
-    /// Broadcasts a query to all addresses and collect all responses.
-    pub(super) async fn broadcast_query(
-        &mut self,
-        arg: T,
-    ) -> Result<impl Iterator<Item = R> + '_, BroadcastError> {
-        match self.senders.as_mut_slice() {
-            // No sender.
-            [] => {}
-            // One sender.
-            [sender] => {
-                let output = sender.1.send(arg).await.map_err(|_| BroadcastError {})?;
-                self.shared.futures_env[0].output = Some(output);
-            }
-            // Multiple senders.
-            _ => self.broadcast(arg).await?,
-        };
-
-        // At this point all outputs should be available so `unwrap` can be
-        // called on the output of each future.
-        let outputs = self
-            .shared
-            .futures_env
-            .iter_mut()
-            .map(|t| t.output.take().unwrap());
-
-        Ok(outputs)
-    }
-
     /// Efficiently broadcasts a message or a query to multiple addresses.
     ///
     /// This method does not collect the responses from queries.
     fn broadcast(&mut self, arg: T) -> BroadcastFuture<'_, R> {
-        let futures_count = self.senders.len();
         let mut futures = recycle_vec(self.shared.storage.take().unwrap_or_default());
 
         // Broadcast the message and collect all futures.
-        for (i, (sender, futures_env)) in self
+        let mut iter = self
             .senders
             .iter_mut()
-            .zip(self.shared.futures_env.iter_mut())
-            .enumerate()
-        {
+            .zip(self.shared.futures_env.iter_mut());
+        while let Some((sender, futures_env)) = iter.next() {
             let future_cache = futures_env
                 .storage
                 .take()
                 .unwrap_or_else(|| RecycleBox::new(()));
 
             // Move the argument rather than clone it for the last future.
-            if i + 1 == futures_count {
+            if iter.len() == 0 {
                 let future: RecycleBox<dyn Future<Output = Result<R, SendError>> + Send + '_> =
                     coerce_box!(RecycleBox::recycle(future_cache, sender.1.send(arg)));
 
@@ -161,7 +115,7 @@ impl<T: Clone + 'static, R> Broadcaster<T, R> {
     }
 }
 
-impl<T: Clone + 'static, R> Default for Broadcaster<T, R> {
+impl<T: Clone, R> Default for BroadcasterInner<T, R> {
     /// Creates an empty `Broadcaster` object.
     fn default() -> Self {
         let wake_sink = WakeSink::new();
@@ -175,6 +129,145 @@ impl<T: Clone + 'static, R> Default for Broadcaster<T, R> {
                 futures_env: Vec::new(),
                 storage: None,
             },
+        }
+    }
+}
+
+/// An object that can efficiently broadcast events to several input ports.
+///
+/// This is very similar to `source::broadcaster::EventBroadcaster`, but
+/// generates non-owned futures instead.
+///
+/// See `BroadcasterInner` for implementation details.
+pub(super) struct EventBroadcaster<T: Clone> {
+    /// The broadcaster core object.
+    inner: BroadcasterInner<T, ()>,
+}
+
+impl<T: Clone> EventBroadcaster<T> {
+    /// Adds a new sender associated to the specified identifier.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if the total count of senders would reach
+    /// `u32::MAX - 1`.
+    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, ()>>, id: LineId) {
+        self.inner.add(sender, id);
+    }
+
+    /// Removes the first sender with the specified identifier, if any.
+    ///
+    /// Returns `true` if there was indeed a sender associated to the specified
+    /// identifier.
+    pub(super) fn remove(&mut self, id: LineId) -> bool {
+        self.inner.remove(id)
+    }
+
+    /// Removes all senders.
+    pub(super) fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    /// Returns the number of connected senders.
+    pub(super) fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Broadcasts an event to all addresses.
+    pub(super) async fn broadcast(&mut self, arg: T) -> Result<(), BroadcastError> {
+        match self.inner.senders.as_mut_slice() {
+            // No sender.
+            [] => Ok(()),
+            // One sender.
+            [sender] => sender.1.send(arg).await.map_err(|_| BroadcastError {}),
+            // Multiple senders.
+            _ => self.inner.broadcast(arg).await,
+        }
+    }
+}
+
+impl<T: Clone> Default for EventBroadcaster<T> {
+    fn default() -> Self {
+        Self {
+            inner: BroadcasterInner::default(),
+        }
+    }
+}
+
+/// An object that can efficiently broadcast queries to several replier ports.
+///
+/// This is very similar to `source::broadcaster::QueryBroadcaster`, but
+/// generates non-owned futures instead.
+///
+/// See `BroadcasterInner` for implementation details.
+pub(super) struct QueryBroadcaster<T: Clone, R> {
+    /// The broadcaster core object.
+    inner: BroadcasterInner<T, R>,
+}
+
+impl<T: Clone, R> QueryBroadcaster<T, R> {
+    /// Adds a new sender associated to the specified identifier.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if the total count of senders would reach
+    /// `u32::MAX - 1`.
+    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, R>>, id: LineId) {
+        self.inner.add(sender, id);
+    }
+
+    /// Removes the first sender with the specified identifier, if any.
+    ///
+    /// Returns `true` if there was indeed a sender associated to the specified
+    /// identifier.
+    pub(super) fn remove(&mut self, id: LineId) -> bool {
+        self.inner.remove(id)
+    }
+
+    /// Removes all senders.
+    pub(super) fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    /// Returns the number of connected senders.
+    pub(super) fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Broadcasts a query to all addresses and collect all responses.
+    pub(super) async fn broadcast(
+        &mut self,
+        arg: T,
+    ) -> Result<impl Iterator<Item = R> + '_, BroadcastError> {
+        match self.inner.senders.as_mut_slice() {
+            // No sender.
+            [] => {}
+            // One sender.
+            [sender] => {
+                let output = sender.1.send(arg).await.map_err(|_| BroadcastError {})?;
+                self.inner.shared.futures_env[0].output = Some(output);
+            }
+            // Multiple senders.
+            _ => self.inner.broadcast(arg).await?,
+        };
+
+        // At this point all outputs should be available so `unwrap` can be
+        // called on the output of each future.
+        let outputs = self
+            .inner
+            .shared
+            .futures_env
+            .iter_mut()
+            .map(|t| t.output.take().unwrap());
+
+        Ok(outputs)
+    }
+}
+
+impl<T: Clone, R> Default for QueryBroadcaster<T, R> {
+    fn default() -> Self {
+        Self {
+            inner: BroadcasterInner::default(),
         }
     }
 }
@@ -212,8 +305,6 @@ struct Shared<R> {
 ///
 /// - the sender futures are polled simultaneously rather than waiting for their
 ///   completion in a sequential manner,
-/// - this future is never woken if it can be proven that at least one of the
-///   individual sender task will still be awaken,
 /// - the storage allocated for the sender futures is always returned to the
 ///   `Broadcast` object so it can be reused by the next future,
 /// - the happy path (all futures immediately ready) is very fast.
@@ -231,9 +322,9 @@ pub(super) struct BroadcastFuture<'a, R> {
 impl<'a, R> BroadcastFuture<'a, R> {
     /// Creates a new `BroadcastFuture`.
     fn new(shared: &'a mut Shared<R>, futures: Vec<Pin<RecycleBoxFuture<'a, R>>>) -> Self {
-        let futures_count = futures.len();
+        let pending_futures_count = futures.len();
 
-        assert!(shared.futures_env.len() == futures_count);
+        assert!(shared.futures_env.len() == pending_futures_count);
 
         for futures_env in shared.futures_env.iter_mut() {
             // Drop the previous output if necessary.
@@ -244,7 +335,7 @@ impl<'a, R> BroadcastFuture<'a, R> {
             shared,
             futures: ManuallyDrop::new(futures),
             state: FutureState::Uninit,
-            pending_futures_count: futures_count,
+            pending_futures_count,
         }
     }
 }
@@ -276,7 +367,10 @@ impl<'a, R> Future for BroadcastFuture<'a, R> {
         // Poll all sender futures once if this is the first time the broadcast
         // future is polled.
         if this.state == FutureState::Uninit {
-            // Prevent spurious wake-ups.
+            // The task set is re-used for each broadcast, so it may have some
+            // task scheduled due to e.g. spurious wake-ups that were triggered
+            // after the previous broadcast was completed. Discarding scheduled
+            // tasks can prevent unnecessary wake-ups.
             this.shared.task_set.discard_scheduled();
 
             for task_idx in 0..this.futures.len() {
@@ -311,20 +405,22 @@ impl<'a, R> Future for BroadcastFuture<'a, R> {
         // Repeatedly poll the futures of all scheduled tasks until there are no
         // more scheduled tasks.
         loop {
-            // Only register the waker if it is probable that we won't find any
-            // scheduled task.
+            // No need to register the waker if some tasks have been scheduled.
             if !this.shared.task_set.has_scheduled() {
                 this.shared.wake_sink.register(cx.waker());
             }
 
             // Retrieve the indices of the scheduled tasks if any. If there are
             // no scheduled tasks, `Poll::Pending` is returned and this future
-            // will be awaken again when enough tasks have been scheduled.
-            let scheduled_tasks = match this
-                .shared
-                .task_set
-                .steal_scheduled(this.pending_futures_count)
-            {
+            // will be awaken again when enough tasks have been awaken.
+            //
+            // NOTE: the current implementation requires a notification to be
+            // sent each time a sub-future has made progress. We may try at some
+            // point to benchmark an alternative strategy where a notification
+            // is requested only when all pending sub-futures have made progress,
+            // using `take_scheduled(this.pending_futures_count)`. This would
+            // reduce the cost of context switch but could hurt latency.
+            let scheduled_tasks = match this.shared.task_set.take_scheduled(1) {
                 Some(st) => st,
                 None => return Poll::Pending,
             };
@@ -403,6 +499,7 @@ fn recycle_vec<T, U>(mut v: Vec<T>) -> Vec<U> {
 #[cfg(all(test, not(asynchronix_loom)))]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::thread;
 
     use futures_executor::block_on;
@@ -413,8 +510,9 @@ mod tests {
     use crate::util::priority_queue::PriorityQueue;
     use crate::util::sync_cell::SyncCell;
 
-    use super::super::*;
+    use super::super::sender::{InputSender, ReplierSender};
     use super::*;
+    use crate::model::Model;
 
     struct Counter {
         inner: Arc<AtomicUsize>,
@@ -438,18 +536,18 @@ mod tests {
         const N_RECV: usize = 4;
 
         let mut mailboxes = Vec::new();
-        let mut broadcaster = Broadcaster::default();
+        let mut broadcaster = EventBroadcaster::default();
         for id in 0..N_RECV {
             let mailbox = Receiver::new(10);
             let address = mailbox.sender();
-            let sender = Box::new(EventSender::new(Counter::inc, address));
+            let sender = Box::new(InputSender::new(Counter::inc, address));
 
             broadcaster.add(sender, LineId(id as u64));
             mailboxes.push(mailbox);
         }
 
         let th_broadcast = thread::spawn(move || {
-            block_on(broadcaster.broadcast_event(1)).unwrap();
+            block_on(broadcaster.broadcast(1)).unwrap();
         });
 
         let counter = Arc::new(AtomicUsize::new(0));
@@ -486,18 +584,18 @@ mod tests {
         const N_RECV: usize = 4;
 
         let mut mailboxes = Vec::new();
-        let mut broadcaster = Broadcaster::default();
+        let mut broadcaster = QueryBroadcaster::default();
         for id in 0..N_RECV {
             let mailbox = Receiver::new(10);
             let address = mailbox.sender();
-            let sender = Box::new(QuerySender::new(Counter::fetch_inc, address));
+            let sender = Box::new(ReplierSender::new(Counter::fetch_inc, address));
 
             broadcaster.add(sender, LineId(id as u64));
             mailboxes.push(mailbox);
         }
 
         let th_broadcast = thread::spawn(move || {
-            let iter = block_on(broadcaster.broadcast_query(1)).unwrap();
+            let iter = block_on(broadcaster.broadcast(1)).unwrap();
             let sum = iter.fold(0, |acc, val| acc + val);
 
             assert_eq!(sum, N_RECV * (N_RECV - 1) / 2); // sum of {0, 1, 2, ..., (N_RECV - 1)}
@@ -606,12 +704,12 @@ mod tests {
             let (test_event2, waker2) = test_event::<usize>();
             let (test_event3, waker3) = test_event::<usize>();
 
-            let mut broadcaster = Broadcaster::default();
+            let mut broadcaster = QueryBroadcaster::default();
             broadcaster.add(Box::new(test_event1), LineId(1));
             broadcaster.add(Box::new(test_event2), LineId(2));
             broadcaster.add(Box::new(test_event3), LineId(3));
 
-            let mut fut = Box::pin(broadcaster.broadcast_query(()));
+            let mut fut = Box::pin(broadcaster.broadcast(()));
             let is_scheduled = loom::sync::Arc::new(AtomicBool::new(false));
             let is_scheduled_waker = is_scheduled.clone();
 
@@ -626,7 +724,6 @@ mod tests {
             let th2 = thread::spawn(move || waker2.wake_final(7));
             let th3 = thread::spawn(move || waker3.wake_final(42));
 
-            let mut schedule_count = 0;
             loop {
                 match fut.as_mut().poll(&mut cx) {
                     Poll::Ready(Ok(mut res)) => {
@@ -645,8 +742,6 @@ mod tests {
                 if !is_scheduled.swap(false, Ordering::Acquire) {
                     break;
                 }
-                schedule_count += 1;
-                assert!(schedule_count <= 1);
             }
 
             th1.join().unwrap();
@@ -681,11 +776,11 @@ mod tests {
             let (test_event1, waker1) = test_event::<usize>();
             let (test_event2, waker2) = test_event::<usize>();
 
-            let mut broadcaster = Broadcaster::default();
+            let mut broadcaster = QueryBroadcaster::default();
             broadcaster.add(Box::new(test_event1), LineId(1));
             broadcaster.add(Box::new(test_event2), LineId(2));
 
-            let mut fut = Box::pin(broadcaster.broadcast_query(()));
+            let mut fut = Box::pin(broadcaster.broadcast(()));
             let is_scheduled = loom::sync::Arc::new(AtomicBool::new(false));
             let is_scheduled_waker = is_scheduled.clone();
 
@@ -701,7 +796,6 @@ mod tests {
             let th2 = thread::spawn(move || waker2.wake_final(7));
             let th_spurious = thread::spawn(move || spurious_waker.wake_spurious());
 
-            let mut schedule_count = 0;
             loop {
                 match fut.as_mut().poll(&mut cx) {
                     Poll::Ready(Ok(mut res)) => {
@@ -719,8 +813,6 @@ mod tests {
                 if !is_scheduled.swap(false, Ordering::Acquire) {
                     break;
                 }
-                schedule_count += 1;
-                assert!(schedule_count <= 2);
             }
 
             th1.join().unwrap();

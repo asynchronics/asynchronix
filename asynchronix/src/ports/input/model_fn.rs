@@ -2,8 +2,10 @@
 
 use std::future::{ready, Future, Ready};
 
-use crate::model::{markers, Model};
+use crate::model::Model;
 use crate::time::Scheduler;
+
+use super::markers;
 
 /// A function, method or closures that can be used as an *input port*.
 ///

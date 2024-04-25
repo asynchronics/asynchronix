@@ -1,27 +1,35 @@
 //! Scheduling functions and types.
 
 use std::error::Error;
-use std::fmt;
 use std::future::Future;
-use std::marker::PhantomData;
+use std::hash::{Hash, Hasher};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
+use std::{fmt, ptr};
 
 use pin_project_lite::pin_project;
 use recycle_box::{coerce_box, RecycleBox};
 
-use crate::channel::{ChannelId, Sender};
+use crate::channel::Sender;
 use crate::executor::Executor;
-use crate::model::{InputFn, Model};
+use crate::model::Model;
+use crate::ports::InputFn;
 use crate::time::{MonotonicTime, TearableAtomicTime};
 use crate::util::priority_queue::PriorityQueue;
 use crate::util::sync_cell::SyncCellReader;
 
 /// Shorthand for the scheduler queue type.
-pub(crate) type SchedulerQueue = PriorityQueue<(MonotonicTime, ChannelId), Box<dyn ScheduledEvent>>;
+
+// Why use both time and channel ID as the key? The short answer is that this
+// ensures that events targeting the same model are sent in the order they were
+// scheduled. More precisely, this ensures that events targeting the same model
+// are ordered contiguously in the priority queue, which in turns allows the
+// event loop to easily aggregate such events into single futures and thus
+// control their relative order of execution.
+pub(crate) type SchedulerQueue = PriorityQueue<(MonotonicTime, usize), Action>;
 
 /// Trait abstracting over time-absolute and time-relative deadlines.
 ///
@@ -81,7 +89,9 @@ impl Deadline for MonotonicTime {
 ///
 /// ```
 /// use std::time::Duration;
-/// use asynchronix::model::{Model, Output}; use asynchronix::time::Scheduler;
+/// use asynchronix::model::Model;
+/// use asynchronix::ports::Output;
+/// use asynchronix::time::Scheduler;
 ///
 /// #[derive(Default)]
 /// pub struct DelayedGreeter {
@@ -141,8 +151,8 @@ impl<M: Model> Scheduler<M> {
     ///
     /// fn is_third_millenium<M: Model>(scheduler: &Scheduler<M>) -> bool {
     ///     let time = scheduler.time();
-    ///
-    ///     time >= MonotonicTime::new(978307200, 0) && time < MonotonicTime::new(32535216000, 0)
+    ///     time >= MonotonicTime::new(978307200, 0).unwrap()
+    ///         && time < MonotonicTime::new(32535216000, 0).unwrap()
     /// }
     /// ```
     pub fn time(&self) -> MonotonicTime {
@@ -203,7 +213,8 @@ impl<M: Model> Scheduler<M> {
         Ok(())
     }
 
-    /// Schedules a cancellable event at a future time and returns an event key.
+    /// Schedules a cancellable event at a future time and returns an action
+    /// key.
     ///
     /// An error is returned if the specified deadline is not in the future of
     /// the current simulation time.
@@ -212,12 +223,12 @@ impl<M: Model> Scheduler<M> {
     ///
     /// ```
     /// use asynchronix::model::Model;
-    /// use asynchronix::time::{EventKey, MonotonicTime, Scheduler};
+    /// use asynchronix::time::{ActionKey, MonotonicTime, Scheduler};
     ///
     /// // An alarm clock that can be cancelled.
     /// #[derive(Default)]
     /// pub struct CancellableAlarmClock {
-    ///     event_key: Option<EventKey>,
+    ///     event_key: Option<ActionKey>,
     /// }
     ///
     /// impl CancellableAlarmClock {
@@ -248,7 +259,7 @@ impl<M: Model> Scheduler<M> {
         deadline: impl Deadline,
         func: F,
         arg: T,
-    ) -> Result<EventKey, SchedulingError>
+    ) -> Result<ActionKey, SchedulingError>
     where
         F: for<'a> InputFn<'a, M, T, S>,
         T: Send + Clone + 'static,
@@ -337,7 +348,7 @@ impl<M: Model> Scheduler<M> {
     }
 
     /// Schedules a cancellable, periodically recurring event at a future time
-    /// and returns an event key.
+    /// and returns an action key.
     ///
     /// An error is returned if the specified deadline is not in the future of
     /// the current simulation time or if the specified period is null.
@@ -348,13 +359,13 @@ impl<M: Model> Scheduler<M> {
     /// use std::time::Duration;
     ///
     /// use asynchronix::model::Model;
-    /// use asynchronix::time::{EventKey, MonotonicTime, Scheduler};
+    /// use asynchronix::time::{ActionKey, MonotonicTime, Scheduler};
     ///
     /// // An alarm clock beeping at 1Hz that can be cancelled before it sets off, or
     /// // stopped after it sets off.
     /// #[derive(Default)]
     /// pub struct CancellableBeepingAlarmClock {
-    ///     event_key: Option<EventKey>,
+    ///     event_key: Option<ActionKey>,
     /// }
     ///
     /// impl CancellableBeepingAlarmClock {
@@ -391,7 +402,7 @@ impl<M: Model> Scheduler<M> {
         period: Duration,
         func: F,
         arg: T,
-    ) -> Result<EventKey, SchedulingError>
+    ) -> Result<ActionKey, SchedulingError>
     where
         F: for<'a> InputFn<'a, M, T, S> + Clone,
         T: Send + Clone + 'static,
@@ -425,31 +436,52 @@ impl<M: Model> fmt::Debug for Scheduler<M> {
     }
 }
 
-/// Handle to a scheduled event.
+/// Handle to a scheduled action.
 ///
-/// An `EventKey` can be used to cancel a future event.
+/// An `ActionKey` can be used to cancel a scheduled action.
 #[derive(Clone, Debug)]
-#[must_use = "prefer unkeyed scheduling methods if the event is never cancelled"]
-pub struct EventKey {
+#[must_use = "prefer unkeyed scheduling methods if the action is never cancelled"]
+pub struct ActionKey {
     is_cancelled: Arc<AtomicBool>,
 }
 
-impl EventKey {
-    /// Creates a key for a pending event.
+impl ActionKey {
+    /// Creates a key for a pending action.
     pub(crate) fn new() -> Self {
         Self {
             is_cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    /// Checks whether the event was cancelled.
+    /// Checks whether the action was cancelled.
     pub(crate) fn is_cancelled(&self) -> bool {
         self.is_cancelled.load(Ordering::Relaxed)
     }
 
-    /// Cancels the associated event.
+    /// Cancels the associated action.
     pub fn cancel(self) {
         self.is_cancelled.store(true, Ordering::Relaxed);
+    }
+}
+
+impl PartialEq for ActionKey {
+    /// Implements equality by considering clones to be equivalent, rather than
+    /// keys with the same `is_cancelled` value.
+    fn eq(&self, other: &Self) -> bool {
+        ptr::addr_eq(&*self.is_cancelled, &*other.is_cancelled)
+    }
+}
+
+impl Eq for ActionKey {}
+
+impl Hash for ActionKey {
+    /// Implements `Hash`` by considering clones to be equivalent, rather than
+    /// keys with the same `is_cancelled` value.
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
+        ptr::hash(&*self.is_cancelled, state)
     }
 }
 
@@ -477,9 +509,73 @@ impl fmt::Display for SchedulingError {
 
 impl Error for SchedulingError {}
 
+/// A possibly periodic, possibly cancellable action that can be scheduled or
+/// processed immediately.
+pub struct Action {
+    inner: Box<dyn ActionInner>,
+}
+
+impl Action {
+    /// Creates a new `Action` from an `ActionInner`.
+    pub(crate) fn new<S: ActionInner>(s: S) -> Self {
+        Self { inner: Box::new(s) }
+    }
+
+    /// Reports whether the action was cancelled.
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.inner.is_cancelled()
+    }
+
+    /// If this is a periodic action, returns a boxed clone of this action and
+    /// its repetition period; otherwise returns `None`.
+    pub(crate) fn next(&self) -> Option<(Action, Duration)> {
+        self.inner
+            .next()
+            .map(|(inner, period)| (Self { inner }, period))
+    }
+
+    /// Returns a boxed future that performs the action.
+    pub(crate) fn into_future(self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        self.inner.into_future()
+    }
+
+    /// Spawns the future that performs the action onto the provided executor.
+    ///
+    /// This method is typically more efficient that spawning the boxed future
+    /// from `into_future` since it can directly spawn the unboxed future.
+    pub(crate) fn spawn_and_forget(self, executor: &Executor) {
+        self.inner.spawn_and_forget(executor)
+    }
+}
+
+impl fmt::Debug for Action {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("SchedulableEvent").finish_non_exhaustive()
+    }
+}
+
+/// Trait abstracting over the inner type of an action.
+pub(crate) trait ActionInner: Send + 'static {
+    /// Reports whether the action was cancelled.
+    fn is_cancelled(&self) -> bool;
+
+    /// If this is a periodic action, returns a boxed clone of this action and
+    /// its repetition period; otherwise returns `None`.
+    fn next(&self) -> Option<(Box<dyn ActionInner>, Duration)>;
+
+    /// Returns a boxed future that performs the action.
+    fn into_future(self: Box<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+
+    /// Spawns the future that performs the action onto the provided executor.
+    ///
+    /// This method is typically more efficient that spawning the boxed future
+    /// from `into_future` since it can directly spawn the unboxed future.
+    fn spawn_and_forget(self: Box<Self>, executor: &Executor);
+}
+
 /// Schedules an event at a future time.
 ///
-/// This method does not check whether the specified time lies in the future
+/// This function does not check whether the specified time lies in the future
 /// of the current simulation time.
 pub(crate) fn schedule_event_at_unchecked<M, F, T, S>(
     time: MonotonicTime,
@@ -495,15 +591,15 @@ pub(crate) fn schedule_event_at_unchecked<M, F, T, S>(
 {
     let channel_id = sender.channel_id();
 
-    let event_dispatcher = Box::new(new_event_dispatcher(func, arg, sender));
+    let action = Action::new(OnceAction::new(process_event(func, arg, sender)));
 
     let mut scheduler_queue = scheduler_queue.lock().unwrap();
-    scheduler_queue.insert((time, channel_id), event_dispatcher);
+    scheduler_queue.insert((time, channel_id), action);
 }
 
-/// Schedules an event at a future time, returning an event key.
+/// Schedules an event at a future time, returning an action key.
 ///
-/// This method does not check whether the specified time lies in the future
+/// This function does not check whether the specified time lies in the future
 /// of the current simulation time.
 pub(crate) fn schedule_keyed_event_at_unchecked<M, F, T, S>(
     time: MonotonicTime,
@@ -511,31 +607,29 @@ pub(crate) fn schedule_keyed_event_at_unchecked<M, F, T, S>(
     arg: T,
     sender: Sender<M>,
     scheduler_queue: &Mutex<SchedulerQueue>,
-) -> EventKey
+) -> ActionKey
 where
     M: Model,
     F: for<'a> InputFn<'a, M, T, S>,
     T: Send + Clone + 'static,
     S: Send + 'static,
 {
-    let event_key = EventKey::new();
+    let event_key = ActionKey::new();
     let channel_id = sender.channel_id();
-    let event_dispatcher = Box::new(KeyedEventDispatcher::new(
+    let action = Action::new(KeyedOnceAction::new(
+        |ek| send_keyed_event(ek, func, arg, sender),
         event_key.clone(),
-        func,
-        arg,
-        sender,
     ));
 
     let mut scheduler_queue = scheduler_queue.lock().unwrap();
-    scheduler_queue.insert((time, channel_id), event_dispatcher);
+    scheduler_queue.insert((time, channel_id), action);
 
     event_key
 }
 
 /// Schedules a periodic event at a future time.
 ///
-/// This method does not check whether the specified time lies in the future
+/// This function does not check whether the specified time lies in the future
 /// of the current simulation time.
 pub(crate) fn schedule_periodic_event_at_unchecked<M, F, T, S>(
     time: MonotonicTime,
@@ -552,15 +646,18 @@ pub(crate) fn schedule_periodic_event_at_unchecked<M, F, T, S>(
 {
     let channel_id = sender.channel_id();
 
-    let event_dispatcher = Box::new(PeriodicEventDispatcher::new(func, arg, sender, period));
+    let action = Action::new(PeriodicAction::new(
+        || process_event(func, arg, sender),
+        period,
+    ));
 
     let mut scheduler_queue = scheduler_queue.lock().unwrap();
-    scheduler_queue.insert((time, channel_id), event_dispatcher);
+    scheduler_queue.insert((time, channel_id), action);
 }
 
-/// Schedules an event at a future time, returning an event key.
+/// Schedules an event at a future time, returning an action key.
 ///
-/// This method does not check whether the specified time lies in the future
+/// This function does not check whether the specified time lies in the future
 /// of the current simulation time.
 pub(crate) fn schedule_periodic_keyed_event_at_unchecked<M, F, T, S>(
     time: MonotonicTime,
@@ -569,84 +666,52 @@ pub(crate) fn schedule_periodic_keyed_event_at_unchecked<M, F, T, S>(
     arg: T,
     sender: Sender<M>,
     scheduler_queue: &Mutex<SchedulerQueue>,
-) -> EventKey
+) -> ActionKey
 where
     M: Model,
     F: for<'a> InputFn<'a, M, T, S> + Clone,
     T: Send + Clone + 'static,
     S: Send + 'static,
 {
-    let event_key = EventKey::new();
+    let event_key = ActionKey::new();
     let channel_id = sender.channel_id();
-    let event_dispatcher = Box::new(PeriodicKeyedEventDispatcher::new(
-        event_key.clone(),
-        func,
-        arg,
-        sender,
+    let action = Action::new(KeyedPeriodicAction::new(
+        |ek| send_keyed_event(ek, func, arg, sender),
         period,
+        event_key.clone(),
     ));
 
     let mut scheduler_queue = scheduler_queue.lock().unwrap();
-    scheduler_queue.insert((time, channel_id), event_dispatcher);
+    scheduler_queue.insert((time, channel_id), action);
 
     event_key
 }
 
-/// Trait for objects that can be converted to a future dispatching a scheduled
-/// event.
-pub(crate) trait ScheduledEvent: Send {
-    /// Reports whether the associated event was cancelled.
-    fn is_cancelled(&self) -> bool;
-
-    /// Returns a boxed clone of this event and the repetition period if this is
-    /// a periodic even, otherwise returns `None`.
-    fn next(&self) -> Option<(Box<dyn ScheduledEvent>, Duration)>;
-
-    /// Returns a boxed future dispatching the associated event.
-    fn into_future(self: Box<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
-
-    /// Spawns the future that dispatches the associated event onto the provided
-    /// executor.
-    ///
-    /// This method is typically more efficient that spawning the boxed future
-    /// from `into_future` since it can directly spawn the unboxed future.
-    fn spawn_and_forget(self: Box<Self>, executor: &Executor);
-}
-
 pin_project! {
-    /// Object that can be converted to a future dispatching a non-cancellable
-    /// event.
+    /// An object that can be converted to a future performing a single
+    /// non-cancellable action.
     ///
-    /// Note that this particular event dispatcher is in fact already a future:
-    /// since the future cannot be cancelled and the dispatcher does not need to
-    /// be cloned, there is no need to defer the construction of the future.
-    /// This makes `into_future` a trivial cast, which saves a boxing operation.
-    pub(crate) struct EventDispatcher<F> {
+    /// Note that this particular action is in fact already a future: since the
+    /// future cannot be cancelled and the action does not need to be cloned,
+    /// there is no need to defer the construction of the future. This makes
+    /// `into_future` a trivial cast, which saves a boxing operation.
+    pub(crate) struct OnceAction<F> {
         #[pin]
         fut: F,
     }
 }
 
-/// Constructs a new `EventDispatcher`.
-///
-/// Due to some limitations of type inference or of my understanding of it, the
-/// constructor for this event dispatchers is a freestanding function.
-fn new_event_dispatcher<M, F, T, S>(
-    func: F,
-    arg: T,
-    sender: Sender<M>,
-) -> EventDispatcher<impl Future<Output = ()>>
+impl<F> OnceAction<F>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S>,
-    T: Send + Clone + 'static,
+    F: Future<Output = ()> + Send + 'static,
 {
-    let fut = dispatch_event(func, arg, sender);
-
-    EventDispatcher { fut }
+    /// Constructs a new `OnceAction`.
+    pub(crate) fn new(fut: F) -> Self {
+        OnceAction { fut }
+    }
 }
 
-impl<F> Future for EventDispatcher<F>
+impl<F> Future for OnceAction<F>
 where
     F: Future,
 {
@@ -658,14 +723,14 @@ where
     }
 }
 
-impl<F> ScheduledEvent for EventDispatcher<F>
+impl<F> ActionInner for OnceAction<F>
 where
     F: Future<Output = ()> + Send + 'static,
 {
     fn is_cancelled(&self) -> bool {
         false
     }
-    fn next(&self) -> Option<(Box<dyn ScheduledEvent>, Duration)> {
+    fn next(&self) -> Option<(Box<dyn ActionInner>, Duration)> {
         None
     }
     fn into_future(self: Box<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
@@ -677,230 +742,155 @@ where
     }
 }
 
-/// Object that can be converted to a future dispatching a non-cancellable periodic
-/// event.
-pub(crate) struct PeriodicEventDispatcher<M, F, T, S>
+/// An object that can be converted to a future performing a non-cancellable,
+/// periodic action.
+pub(crate) struct PeriodicAction<G, F>
 where
-    M: Model,
+    G: (FnOnce() -> F) + Clone + Send + 'static,
+    F: Future<Output = ()> + Send + 'static,
 {
-    func: F,
-    arg: T,
-    sender: Sender<M>,
+    /// A clonable generator for the associated future.
+    gen: G,
+    /// The action repetition period.
     period: Duration,
-    _input_kind: PhantomData<S>,
 }
 
-impl<M, F, T, S> PeriodicEventDispatcher<M, F, T, S>
+impl<G, F> PeriodicAction<G, F>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S>,
-    T: Send + Clone + 'static,
+    G: (FnOnce() -> F) + Clone + Send + 'static,
+    F: Future<Output = ()> + Send + 'static,
 {
-    /// Constructs a new `PeriodicEventDispatcher`.
-    fn new(func: F, arg: T, sender: Sender<M>, period: Duration) -> Self {
-        Self {
-            func,
-            arg,
-            sender,
-            period,
-            _input_kind: PhantomData,
-        }
+    /// Constructs a new `PeriodicAction`.
+    pub(crate) fn new(gen: G, period: Duration) -> Self {
+        Self { gen, period }
     }
 }
 
-impl<M, F, T, S> ScheduledEvent for PeriodicEventDispatcher<M, F, T, S>
+impl<G, F> ActionInner for PeriodicAction<G, F>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S> + Clone,
-    T: Send + Clone + 'static,
-    S: Send + 'static,
+    G: (FnOnce() -> F) + Clone + Send + 'static,
+    F: Future<Output = ()> + Send + 'static,
 {
     fn is_cancelled(&self) -> bool {
         false
     }
-    fn next(&self) -> Option<(Box<dyn ScheduledEvent>, Duration)> {
-        let event = Box::new(Self::new(
-            self.func.clone(),
-            self.arg.clone(),
-            self.sender.clone(),
-            self.period,
-        ));
+    fn next(&self) -> Option<(Box<dyn ActionInner>, Duration)> {
+        let event = Box::new(Self::new(self.gen.clone(), self.period));
 
         Some((event, self.period))
     }
     fn into_future(self: Box<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        let Self {
-            func, arg, sender, ..
-        } = *self;
-
-        Box::pin(dispatch_event(func, arg, sender))
+        Box::pin((self.gen)())
     }
     fn spawn_and_forget(self: Box<Self>, executor: &Executor) {
-        let Self {
-            func, arg, sender, ..
-        } = *self;
-
-        let fut = dispatch_event(func, arg, sender);
-        executor.spawn_and_forget(fut);
+        executor.spawn_and_forget((self.gen)());
     }
 }
 
-/// Object that can be converted to a future dispatching a cancellable event.
-pub(crate) struct KeyedEventDispatcher<M, F, T, S>
+/// An object that can be converted to a future performing a single, cancellable
+/// action.
+pub(crate) struct KeyedOnceAction<G, F>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S>,
-    T: Send + Clone + 'static,
+    G: (FnOnce(ActionKey) -> F) + Send + 'static,
+    F: Future<Output = ()> + Send + 'static,
 {
-    event_key: EventKey,
-    func: F,
-    arg: T,
-    sender: Sender<M>,
-    _input_kind: PhantomData<S>,
+    /// A generator for the associated future.
+    gen: G,
+    /// The event cancellation key.
+    event_key: ActionKey,
 }
 
-impl<M, F, T, S> KeyedEventDispatcher<M, F, T, S>
+impl<G, F> KeyedOnceAction<G, F>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S>,
-    T: Send + Clone + 'static,
+    G: (FnOnce(ActionKey) -> F) + Send + 'static,
+    F: Future<Output = ()> + Send + 'static,
 {
-    /// Constructs a new `KeyedEventDispatcher`.
-    fn new(event_key: EventKey, func: F, arg: T, sender: Sender<M>) -> Self {
-        Self {
-            event_key,
-            func,
-            arg,
-            sender,
-            _input_kind: PhantomData,
-        }
+    /// Constructs a new `KeyedOnceAction`.
+    pub(crate) fn new(gen: G, event_key: ActionKey) -> Self {
+        Self { gen, event_key }
     }
 }
 
-impl<M, F, T, S> ScheduledEvent for KeyedEventDispatcher<M, F, T, S>
+impl<G, F> ActionInner for KeyedOnceAction<G, F>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S>,
-    T: Send + Clone + 'static,
-    S: Send + 'static,
+    G: (FnOnce(ActionKey) -> F) + Send + 'static,
+    F: Future<Output = ()> + Send + 'static,
 {
     fn is_cancelled(&self) -> bool {
         self.event_key.is_cancelled()
     }
-    fn next(&self) -> Option<(Box<dyn ScheduledEvent>, Duration)> {
+    fn next(&self) -> Option<(Box<dyn ActionInner>, Duration)> {
         None
     }
     fn into_future(self: Box<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        let Self {
-            event_key,
-            func,
-            arg,
-            sender,
-            ..
-        } = *self;
-
-        Box::pin(dispatch_keyed_event(event_key, func, arg, sender))
+        Box::pin((self.gen)(self.event_key))
     }
     fn spawn_and_forget(self: Box<Self>, executor: &Executor) {
-        let Self {
-            event_key,
-            func,
-            arg,
-            sender,
-            ..
-        } = *self;
-
-        let fut = dispatch_keyed_event(event_key, func, arg, sender);
-        executor.spawn_and_forget(fut);
+        executor.spawn_and_forget((self.gen)(self.event_key));
     }
 }
 
-/// Object that can be converted to a future dispatching a cancellable event.
-pub(crate) struct PeriodicKeyedEventDispatcher<M, F, T, S>
+/// An object that can be converted to a future performing a periodic,
+/// cancellable action.
+pub(crate) struct KeyedPeriodicAction<G, F>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S>,
-    T: Send + Clone + 'static,
+    G: (FnOnce(ActionKey) -> F) + Clone + Send + 'static,
+    F: Future<Output = ()> + Send + 'static,
 {
-    event_key: EventKey,
-    func: F,
-    arg: T,
-    sender: Sender<M>,
+    /// A clonable generator for associated future.
+    gen: G,
+    /// The repetition period.
     period: Duration,
-    _input_kind: PhantomData<S>,
+    /// The event cancellation key.
+    event_key: ActionKey,
 }
 
-impl<M, F, T, S> PeriodicKeyedEventDispatcher<M, F, T, S>
+impl<G, F> KeyedPeriodicAction<G, F>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S>,
-    T: Send + Clone + 'static,
+    G: (FnOnce(ActionKey) -> F) + Clone + Send + 'static,
+    F: Future<Output = ()> + Send + 'static,
 {
-    /// Constructs a new `KeyedEventDispatcher`.
-    fn new(event_key: EventKey, func: F, arg: T, sender: Sender<M>, period: Duration) -> Self {
+    /// Constructs a new `KeyedPeriodicAction`.
+    pub(crate) fn new(gen: G, period: Duration, event_key: ActionKey) -> Self {
         Self {
-            event_key,
-            func,
-            arg,
-            sender,
+            gen,
             period,
-            _input_kind: PhantomData,
+            event_key,
         }
     }
 }
 
-impl<M, F, T, S> ScheduledEvent for PeriodicKeyedEventDispatcher<M, F, T, S>
+impl<G, F> ActionInner for KeyedPeriodicAction<G, F>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S> + Clone,
-    T: Send + Clone + 'static,
-    S: Send + 'static,
+    G: (FnOnce(ActionKey) -> F) + Clone + Send + 'static,
+    F: Future<Output = ()> + Send + 'static,
 {
     fn is_cancelled(&self) -> bool {
         self.event_key.is_cancelled()
     }
-    fn next(&self) -> Option<(Box<dyn ScheduledEvent>, Duration)> {
+    fn next(&self) -> Option<(Box<dyn ActionInner>, Duration)> {
         let event = Box::new(Self::new(
-            self.event_key.clone(),
-            self.func.clone(),
-            self.arg.clone(),
-            self.sender.clone(),
+            self.gen.clone(),
             self.period,
+            self.event_key.clone(),
         ));
 
         Some((event, self.period))
     }
     fn into_future(self: Box<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        let Self {
-            event_key,
-            func,
-            arg,
-            sender,
-            ..
-        } = *self;
-
-        Box::pin(dispatch_keyed_event(event_key, func, arg, sender))
+        Box::pin((self.gen)(self.event_key))
     }
     fn spawn_and_forget(self: Box<Self>, executor: &Executor) {
-        let Self {
-            event_key,
-            func,
-            arg,
-            sender,
-            ..
-        } = *self;
-
-        let fut = dispatch_keyed_event(event_key, func, arg, sender);
-        executor.spawn_and_forget(fut);
+        executor.spawn_and_forget((self.gen)(self.event_key));
     }
 }
 
-/// Asynchronously dispatch a regular, non-cancellable event.
-async fn dispatch_event<M, F, T, S>(func: F, arg: T, sender: Sender<M>)
+/// Asynchronously sends a non-cancellable event to a model input.
+pub(crate) async fn process_event<M, F, T, S>(func: F, arg: T, sender: Sender<M>)
 where
     M: Model,
     F: for<'a> InputFn<'a, M, T, S>,
-    T: Send + Clone + 'static,
+    T: Send + 'static,
 {
     let _ = sender
         .send(
@@ -916,9 +906,13 @@ where
         .await;
 }
 
-/// Asynchronously dispatch a cancellable event.
-async fn dispatch_keyed_event<M, F, T, S>(event_key: EventKey, func: F, arg: T, sender: Sender<M>)
-where
+/// Asynchronously sends a cancellable event to a model input.
+pub(crate) async fn send_keyed_event<M, F, T, S>(
+    event_key: ActionKey,
+    func: F,
+    arg: T,
+    sender: Sender<M>,
+) where
     M: Model,
     F: for<'a> InputFn<'a, M, T, S>,
     T: Send + Clone + 'static,

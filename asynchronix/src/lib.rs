@@ -36,18 +36,18 @@
 //!
 //! Models can contain four kinds of ports:
 //!
-//! * _output ports_, which are instances of the [`Output`](model::Output) type
+//! * _output ports_, which are instances of the [`Output`](ports::Output) type
 //!   and can be used to broadcast a message,
 //! * _requestor ports_, which are instances of the
-//!   [`Requestor`](model::Requestor) type and can be used to broadcast a
+//!   [`Requestor`](ports::Requestor) type and can be used to broadcast a
 //!   message and receive an iterator yielding the replies from all connected
 //!   replier ports,
 //! * _input ports_, which are synchronous or asynchronous methods that
-//!   implement the [`InputFn`](model::InputFn) trait and take an `&mut self`
+//!   implement the [`InputFn`](ports::InputFn) trait and take an `&mut self`
 //!   argument, a message argument, and an optional
 //!   [`&Scheduler`](time::Scheduler) argument,
 //! * _replier ports_, which are similar to input ports but implement the
-//!   [`ReplierFn`](model::ReplierFn) trait and return a reply.
+//!   [`ReplierFn`](ports::ReplierFn) trait and return a reply.
 //!
 //! Messages that are broadcast by an output port to an input port are referred
 //! to as *events*, while messages exchanged between requestor and replier ports
@@ -78,7 +78,8 @@
 //! `Multiplier` could be implemented as follows:
 //!
 //! ```
-//! use asynchronix::model::{Model, Output};
+//! use asynchronix::model::Model;
+//! use asynchronix::ports::Output;
 //!
 //! #[derive(Default)]
 //! pub struct Multiplier {
@@ -104,7 +105,8 @@
 //!
 //! ```
 //! use std::time::Duration;
-//! use asynchronix::model::{Model, Output};
+//! use asynchronix::model::Model;
+//! use asynchronix::ports::Output;
 //! use asynchronix::time::Scheduler;
 //!
 //! #[derive(Default)]
@@ -166,7 +168,8 @@
 //! ```
 //! # mod models {
 //! #     use std::time::Duration;
-//! #     use asynchronix::model::{Model, Output};
+//! #     use asynchronix::model::Model;
+//! #     use asynchronix::ports::Output;
 //! #     use asynchronix::time::Scheduler;
 //! #     #[derive(Default)]
 //! #     pub struct Multiplier {
@@ -193,6 +196,7 @@
 //! #     impl Model for Delay {}
 //! # }
 //! use std::time::Duration;
+//! use asynchronix::ports::EventSlot;
 //! use asynchronix::simulation::{Mailbox, SimInit};
 //! use asynchronix::time::MonotonicTime;
 //!
@@ -217,7 +221,8 @@
 //! delay1.output.connect(Delay::input, &delay2_mbox);
 //!
 //! // Keep handles to the system input and output for the simulation.
-//! let mut output_slot = delay2.output.connect_slot().0;
+//! let mut output_slot = EventSlot::new();
+//! delay2.output.connect_sink(&output_slot);
 //! let input_address = multiplier1_mbox.address();
 //!
 //! // Pick an arbitrary simulation start time and build the simulation.
@@ -239,23 +244,20 @@
 //!    deadline using for instance
 //!    [`Simulation::step_by()`](simulation::Simulation::step_by).
 //! 2. by sending events or queries without advancing simulation time, using
-//!    [`Simulation::send_event()`](simulation::Simulation::send_event) or
-//!    [`Simulation::send_query()`](simulation::Simulation::send_query),
+//!    [`Simulation::process_event()`](simulation::Simulation::process_event) or
+//!    [`Simulation::send_query()`](simulation::Simulation::process_query),
 //! 3. by scheduling events, using for instance
 //!    [`Simulation::schedule_event()`](simulation::Simulation::schedule_event).
 //!
-//! When a simulation is initialized via
-//! [`SimInit::init()`](simulation::SimInit::init) then the simulation will run
-//! as fast as possible, without regard for the actual wall clock time.
-//! Alternatively, it is possible to initialize a simulation via
-//! [`SimInit::init_with_clock()`](simulation::SimInit::init_with_clock) to bind
-//! the simulation time to the wall clock time using a custom
-//! [`Clock`](time::Clock) type or a readily-available real-time clock such as
-//! [`AutoSystemClock`](time::AutoSystemClock).
+//! When initialized with the default clock, the simulation will run as fast as
+//! possible, without regard for the actual wall clock time. Alternatively, the
+//! simulation time can be synchronized to the wall clock time using
+//! [`SimInit::set_clock()`](simulation::SimInit::set_clock) and providing a
+//! custom [`Clock`](time::Clock) type or a readily-available real-time clock
+//! such as [`AutoSystemClock`](time::AutoSystemClock).
 //!
-//! Simulation outputs can be monitored using
-//! [`EventSlot`](simulation::EventSlot)s and
-//! [`EventStream`](simulation::EventStream)s, which can be connected to any
+//! Simulation outputs can be monitored using [`EventSlot`](ports::EventSlot)s
+//! and [`EventBuffer`](ports::EventBuffer)s, which can be connected to any
 //! model's output port. While an event slot only gives access to the last value
 //! sent from a port, an event stream is an iterator that yields all events that
 //! were sent in first-in-first-out order.
@@ -266,7 +268,8 @@
 //! ```
 //! # mod models {
 //! #     use std::time::Duration;
-//! #     use asynchronix::model::{Model, Output};
+//! #     use asynchronix::model::Model;
+//! #     use asynchronix::ports::Output;
 //! #     use asynchronix::time::Scheduler;
 //! #     #[derive(Default)]
 //! #     pub struct Multiplier {
@@ -293,6 +296,7 @@
 //! #     impl Model for Delay {}
 //! # }
 //! # use std::time::Duration;
+//! # use asynchronix::ports::EventSlot;
 //! # use asynchronix::simulation::{Mailbox, SimInit};
 //! # use asynchronix::time::MonotonicTime;
 //! # use models::{Delay, Multiplier};
@@ -308,7 +312,8 @@
 //! # multiplier1.output.connect(Multiplier::input, &multiplier2_mbox);
 //! # multiplier2.output.connect(Delay::input, &delay2_mbox);
 //! # delay1.output.connect(Delay::input, &delay2_mbox);
-//! # let mut output_slot = delay2.output.connect_slot().0;
+//! # let mut output_slot = EventSlot::new();
+//! # delay2.output.connect_sink(&output_slot);
 //! # let input_address = multiplier1_mbox.address();
 //! # let t0 = MonotonicTime::EPOCH;
 //! # let mut simu = SimInit::new()
@@ -318,21 +323,21 @@
 //! #     .add_model(delay2, delay2_mbox)
 //! #     .init(t0);
 //! // Send a value to the first multiplier.
-//! simu.send_event(Multiplier::input, 21.0, &input_address);
+//! simu.process_event(Multiplier::input, 21.0, &input_address);
 //!
 //! // The simulation is still at t0 so nothing is expected at the output of the
 //! // second delay gate.
-//! assert!(output_slot.take().is_none());
+//! assert!(output_slot.next().is_none());
 //!
 //! // Advance simulation time until the next event and check the time and output.
 //! simu.step();
 //! assert_eq!(simu.time(), t0 + Duration::from_secs(1));
-//! assert_eq!(output_slot.take(), Some(84.0));
+//! assert_eq!(output_slot.next(), Some(84.0));
 //!
 //! // Get the answer to the ultimate question of life, the universe & everything.
 //! simu.step();
 //! assert_eq!(simu.time(), t0 + Duration::from_secs(2));
-//! assert_eq!(output_slot.take(), Some(42.0));
+//! assert_eq!(output_slot.next(), Some(42.0));
 //! ```
 //!
 //! # Message ordering guarantees
@@ -406,6 +411,9 @@ pub(crate) mod executor;
 mod loom_exports;
 pub(crate) mod macros;
 pub mod model;
+pub mod ports;
+#[cfg(feature = "rpc")]
+pub mod rpc;
 pub mod simulation;
 pub mod time;
 pub(crate) mod util;

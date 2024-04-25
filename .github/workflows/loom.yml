@@ -13,7 +13,6 @@ on:
       - 'asynchronix/src/model/ports/broadcaster.rs'
       - 'asynchronix/src/model/ports/broadcaster/**'
       - 'asynchronix/src/util/slot.rs'
-      - 'asynchronix/src/util/spsc_queue.rs'
       - 'asynchronix/src/util/sync_cell.rs'
 
 jobs:

@@ -8,7 +8,6 @@ use std::error;
 use std::fmt;
 use std::future::Future;
 use std::marker::PhantomData;
-use std::num::NonZeroUsize;
 use std::sync::atomic::{self, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -154,7 +153,7 @@ impl<M: Model> Receiver<M> {
     /// time, but an identifier may be reused after all handles to a channel
     /// have been dropped.
     pub(crate) fn channel_id(&self) -> ChannelId {
-        ChannelId(NonZeroUsize::new(&*self.inner as *const Inner<M> as usize).unwrap())
+        ChannelId(&*self.inner as *const Inner<M> as usize)
     }
 }
 
@@ -255,8 +254,8 @@ impl<M: Model> Sender<M> {
     /// All channels are guaranteed to have different identifiers at any given
     /// time, but an identifier may be reused after all handles to a channel
     /// have been dropped.
-    pub(crate) fn channel_id(&self) -> ChannelId {
-        ChannelId(NonZeroUsize::new(&*self.inner as *const Inner<M> as usize).unwrap())
+    pub(crate) fn channel_id(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
     }
 }
 
@@ -369,7 +368,7 @@ where
 
 /// Unique identifier for a channel.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct ChannelId(NonZeroUsize);
+pub(crate) struct ChannelId(usize);
 
 impl fmt::Display for ChannelId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -1,8 +1,6 @@
 //! A primitive similar to a one-shot channel but without any signaling
 //! capability.
 
-#![allow(unused)]
-
 use std::error::Error;
 use std::fmt;
 use std::marker::PhantomData;
@@ -327,8 +325,6 @@ pub(crate) fn slot<T>() -> (SlotWriter<T>, SlotReader<T>) {
 mod tests {
     use super::*;
 
-    use std::io::Read;
-    use std::sync::Arc;
     use std::thread;
 
     #[test]
@@ -358,9 +354,9 @@ mod tests {
 
     #[test]
     fn slot_multi_threaded_write() {
-        let (mut writer, mut reader) = slot();
+        let (writer, mut reader) = slot();
 
-        let th = thread::spawn(move || {
+        thread::spawn(move || {
             assert!(writer.write(42).is_ok());
         });
 
@@ -370,15 +366,13 @@ mod tests {
                 return;
             }
         }
-
-        th.join().unwrap();
     }
 
     #[test]
     fn slot_multi_threaded_drop_writer() {
-        let (mut writer, mut reader) = slot::<i32>();
+        let (writer, mut reader) = slot::<i32>();
 
-        let th = thread::spawn(move || {
+        thread::spawn(move || {
             drop(writer);
         });
 
@@ -389,8 +383,6 @@ mod tests {
                 return;
             }
         }
-
-        th.join().unwrap();
     }
 }
 
