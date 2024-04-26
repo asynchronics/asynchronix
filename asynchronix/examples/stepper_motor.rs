@@ -40,7 +40,7 @@ impl Motor {
     pub const TORQUE_CONSTANT: f64 = 1.0;
 
     /// Creates a motor with the specified initial position.
-    fn new(position: u16) -> Self {
+    pub fn new(position: u16) -> Self {
         Self {
             position: Default::default(),
             pos: position % Self::STEPS_PER_REV,
@@ -176,6 +176,7 @@ impl Driver {
 
 impl Model for Driver {}
 
+#[allow(dead_code)]
 fn main() {
     // ---------------
     // Bench assembly.

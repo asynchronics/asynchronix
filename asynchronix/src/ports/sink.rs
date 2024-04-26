@@ -14,7 +14,7 @@ pub trait EventSink<T> {
 }
 
 /// A writer handle to an event sink.
-pub trait EventSinkWriter<T>: Send + Sync + 'static {
+pub trait EventSinkWriter<T>: Clone + Send + Sync + 'static {
     /// Writes a value to the associated sink.
     fn write(&self, event: T);
 }

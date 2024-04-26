@@ -10,7 +10,7 @@ struct Inner<T> {
     slot: Mutex<Option<T>>,
 }
 
-/// An `EventSink` and `EventSinkStream` that only keeps the last event.
+/// An [`EventSink`] and [`EventSinkStream`] that only keeps the last event.
 ///
 /// Once the value is read, the iterator will return `None` until a new value is
 /// received. If the slot contains a value when a new value is received, the
@@ -109,6 +109,14 @@ impl<T: Send + 'static> EventSinkWriter<T> for EventSlotWriter<T> {
             TryLockResult::Ok(mut v) => *v = Some(event),
             TryLockResult::Err(TryLockError::WouldBlock) => {}
             TryLockResult::Err(TryLockError::Poisoned(_)) => panic!(),
+        }
+    }
+}
+
+impl<T> Clone for EventSlotWriter<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
         }
     }
 }

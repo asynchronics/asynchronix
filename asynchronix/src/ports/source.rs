@@ -27,7 +27,6 @@ use super::ReplierFn;
 /// simulation monitoring endpoint instantiated during bench assembly.
 pub struct EventSource<T: Clone + Send + 'static> {
     broadcaster: Arc<Mutex<EventBroadcaster<T>>>,
-    next_line_id: u64,
 }
 
 impl<T: Clone + Send + 'static> EventSource<T> {
@@ -48,13 +47,8 @@ impl<T: Clone + Send + 'static> EventSource<T> {
         F: for<'a> InputFn<'a, M, T, S> + Clone,
         S: Send + 'static,
     {
-        assert!(self.next_line_id != u64::MAX);
-        let line_id = LineId(self.next_line_id);
-        self.next_line_id += 1;
         let sender = Box::new(InputSender::new(input, address.into().0));
-        self.broadcaster.lock().unwrap().add(sender, line_id);
-
-        line_id
+        self.broadcaster.lock().unwrap().add(sender)
     }
 
     /// Removes the connection specified by the `LineId` parameter.
@@ -163,7 +157,6 @@ impl<T: Clone + Send + 'static> Default for EventSource<T> {
     fn default() -> Self {
         Self {
             broadcaster: Arc::new(Mutex::new(EventBroadcaster::default())),
-            next_line_id: 0,
         }
     }
 }
@@ -187,7 +180,6 @@ impl<T: Clone + Send + 'static> fmt::Debug for EventSource<T> {
 /// instantiated during bench assembly.
 pub struct QuerySource<T: Clone + Send + 'static, R: Send + 'static> {
     broadcaster: Arc<Mutex<QueryBroadcaster<T, R>>>,
-    next_line_id: u64,
 }
 
 impl<T: Clone + Send + 'static, R: Send + 'static> QuerySource<T, R> {
@@ -208,13 +200,8 @@ impl<T: Clone + Send + 'static, R: Send + 'static> QuerySource<T, R> {
         F: for<'a> ReplierFn<'a, M, T, R, S> + Clone,
         S: Send + 'static,
     {
-        assert!(self.next_line_id != u64::MAX);
-        let line_id = LineId(self.next_line_id);
-        self.next_line_id += 1;
         let sender = Box::new(ReplierSender::new(replier, address.into().0));
-        self.broadcaster.lock().unwrap().add(sender, line_id);
-
-        line_id
+        self.broadcaster.lock().unwrap().add(sender)
     }
 
     /// Removes the connection specified by the `LineId` parameter.
@@ -259,7 +246,6 @@ impl<T: Clone + Send + 'static, R: Send + 'static> Default for QuerySource<T, R>
     fn default() -> Self {
         Self {
             broadcaster: Arc::new(Mutex::new(QueryBroadcaster::default())),
-            next_line_id: 0,
         }
     }
 }

@@ -6,6 +6,7 @@ use std::mem::ManuallyDrop;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use dyn_clone::DynClone;
 use recycle_box::{coerce_box, RecycleBox};
 
 use crate::channel;
@@ -14,10 +15,12 @@ use crate::ports::{EventSinkWriter, InputFn, ReplierFn};
 
 /// An event or query sender abstracting over the target model and input or
 /// replier method.
-pub(super) trait Sender<T, R>: Send {
+pub(super) trait Sender<T, R>: DynClone + Send {
     /// Asynchronously send the event or request.
     fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<R, SendError>>;
 }
+
+dyn_clone::clone_trait_object!(<T, R> Sender<T, R>);
 
 /// An object that can send events to an input port.
 pub(super) struct InputSender<M: 'static, F, T, S>
@@ -69,6 +72,24 @@ where
         RecycledFuture::new(&mut self.fut_storage, async move {
             fut.await.map_err(|_| SendError {})
         })
+    }
+}
+
+impl<M: Send, F, T, S> Clone for InputSender<M, F, T, S>
+where
+    M: Model,
+    F: for<'a> InputFn<'a, M, T, S> + Clone,
+    T: Send + 'static,
+    S: Send + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            func: self.func.clone(),
+            sender: self.sender.clone(),
+            fut_storage: None,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
+        }
     }
 }
 
@@ -140,6 +161,26 @@ where
     }
 }
 
+impl<M, F, T, R, S> Clone for ReplierSender<M, F, T, R, S>
+where
+    M: Model,
+    F: for<'a> ReplierFn<'a, M, T, R, S> + Clone,
+    T: Send + 'static,
+    R: Send + 'static,
+    S: Send,
+{
+    fn clone(&self) -> Self {
+        Self {
+            func: self.func.clone(),
+            sender: self.sender.clone(),
+            receiver: multishot::Receiver::new(),
+            fut_storage: None,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
+        }
+    }
+}
+
 /// An object that can send a payload to an event sink.
 pub(super) struct EventSinkSender<T: Send + 'static, W: EventSinkWriter<T>> {
     writer: W,
@@ -157,9 +198,10 @@ impl<T: Send + 'static, W: EventSinkWriter<T>> EventSinkSender<T, W> {
     }
 }
 
-impl<T, W: EventSinkWriter<T>> Sender<T, ()> for EventSinkSender<T, W>
+impl<T, W> Sender<T, ()> for EventSinkSender<T, W>
 where
     T: Send + 'static,
+    W: EventSinkWriter<T>,
 {
     fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
         let writer = &mut self.writer;
@@ -169,6 +211,20 @@ where
 
             Ok(())
         })
+    }
+}
+
+impl<T, W> Clone for EventSinkSender<T, W>
+where
+    T: Send + 'static,
+    W: EventSinkWriter<T>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            writer: self.writer.clone(),
+            fut_storage: None,
+            _phantom_event: PhantomData,
+        }
     }
 }
 

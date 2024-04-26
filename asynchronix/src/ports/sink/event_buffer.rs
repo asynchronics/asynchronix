@@ -133,6 +133,14 @@ impl<T: Send + 'static> EventSinkWriter<T> for EventBufferWriter<T> {
     }
 }
 
+impl<T> Clone for EventBufferWriter<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
 impl<T> fmt::Debug for EventBufferWriter<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("EventBufferWriter").finish_non_exhaustive()

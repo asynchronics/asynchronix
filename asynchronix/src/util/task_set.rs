@@ -271,6 +271,10 @@ impl TaskSet {
 
         waker_ref(&self.tasks[idx])
     }
+
+    pub(crate) fn len(&self) -> usize {
+        self.task_count
+    }
 }
 
 /// Internals shared between a `TaskSet` and its associated `Task`s.
