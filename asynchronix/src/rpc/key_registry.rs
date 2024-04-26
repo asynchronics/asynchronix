@@ -1,4 +1,5 @@
-use crate::time::{ActionKey, MonotonicTime};
+use crate::simulation::ActionKey;
+use crate::time::MonotonicTime;
 use crate::util::indexed_priority_queue::{IndexedPriorityQueue, InsertKey};
 
 pub(crate) type KeyRegistryId = InsertKey;

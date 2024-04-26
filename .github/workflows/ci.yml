@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
 
 env:
   RUSTFLAGS: -Dwarnings
@@ -28,7 +28,7 @@ jobs:
           toolchain: ${{ matrix.rust }}
 
       - name: Run cargo check
-        run: cargo check
+        run: cargo check --features="rpc grpc-server"
 
   test:
     name: Test suite
@@ -41,7 +41,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run cargo test
-        run: cargo test
+        run: cargo test --features="rpc grpc-server"
   
   loom-dry-run:
     name: Loom dry run
@@ -54,7 +54,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Dry-run cargo test (Loom)
-        run: cargo test --no-run --tests
+        run: cargo test --no-run --tests --features="rpc grpc-server"
         env:
           RUSTFLAGS: --cfg asynchronix_loom
 
@@ -71,7 +71,7 @@ jobs:
           components: miri
 
       - name: Run cargo miri tests
-        run: cargo miri test --tests --lib
+        run: cargo miri test --tests --lib --features="rpc grpc-server"
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=4
 
@@ -104,7 +104,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run cargo clippy
-        run: cargo clippy
+        run: cargo clippy --features="rpc grpc-server"
 
   docs:
     name: Docs
@@ -117,4 +117,4 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run cargo doc
-        run: cargo doc --no-deps --document-private-items
+        run: cargo doc --no-deps --features="rpc grpc-server" --document-private-items
