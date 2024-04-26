@@ -86,7 +86,9 @@ impl<T: Send + 'static> EventSinkStream for EventBuffer<T> {
         self.inner.is_open.store(false, Ordering::Relaxed);
     }
 
-    fn try_fold<B, F, E>(&mut self, init: B, f: F) -> Result<B, E>
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn __try_fold<B, F, E>(&mut self, init: B, f: F) -> Result<B, E>
     where
         Self: Sized,
         F: FnMut(B, Self::Item) -> Result<B, E>,

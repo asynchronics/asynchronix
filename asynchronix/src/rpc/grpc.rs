@@ -23,7 +23,9 @@ where
     F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
 {
     // Use a single-threaded server.
-    let rt = tokio::runtime::Builder::new_current_thread().build()?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .build()?;
 
     let sim_manager = GrpcServer::new(sim_gen);
 

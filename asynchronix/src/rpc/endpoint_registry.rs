@@ -54,10 +54,10 @@ impl EndpointRegistry {
         self.event_sources.get_mut(name).map(|s| s.as_mut())
     }
 
-    /// Adds an query source to the registry.
+    /// Adds a query source to the registry.
     ///
-    /// If the specified name is already in use for another query source, the source
-    /// provided as argument is returned in the error.
+    /// If the specified name is already in use for another query source, the
+    /// source provided as argument is returned in the error.
     pub fn add_query_source<T, R>(
         &mut self,
         source: QuerySource<T, R>,
@@ -87,7 +87,7 @@ impl EndpointRegistry {
     ///
     /// If the specified name is already in use for another sink, the sink
     /// provided as argument is returned in the error.
-    pub fn add_sink<S>(&mut self, sink: S, name: impl Into<String>) -> Result<(), S>
+    pub fn add_event_sink<S>(&mut self, sink: S, name: impl Into<String>) -> Result<(), S>
     where
         S: EventSinkStream + Send + 'static,
         S::Item: Serialize,
@@ -104,7 +104,7 @@ impl EndpointRegistry {
 
     /// Returns a mutable reference to the specified sink if it is in the
     /// registry.
-    pub(crate) fn get_sink_mut(&mut self, name: &str) -> Option<&mut dyn EventSinkStreamAny> {
+    pub(crate) fn get_event_sink_mut(&mut self, name: &str) -> Option<&mut dyn EventSinkStreamAny> {
         self.sinks.get_mut(name).map(|s| s.as_mut())
     }
 }
@@ -272,7 +272,7 @@ where
     }
 
     fn collect(&mut self) -> Result<Vec<Vec<u8>>, RmpEncodeError> {
-        EventSinkStream::try_fold(self, Vec::new(), |mut encoded_events, event| {
+        self.__try_fold(Vec::new(), |mut encoded_events, event| {
             rmp_serde::to_vec_named(&event).map(|encoded_event| {
                 encoded_events.push(encoded_event);
 

@@ -31,7 +31,7 @@ message EventKey {
   uint64 subkey2 = 2;
 }
 
-message InitRequest { optional google.protobuf.Timestamp time = 1; }
+message InitRequest { google.protobuf.Timestamp time = 1; }
 message InitReply {
   oneof result { // Always returns exactly 1 variant.
     google.protobuf.Empty empty = 1;
@@ -75,8 +75,8 @@ message ScheduleEventRequest {
   }
   string source_name = 3;
   bytes event = 4;
-  optional google.protobuf.Duration period = 5;
-  optional bool with_key = 6;
+  google.protobuf.Duration period = 5;
+  bool with_key = 6;
 }
 message ScheduleEventReply {
   oneof result { // Always returns exactly 1 variant.

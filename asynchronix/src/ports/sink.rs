@@ -33,18 +33,21 @@ pub trait EventSinkStream: Iterator {
     /// Events that were previously in the stream remain available.
     fn close(&mut self);
 
-    /// This is a stop-gap method that shadows `Iterator::try_fold` until the
-    /// latter can be implemented by user-defined types on stable Rust.
+    /// This is a stop-gap method that serves the exact same purpose as
+    /// `Iterator::try_fold` but is specialized for `Result` rather than the
+    /// `Try` trait so it can be implemented on stable Rust.
     ///
-    /// It serves the exact same purpose as `Iterator::try_fold` but is
-    /// specialized for `Result` to avoid depending on the unstable `Try` trait.
+    /// It makes it possible to provide a faster implementation when the event
+    /// sink stream can be iterated over more rapidly than by repeatably calling
+    /// `Iterator::next`, for instance if the implementation of the stream
+    /// relies on a mutex that must be locked on each call.
     ///
-    /// Implementors may elect to override the default implementation when the
-    /// event sink stream can be iterated over more rapidly than by repeatably
-    /// calling `Iterator::next`, for instance if the implementation of the
-    /// stream relies on a mutex that must be locked on each call.
+    /// It is not publicly implementable because it may be removed at any time
+    /// once the `Try` trait is stabilized, without regard for backward
+    /// compatibility.
     #[doc(hidden)]
-    fn try_fold<B, F, E>(&mut self, init: B, f: F) -> Result<B, E>
+    #[allow(private_interfaces)]
+    fn __try_fold<B, F, E>(&mut self, init: B, f: F) -> Result<B, E>
     where
         Self: Sized,
         F: FnMut(B, Self::Item) -> Result<B, E>,
