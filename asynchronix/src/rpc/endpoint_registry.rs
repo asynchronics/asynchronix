@@ -9,7 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::ports::{EventSinkStream, EventSource, QuerySource, ReplyReceiver};
-use crate::time::{Action, ActionKey};
+use crate::simulation::{Action, ActionKey};
 
 /// A registry that holds all sources and sinks meant to be accessed through
 /// remote procedure calls.
