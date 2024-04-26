@@ -11,10 +11,7 @@ pub struct ServerError {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AnyRequest {
     /// Expects exactly 1 variant.
-    #[prost(
-        oneof = "any_request::Request",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11"
-    )]
+    #[prost(oneof = "any_request::Request", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11")]
     pub request: ::core::option::Option<any_request::Request>,
 }
 /// Nested message and enum types in `AnyRequest`.
@@ -51,10 +48,7 @@ pub mod any_request {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AnyReply {
     /// Contains exactly 1 variant.
-    #[prost(
-        oneof = "any_reply::Reply",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 100"
-    )]
+    #[prost(oneof = "any_reply::Reply", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 100")]
     pub reply: ::core::option::Option<any_reply::Reply>,
 }
 /// Nested message and enum types in `AnyReply`.

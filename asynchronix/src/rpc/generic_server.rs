@@ -248,7 +248,7 @@ where
         let reply = move || -> Result<Option<KeyRegistryId>, (ErrorCode, String)> {
             let source_name = &request.source_name;
             let msgpack_event = &request.event;
-            let with_key = request.with_key.unwrap_or_default();
+            let with_key = request.with_key;
             let period = request
                 .period
                 .map(|period| {
@@ -508,7 +508,7 @@ where
                 "the simulation was not started".to_string(),
             ))?;
 
-            let sink = registry.get_sink_mut(sink_name).ok_or((
+            let sink = registry.get_event_sink_mut(sink_name).ok_or((
                 ErrorCode::SinkNotFound,
                 "no sink is registered with the name '{}'".to_string(),
             ))?;
@@ -549,7 +549,7 @@ where
                 "the simulation was not started".to_string(),
             ))?;
 
-            let sink = registry.get_sink_mut(sink_name).ok_or((
+            let sink = registry.get_event_sink_mut(sink_name).ok_or((
                 ErrorCode::SinkNotFound,
                 "no sink is registered with the name '{}'".to_string(),
             ))?;
@@ -582,7 +582,7 @@ where
                 "the simulation was not started".to_string(),
             ))?;
 
-            let sink = registry.get_sink_mut(sink_name).ok_or((
+            let sink = registry.get_event_sink_mut(sink_name).ok_or((
                 ErrorCode::SinkNotFound,
                 "no sink is registered with the name '{}'".to_string(),
             ))?;
