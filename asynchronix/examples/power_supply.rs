@@ -24,7 +24,7 @@
 //!                       │  Power   │  ◀current        │        │
 //!                       │  supply  │                  └────────┘
 //!                       │          ├───────────────────────────────▶ Total power
-//!                       └──────────┘    
+//!                       └──────────┘
 //! ```
 use asynchronix::model::Model;
 use asynchronix::ports::{EventSlot, Output, Requestor};

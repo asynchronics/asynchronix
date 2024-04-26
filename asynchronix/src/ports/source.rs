@@ -8,9 +8,8 @@ use std::time::Duration;
 use crate::model::Model;
 use crate::ports::InputFn;
 use crate::ports::{LineError, LineId};
-use crate::simulation::Address;
-use crate::time::{
-    Action, ActionKey, KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction,
+use crate::simulation::{
+    Action, ActionKey, Address, KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction,
 };
 use crate::util::slot;
 

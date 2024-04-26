@@ -6,14 +6,14 @@
 pub struct WithoutArguments {}
 
 /// Marker type for regular simulation model methods that take a mutable
-/// reference to the model and a message, without scheduler argument.
+/// reference to the model and a message, without context argument.
 #[derive(Debug)]
-pub struct WithoutScheduler {}
+pub struct WithoutContext {}
 
 /// Marker type for regular simulation model methods that take a mutable
-/// reference to the model, a message and an explicit scheduler argument.
+/// reference to the model, a message and an explicit context argument.
 #[derive(Debug)]
-pub struct WithScheduler {}
+pub struct WithContext {}
 
 /// Marker type for asynchronous simulation model methods that take a mutable
 /// reference to the model, without any other argument.
@@ -21,11 +21,11 @@ pub struct WithScheduler {}
 pub struct AsyncWithoutArguments {}
 
 /// Marker type for asynchronous simulation model methods that take a mutable
-/// reference to the model and a message, without scheduler argument.
+/// reference to the model and a message, without context argument.
 #[derive(Debug)]
-pub struct AsyncWithoutScheduler {}
+pub struct AsyncWithoutContext {}
 
 /// Marker type for asynchronous simulation model methods that take a mutable
-/// reference to the model, a message and an explicit scheduler argument.
+/// reference to the model, a message and an explicit context argument.
 #[derive(Debug)]
-pub struct AsyncWithScheduler {}
+pub struct AsyncWithContext {}

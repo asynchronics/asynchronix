@@ -98,9 +98,9 @@
 //! connects or disconnects a port, such as:
 //!
 //! ```
-//! # use asynchronix::model::Model;
+//! # use asynchronix::model::{Context, Model};
 //! # use asynchronix::ports::Output;
-//! # use asynchronix::time::{MonotonicTime, Scheduler};
+//! # use asynchronix::time::MonotonicTime;
 //! # use asynchronix::simulation::{Mailbox, SimInit};
 //! # pub struct ModelA {
 //! #     pub output: Output<i32>,
@@ -123,9 +123,16 @@
 //! );
 //! ```
 mod mailbox;
+mod scheduler;
 mod sim_init;
 
 pub use mailbox::{Address, Mailbox};
+pub(crate) use scheduler::{
+    schedule_event_at_unchecked, schedule_keyed_event_at_unchecked,
+    schedule_periodic_event_at_unchecked, schedule_periodic_keyed_event_at_unchecked,
+    KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction, SchedulerQueue,
+};
+pub use scheduler::{Action, ActionKey, Deadline, SchedulingError};
 pub use sim_init::SimInit;
 
 use std::error::Error;
@@ -137,15 +144,12 @@ use std::time::Duration;
 use recycle_box::{coerce_box, RecycleBox};
 
 use crate::executor::Executor;
-use crate::model::Model;
+use crate::model::{Context, Model, SetupContext};
 use crate::ports::{InputFn, ReplierFn};
-use crate::time::{
-    self, Action, ActionKey, Clock, Deadline, MonotonicTime, SchedulerQueue, SchedulingError,
-    TearableAtomicTime,
-};
+use crate::time::{Clock, MonotonicTime, TearableAtomicTime};
 use crate::util::seq_futures::SeqFuture;
 use crate::util::slot;
-use crate::util::sync_cell::SyncCell;
+use crate::util::sync_cell::{SyncCell, SyncCellReader};
 
 /// Simulation environment.
 ///
@@ -157,9 +161,9 @@ use crate::util::sync_cell::SyncCell;
 /// A [`Simulation`] object also manages an event scheduling queue and
 /// simulation time. The scheduling queue can be accessed from the simulation
 /// itself, but also from models via the optional
-/// [`&Scheduler`](time::Scheduler) argument of input and replier port methods.
+/// [`&Context`](crate::model::Context) argument of input and replier port methods.
 /// Likewise, simulation time can be accessed with the [`Simulation::time()`]
-/// method, or from models with the [`Scheduler::time()`](time::Scheduler::time)
+/// method, or from models with the [`Context::time()`](crate::model::Context::time)
 /// method.
 ///
 /// Events and queries can be scheduled immediately, *i.e.* for the current
@@ -177,7 +181,7 @@ use crate::util::sync_cell::SyncCell;
 ///
 /// 1. increment simulation time until that of the next scheduled event in
 ///    chronological order, then
-/// 2. call [`Clock::synchronize()`](time::Clock::synchronize) which, unless the
+/// 2. call [`Clock::synchronize()`](crate::time::Clock::synchronize) which, unless the
 ///    simulation is configured to run as fast as possible, blocks until the
 ///    desired wall clock time, and finally
 /// 3. run all computations scheduled for the new simulation time.
@@ -217,7 +221,7 @@ impl Simulation {
     /// that event as well as all other event scheduled for the same time.
     ///
     /// Processing is gated by a (possibly blocking) call to
-    /// [`Clock::synchronize()`](time::Clock::synchronize) on the configured
+    /// [`Clock::synchronize()`](crate::time::Clock::synchronize) on the configured
     /// simulation clock. This method blocks until all newly processed events
     /// have completed.
     pub fn step(&mut self) {
@@ -292,7 +296,7 @@ impl Simulation {
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
     ///
-    /// See also: [`time::Scheduler::schedule_event`].
+    /// See also: [`Context::schedule_event`](crate::model::Context::schedule_event).
     pub fn schedule_event<M, F, T, S>(
         &mut self,
         deadline: impl Deadline,
@@ -311,8 +315,7 @@ impl Simulation {
         if now >= time {
             return Err(SchedulingError::InvalidScheduledTime);
         }
-
-        time::schedule_event_at_unchecked(time, func, arg, address.into().0, &self.scheduler_queue);
+        schedule_event_at_unchecked(time, func, arg, address.into().0, &self.scheduler_queue);
 
         Ok(())
     }
@@ -325,7 +328,7 @@ impl Simulation {
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
     ///
-    /// See also: [`time::Scheduler::schedule_keyed_event`].
+    /// See also: [`Context::schedule_keyed_event`](crate::model::Context::schedule_keyed_event).
     pub fn schedule_keyed_event<M, F, T, S>(
         &mut self,
         deadline: impl Deadline,
@@ -344,7 +347,7 @@ impl Simulation {
         if now >= time {
             return Err(SchedulingError::InvalidScheduledTime);
         }
-        let event_key = time::schedule_keyed_event_at_unchecked(
+        let event_key = schedule_keyed_event_at_unchecked(
             time,
             func,
             arg,
@@ -363,7 +366,7 @@ impl Simulation {
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
     ///
-    /// See also: [`time::Scheduler::schedule_periodic_event`].
+    /// See also: [`Context::schedule_periodic_event`](crate::model::Context::schedule_periodic_event).
     pub fn schedule_periodic_event<M, F, T, S>(
         &mut self,
         deadline: impl Deadline,
@@ -386,7 +389,7 @@ impl Simulation {
         if period.is_zero() {
             return Err(SchedulingError::NullRepetitionPeriod);
         }
-        time::schedule_periodic_event_at_unchecked(
+        schedule_periodic_event_at_unchecked(
             time,
             period,
             func,
@@ -407,7 +410,7 @@ impl Simulation {
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
     ///
-    /// See also: [`time::Scheduler::schedule_keyed_periodic_event`].
+    /// See also: [`Context::schedule_keyed_periodic_event`](crate::model::Context::schedule_keyed_periodic_event).
     pub fn schedule_keyed_periodic_event<M, F, T, S>(
         &mut self,
         deadline: impl Deadline,
@@ -430,7 +433,7 @@ impl Simulation {
         if period.is_zero() {
             return Err(SchedulingError::NullRepetitionPeriod);
         }
-        let event_key = time::schedule_periodic_keyed_event_at_unchecked(
+        let event_key = schedule_periodic_keyed_event_at_unchecked(
             time,
             period,
             func,
@@ -658,3 +661,25 @@ impl fmt::Display for QueryError {
 }
 
 impl Error for QueryError {}
+
+/// Adds a model and its mailbox to the simulation bench.
+pub(crate) fn add_model<M: Model>(
+    mut model: M,
+    mailbox: Mailbox<M>,
+    scheduler_queue: Arc<Mutex<SchedulerQueue>>,
+    time: SyncCellReader<TearableAtomicTime>,
+    executor: &Executor,
+) {
+    let sender = mailbox.0.sender();
+
+    let context = Context::new(sender, scheduler_queue, time);
+    let setup_context = SetupContext::new(&mailbox, &context, executor);
+
+    model.setup(&setup_context);
+
+    let mut receiver = mailbox.0;
+    executor.spawn_and_forget(async move {
+        let mut model = model.init(&context).await.0;
+        while receiver.recv(&mut model, &context).await.is_ok() {}
+    });
+}

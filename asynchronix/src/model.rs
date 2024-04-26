@@ -2,16 +2,19 @@
 //!
 //! # Model trait
 //!
-//! Every model must implement the [`Model`] trait. This trait defines an
-//! asynchronous initialization method, [`Model::init()`], which main purpose is
-//! to enable models to perform specific actions only once all models have been
-//! connected and migrated to the simulation, but before the simulation actually
-//! starts.
+//! Every model must implement the [`Model`] trait. This trait defines
+//! * a setup method, [`Model::setup()`], which main purpose is to create,
+//!   connect and add to the simulation bench submodels and perform other setup
+//!   steps,
+//! * an asynchronous initialization method, [`Model::init()`], which main
+//!   purpose is to enable models to perform specific actions only once all
+//!   models have been connected and migrated to the simulation, but before the
+//!   simulation actually starts.
 //!
 //! #### Examples
 //!
-//! A model that does not require initialization can simply use the default
-//! implementation of the `Model` trait:
+//! A model that does not require setup and initialization can simply use the
+//! default implementation of the `Model` trait:
 //!
 //! ```
 //! use asynchronix::model::Model;
@@ -22,28 +25,31 @@
 //! impl Model for MyModel {}
 //! ```
 //!
-//! Otherwise, a custom `init()` method can be implemented:
+//! Otherwise, custom `setup()` or `init()` methods can be implemented:
 //!
 //! ```
 //! use std::future::Future;
 //! use std::pin::Pin;
 //!
-//! use asynchronix::model::{InitializedModel, Model};
-//! use asynchronix::time::Scheduler;
+//! use asynchronix::model::{Context, InitializedModel, Model, SetupContext};
 //!
 //! pub struct MyModel {
 //!     // ...
 //! }
 //! impl Model for MyModel {
-//!     fn init(
-//!         mut self,
-//!         scheduler: &Scheduler<Self>
-//!     ) -> Pin<Box<dyn Future<Output = InitializedModel<Self>> + Send + '_>>{
-//!         Box::pin(async move {
-//!             println!("...initialization...");
+//!     fn setup(
+//!         &mut self,
+//!         setup_context: &SetupContext<Self>) {
+//!             println!("...setup...");
+//!     }
 //!
-//!             self.into()
-//!         })
+//!     async fn init(
+//!         mut self,
+//!         context: &Context<Self>
+//!     ) -> InitializedModel<Self> {
+//!         println!("...initialization...");
+//!
+//!         self.into()
 //!     }
 //! }
 //! ```
@@ -103,17 +109,17 @@
 //! ```ignore
 //! fn(&mut self) // argument elided, implies `T=()`
 //! fn(&mut self, T)
-//! fn(&mut self, T, &Scheduler<Self>)
+//! fn(&mut self, T, &Context<Self>)
 //! async fn(&mut self) // argument elided, implies `T=()`
 //! async fn(&mut self, T)
-//! async fn(&mut self, T, &Scheduler<Self>)
+//! async fn(&mut self, T, &Context<Self>)
 //! where
 //!     Self: Model,
 //!     T: Clone + Send + 'static,
 //!     R: Send + 'static,
 //! ```
 //!
-//! The scheduler argument is useful for methods that need access to the
+//! The context argument is useful for methods that need access to the
 //! simulation time or that need to schedule an action at a future date.
 //!
 //! A replier port for a request of type `T` with a reply of type `R` may in
@@ -123,7 +129,7 @@
 //! ```ignore
 //! async fn(&mut self) -> R // argument elided, implies `T=()`
 //! async fn(&mut self, T) -> R
-//! async fn(&mut self, T, &Scheduler<Self>) -> R
+//! async fn(&mut self, T, &Context<Self>) -> R
 //! where
 //!     Self: Model,
 //!     T: Clone + Send + 'static,
@@ -134,7 +140,7 @@
 //! can be connected to input and requestor ports when assembling the simulation
 //! bench. However, input ports may instead be defined as private methods if
 //! they are only used by the model itself to schedule future actions (see the
-//! [`Scheduler`] examples).
+//! [`Context`] examples).
 //!
 //! Changing the signature of an input or replier port is not considered to
 //! alter the public interface of a model provided that the event, request and
@@ -143,17 +149,16 @@
 //! #### Example
 //!
 //! ```
-//! use asynchronix::model::Model;
-//! use asynchronix::time::Scheduler;
+//! use asynchronix::model::{Context, Model};
 //!
 //! pub struct MyModel {
 //!     // ...
 //! }
 //! impl MyModel {
-//!     pub fn my_input(&mut self, input: String, scheduler: &Scheduler<Self>) {
+//!     pub fn my_input(&mut self, input: String, context: &Context<Self>) {
 //!         // ...
 //!     }
-//!     pub async fn my_replier(&mut self, request: u32) -> bool { // scheduler argument elided
+//!     pub async fn my_replier(&mut self, request: u32) -> bool { // context argument elided
 //!         // ...
 //!         # unimplemented!()
 //!     }
@@ -163,14 +168,19 @@
 //!
 
 use std::future::Future;
-use std::pin::Pin;
 
-use crate::time::Scheduler;
+pub use context::{Context, SetupContext};
+
+mod context;
 
 /// Trait to be implemented by all models.
 ///
-/// This trait enables models to perform specific actions in the
-/// [`Model::init()`] method only once all models have been connected and
+/// This trait enables models to perform specific actions during setup and
+/// initialization. The [`Model::setup()`] method is run only once when models
+/// are being added to the simulation bench. This method allows in particular
+/// sub-models to be created, connected and added to the simulation.
+///
+/// The [`Model::init()`] method is run only once all models have been connected and
 /// migrated to the simulation bench, but before the simulation actually starts.
 /// A common use for `init` is to send messages to connected models at the
 /// beginning of the simulation.
@@ -179,6 +189,37 @@ use crate::time::Scheduler;
 /// to prevent an already initialized model from being added to the simulation
 /// bench.
 pub trait Model: Sized + Send + 'static {
+    /// Performs model setup.
+    ///
+    /// This method is executed exactly once for all models of the simulation
+    /// when the [`SimInit::add_model()`](crate::simulation::SimInit::add_model)
+    /// method is called.
+    ///
+    /// The default implementation does nothing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::future::Future;
+    /// use std::pin::Pin;
+    ///
+    /// use asynchronix::model::{InitializedModel, Model, SetupContext};
+    ///
+    /// pub struct MyModel {
+    ///     // ...
+    /// }
+    ///
+    /// impl Model for MyModel {
+    ///     fn setup(
+    ///         &mut self,
+    ///         setup_context: &SetupContext<Self>
+    ///     ) {
+    ///         println!("...setup...");
+    ///     }
+    /// }
+    /// ```
+    fn setup(&mut self, _: &SetupContext<Self>) {}
+
     /// Performs asynchronous model initialization.
     ///
     /// This asynchronous method is executed exactly once for all models of the
@@ -188,47 +229,31 @@ pub trait Model: Sized + Send + 'static {
     /// The default implementation simply converts the model to an
     /// `InitializedModel` without any side effect.
     ///
-    /// *Note*: it is currently necessary to box the returned future; this
-    /// limitation will be lifted once Rust supports `async` methods in traits.
-    ///
     /// # Examples
     ///
     /// ```
     /// use std::future::Future;
     /// use std::pin::Pin;
     ///
-    /// use asynchronix::model::{InitializedModel, Model};
-    /// use asynchronix::time::Scheduler;
+    /// use asynchronix::model::{Context, InitializedModel, Model};
     ///
     /// pub struct MyModel {
     ///     // ...
     /// }
     ///
     /// impl Model for MyModel {
-    ///     fn init(
+    ///     async fn init(
     ///         self,
-    ///         scheduler: &Scheduler<Self>
-    ///     ) -> Pin<Box<dyn Future<Output = InitializedModel<Self>> + Send + '_>>{
-    ///         Box::pin(async move {
-    ///             println!("...initialization...");
+    ///         context: &Context<Self>
+    ///     ) -> InitializedModel<Self> {
+    ///         println!("...initialization...");
     ///
-    ///             self.into()
-    ///         })
+    ///         self.into()
     ///     }
     /// }
     /// ```
-
-    // Removing the boxing constraint requires the
-    // `return_position_impl_trait_in_trait` and `async_fn_in_trait` features.
-    // Tracking issue: <https://github.com/rust-lang/rust/issues/91611>.
-    fn init(
-        self,
-        scheduler: &Scheduler<Self>,
-    ) -> Pin<Box<dyn Future<Output = InitializedModel<Self>> + Send + '_>> {
-        Box::pin(async move {
-            let _ = scheduler; // suppress the unused argument warning
-            self.into()
-        })
+    fn init(self, _: &Context<Self>) -> impl Future<Output = InitializedModel<Self>> + Send {
+        async { self.into() }
     }
 }
 

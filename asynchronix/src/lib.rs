@@ -45,7 +45,7 @@
 //! * _input ports_, which are synchronous or asynchronous methods that
 //!   implement the [`InputFn`](ports::InputFn) trait and take an `&mut self`
 //!   argument, a message argument, and an optional
-//!   [`&Scheduler`](time::Scheduler) argument,
+//!   [`&Context`](model::Context) argument,
 //! * _replier ports_, which are similar to input ports but implement the
 //!   [`ReplierFn`](ports::ReplierFn) trait and return a reply.
 //!
@@ -54,12 +54,17 @@
 //! are referred to as *requests* and *replies*.
 //!
 //! Models must implement the [`Model`](model::Model) trait. The main purpose of
-//! this trait is to allow models to specify an `init()` method that is
-//! guaranteed to run once and only once when the simulation is initialized,
-//! _i.e._ after all models have been connected but before the simulation
-//! starts. The `init()` method has a default implementation, so models that do
-//! not require initialization can simply implement the trait with a one-liner
-//! such as `impl Model for MyModel {}`.
+//! this trait is to allow models to specify
+//! * a `setup()` method that is called once during model addtion to simulation,
+//!   this method allows e.g. creation and interconnection of submodels inside
+//!   the model,
+//! * an `init()` method that is guaranteed to run once and only once when the
+//!   simulation is initialized, _i.e._ after all models have been connected but
+//!   before the simulation starts.
+//!
+//! The `setup()` and `init()` methods have default implementations, so models
+//! that do not require setup and initialization can simply implement the trait
+//! with a one-liner such as `impl Model for MyModel {}`.
 //!
 //! #### A simple model
 //!
@@ -93,29 +98,28 @@
 //! impl Model for Multiplier {}
 //! ```
 //!
-//! #### A model using the local scheduler
+//! #### A model using the local context
 //!
 //! Models frequently need to schedule actions at a future time or simply get
 //! access to the current simulation time. To do so, input and replier methods
-//! can take an optional argument that gives them access to a local scheduler.
+//! can take an optional argument that gives them access to a local context.
 //!
-//! To show how the local scheduler can be used in practice, let us implement
+//! To show how the local context can be used in practice, let us implement
 //! `Delay`, a model which simply forwards its input unmodified after a 1s
 //! delay:
 //!
 //! ```
 //! use std::time::Duration;
-//! use asynchronix::model::Model;
+//! use asynchronix::model::{Context, Model};
 //! use asynchronix::ports::Output;
-//! use asynchronix::time::Scheduler;
 //!
 //! #[derive(Default)]
 //! pub struct Delay {
 //!    pub output: Output<f64>,
 //! }
 //! impl Delay {
-//!     pub fn input(&mut self, value: f64, scheduler: &Scheduler<Self>) {
-//!         scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
+//!     pub fn input(&mut self, value: f64, context: &Context<Self>) {
+//!         context.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //!     }
 //!
 //!     async fn send(&mut self, value: f64) {
@@ -137,7 +141,7 @@
 //! [`Address`](simulation::Mailbox)es pointing to that mailbox.
 //!
 //! Addresses are used among others to connect models: each output or requestor
-//! ports has a `connect()` method that takes as argument a function pointer to
+//! port has a `connect()` method that takes as argument a function pointer to
 //! the corresponding input or replier port method and the address of the
 //! targeted model.
 //!
@@ -168,9 +172,8 @@
 //! ```
 //! # mod models {
 //! #     use std::time::Duration;
-//! #     use asynchronix::model::Model;
+//! #     use asynchronix::model::{Context, Model};
 //! #     use asynchronix::ports::Output;
-//! #     use asynchronix::time::Scheduler;
 //! #     #[derive(Default)]
 //! #     pub struct Multiplier {
 //! #         pub output: Output<f64>,
@@ -186,8 +189,8 @@
 //! #        pub output: Output<f64>,
 //! #     }
 //! #     impl Delay {
-//! #         pub fn input(&mut self, value: f64, scheduler: &Scheduler<Self>) {
-//! #             scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
+//! #         pub fn input(&mut self, value: f64, context: &Context<Self>) {
+//! #             context.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //! #         }
 //! #         async fn send(&mut self, value: f64) { // this method can be private
 //! #             self.output.send(value).await;
@@ -268,9 +271,8 @@
 //! ```
 //! # mod models {
 //! #     use std::time::Duration;
-//! #     use asynchronix::model::Model;
+//! #     use asynchronix::model::{Context, Model};
 //! #     use asynchronix::ports::Output;
-//! #     use asynchronix::time::Scheduler;
 //! #     #[derive(Default)]
 //! #     pub struct Multiplier {
 //! #         pub output: Output<f64>,
@@ -286,8 +288,8 @@
 //! #        pub output: Output<f64>,
 //! #     }
 //! #     impl Delay {
-//! #         pub fn input(&mut self, value: f64, scheduler: &Scheduler<Self>) {
-//! #             scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
+//! #         pub fn input(&mut self, value: f64, context: &Context<Self>) {
+//! #             context.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //! #         }
 //! #         async fn send(&mut self, value: f64) { // this method can be private
 //! #             self.output.send(value).await;
@@ -395,15 +397,14 @@
 //!
 //! * the [`model`] module provides more details about the signatures of input
 //!   and replier port methods and discusses model initialization in the
-//!   documentation of [`model::Model`],
+//!   documentation of [`model::Model`] and self-scheduling methods as well as
+//!   scheduling cancellation in the documentation of [`model::Context`],
 //! * the [`simulation`] module discusses how the capacity of mailboxes may
 //!   affect the simulation, how connections can be modified after the
 //!   simulation was instantiated, and which pathological situations can lead to
 //!   a deadlock,
-//! * the [`time`] module discusses in particular self-scheduling methods and
-//!   scheduling cancellation in the documentation of [`time::Scheduler`] while
-//!   the monotonic timestamp format used for simulations is documented in
-//!   [`time::MonotonicTime`].
+//! * the [`time`] module discusses in particular the monotonic timestamp format
+//!   used for simulations ([`time::MonotonicTime`]).
 #![warn(missing_docs, missing_debug_implementations, unreachable_pub)]
 
 pub(crate) mod channel;

@@ -3,12 +3,12 @@ use std::sync::{Arc, Mutex};
 
 use crate::executor::Executor;
 use crate::model::Model;
-use crate::time::{Clock, NoClock, Scheduler};
-use crate::time::{MonotonicTime, SchedulerQueue, TearableAtomicTime};
+use crate::time::{Clock, NoClock};
+use crate::time::{MonotonicTime, TearableAtomicTime};
 use crate::util::priority_queue::PriorityQueue;
 use crate::util::sync_cell::SyncCell;
 
-use super::{Mailbox, Simulation};
+use super::{add_model, Mailbox, SchedulerQueue, Simulation};
 
 /// Builder for a multi-threaded, discrete-event simulation.
 pub struct SimInit {
@@ -44,15 +44,8 @@ impl SimInit {
     pub fn add_model<M: Model>(self, model: M, mailbox: Mailbox<M>) -> Self {
         let scheduler_queue = self.scheduler_queue.clone();
         let time = self.time.reader();
-        let mut receiver = mailbox.0;
 
-        self.executor.spawn_and_forget(async move {
-            let sender = receiver.sender();
-            let scheduler = Scheduler::new(sender, scheduler_queue, time);
-            let mut model = model.init(&scheduler).await.0;
-
-            while receiver.recv(&mut model, &scheduler).await.is_ok() {}
-        });
+        add_model(model, mailbox, scheduler_queue, time, &self.executor);
 
         self
     }

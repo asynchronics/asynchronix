@@ -2,10 +2,10 @@
 
 use std::time::Duration;
 
-use asynchronix::model::Model;
+use asynchronix::model::{Context, Model};
 use asynchronix::ports::{EventBuffer, Output};
-use asynchronix::simulation::{Mailbox, SimInit};
-use asynchronix::time::{ActionKey, MonotonicTime, Scheduler};
+use asynchronix::simulation::{ActionKey, Mailbox, SimInit};
+use asynchronix::time::MonotonicTime;
 
 #[test]
 fn model_schedule_event() {
@@ -14,9 +14,9 @@ fn model_schedule_event() {
         output: Output<()>,
     }
     impl TestModel {
-        fn trigger(&mut self, _: (), scheduler: &Scheduler<Self>) {
-            scheduler
-                .schedule_event(scheduler.time() + Duration::from_secs(2), Self::action, ())
+        fn trigger(&mut self, _: (), context: &Context<Self>) {
+            context
+                .schedule_event(context.time() + Duration::from_secs(2), Self::action, ())
                 .unwrap();
         }
         async fn action(&mut self) {
@@ -51,12 +51,12 @@ fn model_cancel_future_keyed_event() {
         key: Option<ActionKey>,
     }
     impl TestModel {
-        fn trigger(&mut self, _: (), scheduler: &Scheduler<Self>) {
-            scheduler
-                .schedule_event(scheduler.time() + Duration::from_secs(1), Self::action1, ())
+        fn trigger(&mut self, _: (), context: &Context<Self>) {
+            context
+                .schedule_event(context.time() + Duration::from_secs(1), Self::action1, ())
                 .unwrap();
-            self.key = scheduler
-                .schedule_keyed_event(scheduler.time() + Duration::from_secs(2), Self::action2, ())
+            self.key = context
+                .schedule_keyed_event(context.time() + Duration::from_secs(2), Self::action2, ())
                 .ok();
         }
         async fn action1(&mut self) {
@@ -97,12 +97,12 @@ fn model_cancel_same_time_keyed_event() {
         key: Option<ActionKey>,
     }
     impl TestModel {
-        fn trigger(&mut self, _: (), scheduler: &Scheduler<Self>) {
-            scheduler
-                .schedule_event(scheduler.time() + Duration::from_secs(2), Self::action1, ())
+        fn trigger(&mut self, _: (), context: &Context<Self>) {
+            context
+                .schedule_event(context.time() + Duration::from_secs(2), Self::action1, ())
                 .unwrap();
-            self.key = scheduler
-                .schedule_keyed_event(scheduler.time() + Duration::from_secs(2), Self::action2, ())
+            self.key = context
+                .schedule_keyed_event(context.time() + Duration::from_secs(2), Self::action2, ())
                 .ok();
         }
         async fn action1(&mut self) {
@@ -142,10 +142,10 @@ fn model_schedule_periodic_event() {
         output: Output<i32>,
     }
     impl TestModel {
-        fn trigger(&mut self, _: (), scheduler: &Scheduler<Self>) {
-            scheduler
+        fn trigger(&mut self, _: (), context: &Context<Self>) {
+            context
                 .schedule_periodic_event(
-                    scheduler.time() + Duration::from_secs(2),
+                    context.time() + Duration::from_secs(2),
                     Duration::from_secs(3),
                     Self::action,
                     42,
@@ -190,10 +190,10 @@ fn model_cancel_periodic_event() {
         key: Option<ActionKey>,
     }
     impl TestModel {
-        fn trigger(&mut self, _: (), scheduler: &Scheduler<Self>) {
-            self.key = scheduler
+        fn trigger(&mut self, _: (), context: &Context<Self>) {
+            self.key = context
                 .schedule_keyed_periodic_event(
-                    scheduler.time() + Duration::from_secs(2),
+                    context.time() + Duration::from_secs(2),
                     Duration::from_secs(3),
                     Self::action,
                     (),

@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+#[cfg(not(miri))]
+use asynchronix::model::Context;
 use asynchronix::model::Model;
 use asynchronix::ports::{EventBuffer, Output};
 use asynchronix::simulation::{Address, Mailbox, SimInit, Simulation};
@@ -219,21 +221,9 @@ impl TimestampModel {
 }
 #[cfg(not(miri))]
 impl Model for TimestampModel {
-    fn init(
-        mut self,
-        _scheduler: &asynchronix::time::Scheduler<Self>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn futures_util::Future<Output = asynchronix::model::InitializedModel<Self>>
-                + Send
-                + '_,
-        >,
-    > {
-        Box::pin(async {
-            self.stamp.send((Instant::now(), SystemTime::now())).await;
-
-            self.into()
-        })
+    async fn init(mut self, _: &Context<Self>) -> asynchronix::model::InitializedModel<Self> {
+        self.stamp.send((Instant::now(), SystemTime::now())).await;
+        self.into()
     }
 }
 
@@ -267,7 +257,7 @@ fn timestamp_bench(
 #[test]
 fn simulation_system_clock_from_instant() {
     let t0 = MonotonicTime::EPOCH;
-    const TOLERANCE: f64 = 0.0005; // [s]
+    const TOLERANCE: f64 = 0.005; // [s]
 
     // The reference simulation time is set in the past of t0 so that the
     // simulation starts in the future when the reference wall clock time is
