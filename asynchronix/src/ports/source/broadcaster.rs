@@ -24,6 +24,8 @@ use crate::util::task_set::TaskSet;
 /// does, but the outputs of all sender futures are returned all at once rather
 /// than with an asynchronous iterator (a.k.a. async stream).
 pub(super) struct BroadcasterInner<T: Clone, R> {
+    /// Line identifier for the next port to be connected.
+    next_line_id: u64,
     /// The list of senders with their associated line identifier.
     senders: Vec<(LineId, Box<dyn Sender<T, R>>)>,
 }
@@ -35,8 +37,14 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
     ///
     /// This method will panic if the total count of senders would reach
     /// `u32::MAX - 1`.
-    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, R>>, id: LineId) {
-        self.senders.push((id, sender));
+    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, R>>) -> LineId {
+        assert!(self.next_line_id != u64::MAX);
+        let line_id = LineId(self.next_line_id);
+        self.next_line_id += 1;
+
+        self.senders.push((line_id, sender));
+
+        line_id
     }
 
     /// Removes the first sender with the specified identifier, if any.
@@ -89,6 +97,7 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
 impl<T: Clone, R> Default for BroadcasterInner<T, R> {
     fn default() -> Self {
         Self {
+            next_line_id: 0,
             senders: Vec::new(),
         }
     }
@@ -112,8 +121,8 @@ impl<T: Clone + Send> EventBroadcaster<T> {
     ///
     /// This method will panic if the total count of senders would reach
     /// `u32::MAX - 1`.
-    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, ()>>, id: LineId) {
-        self.inner.add(sender, id);
+    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, ()>>) -> LineId {
+        self.inner.add(sender)
     }
 
     /// Removes the first sender with the specified identifier, if any.
@@ -190,8 +199,8 @@ impl<T: Clone + Send, R: Send> QueryBroadcaster<T, R> {
     ///
     /// This method will panic if the total count of senders would reach
     /// `u32::MAX - 1`.
-    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, R>>, id: LineId) {
-        self.inner.add(sender, id);
+    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, R>>) -> LineId {
+        self.inner.add(sender)
     }
 
     /// Removes the first sender with the specified identifier, if any.
@@ -462,12 +471,12 @@ mod tests {
 
         let mut mailboxes = Vec::new();
         let mut broadcaster = EventBroadcaster::default();
-        for id in 0..N_RECV {
+        for _ in 0..N_RECV {
             let mailbox = Receiver::new(10);
             let address = mailbox.sender();
             let sender = Box::new(InputSender::new(Counter::inc, address));
 
-            broadcaster.add(sender, LineId(id as u64));
+            broadcaster.add(sender);
             mailboxes.push(mailbox);
         }
 
@@ -510,12 +519,12 @@ mod tests {
 
         let mut mailboxes = Vec::new();
         let mut broadcaster = QueryBroadcaster::default();
-        for id in 0..N_RECV {
+        for _ in 0..N_RECV {
             let mailbox = Receiver::new(10);
             let address = mailbox.sender();
             let sender = Box::new(ReplierSender::new(Counter::fetch_inc, address));
 
-            broadcaster.add(sender, LineId(id as u64));
+            broadcaster.add(sender);
             mailboxes.push(mailbox);
         }
 
@@ -629,9 +638,9 @@ mod tests {
             let (test_event3, waker3) = test_event::<usize>();
 
             let mut broadcaster = QueryBroadcaster::default();
-            broadcaster.add(Box::new(test_event1), LineId(1));
-            broadcaster.add(Box::new(test_event2), LineId(2));
-            broadcaster.add(Box::new(test_event3), LineId(3));
+            broadcaster.add(Box::new(test_event1));
+            broadcaster.add(Box::new(test_event2));
+            broadcaster.add(Box::new(test_event3));
 
             let mut fut = Box::pin(broadcaster.broadcast(()));
             let is_scheduled = loom::sync::Arc::new(AtomicBool::new(false));
@@ -701,8 +710,8 @@ mod tests {
             let (test_event2, waker2) = test_event::<usize>();
 
             let mut broadcaster = QueryBroadcaster::default();
-            broadcaster.add(Box::new(test_event1), LineId(1));
-            broadcaster.add(Box::new(test_event2), LineId(2));
+            broadcaster.add(Box::new(test_event1));
+            broadcaster.add(Box::new(test_event2));
 
             let mut fut = Box::pin(broadcaster.broadcast(()));
             let is_scheduled = loom::sync::Arc::new(AtomicBool::new(false));

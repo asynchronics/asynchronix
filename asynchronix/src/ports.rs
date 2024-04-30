@@ -12,6 +12,41 @@
 //! contrast, since events are buffered in the mailbox of the target model,
 //! sending an event is a fire-and-forget operation. For this reason, output
 //! ports should generally be preferred over requestor ports when possible.
+//!
+//! `Output` and `Requestor` ports are clonable. Their clones are shallow
+//! copies, meaning that any modification of the ports connected to one clone is
+//! immediately reflected in other clones.
+//!
+//! #### Example
+//!
+//! The outputs in this example are clones of each other and remain therefore
+//! always connected to the same inputs. For an example usage of outputs cloning
+//! in submodels assemblies, see the [`assembly example`][assembly].
+//!
+//! [assembly]:
+//!     https://github.com/asynchronics/asynchronix/tree/main/asynchronix/examples/assembly.rs
+//!
+//! ```
+//! use asynchronix::model::Model;
+//! use asynchronix::ports::Output;
+//!
+//! pub struct MyModel {
+//!     pub output_a: Output<u64>,
+//!     pub output_b: Output<u64>,
+//! }
+//!
+//! impl MyModel {
+//!     pub fn new() -> Self {
+//!         let output: Output<_> = Default::default();
+//!         Self {
+//!             output_a: output.clone(),
+//!             output_b: output,
+//!         }
+//!     }
+//! }
+//!
+//! impl Model for MyModel {}
+//! ```
 
 mod input;
 mod output;
