@@ -19,33 +19,55 @@
 //!
 //! #### Example
 //!
-//! The outputs in this example are clones of each other and remain therefore
-//! always connected to the same inputs. For an example usage of outputs cloning
-//! in submodels assemblies, see the [`assembly example`][assembly].
+//! This example demonstrates a submodel inside a parent model. The output of
+//! the submodel is a clone of the parent model output. Both outputs remain
+//! therefore always connected to the same inputs.
+//!
+//! For a more comprehensive example demonstrating output cloning in submodels
+//! assemblies, see the [`assembly example`][assembly].
 //!
 //! [assembly]:
 //!     https://github.com/asynchronics/asynchronix/tree/main/asynchronix/examples/assembly.rs
 //!
 //! ```
-//! use asynchronix::model::Model;
+//! use asynchronix::model::{Model, SetupContext};
 //! use asynchronix::ports::Output;
+//! use asynchronix::simulation::Mailbox;
 //!
-//! pub struct MyModel {
-//!     pub output_a: Output<u64>,
-//!     pub output_b: Output<u64>,
+//! pub struct ChildModel {
+//!     pub output: Output<u64>,
 //! }
 //!
-//! impl MyModel {
+//! impl ChildModel {
 //!     pub fn new() -> Self {
-//!         let output: Output<_> = Default::default();
 //!         Self {
-//!             output_a: output.clone(),
-//!             output_b: output,
+//!             output: Default::default(),
 //!         }
 //!     }
 //! }
 //!
-//! impl Model for MyModel {}
+//! impl Model for ChildModel {}
+//!
+//! pub struct ParentModel {
+//!     pub output: Output<u64>,
+//! }
+//!
+//! impl ParentModel {
+//!     pub fn new() -> Self {
+//!         Self {
+//!             output: Default::default(),
+//!         }
+//!     }
+//! }
+//!
+//! impl Model for ParentModel {
+//!     fn setup(&mut self, setup_context: &SetupContext<Self>) {
+//!         let mut child = ChildModel::new();
+//!         let child_mbox = Mailbox::new();
+//!         child.output = self.output.clone();
+//!         setup_context.add_model(child, child_mbox);
+//!     }
+//! }
 //! ```
 
 mod input;
