@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [ main, dev ]
+    branches: [main, dev]
 
 env:
   RUSTFLAGS: -Dwarnings
@@ -42,7 +42,7 @@ jobs:
 
       - name: Run cargo test
         run: cargo test --features="rpc grpc-server"
-  
+
   loom-dry-run:
     name: Loom dry run
     runs-on: ubuntu-latest
@@ -70,23 +70,53 @@ jobs:
         with:
           components: miri
 
-      - name: Run cargo miri tests
+      - name: Run cargo miri tests (single-threaded executor)
+        run: cargo miri test --tests --lib --features="rpc grpc-server"
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=1
+
+      - name: Run cargo miri tests (multi-threaded executor)
         run: cargo miri test --tests --lib --features="rpc grpc-server"
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=4
 
-      - name: Run cargo miri example1
+      - name: Run cargo miri example1 (single-threaded executor)
+        run: cargo miri run --example espresso_machine
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=1
+
+      - name: Run cargo miri example1 (multi-threaded executor)
         run: cargo miri run --example espresso_machine
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=4
 
-      - name: Run cargo miri example2
+      - name: Run cargo miri example2 (single-threaded executor)
+        run: cargo miri run --example power_supply
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=1
+
+      - name: Run cargo miri example2 (multi-threaded executor)
         run: cargo miri run --example power_supply
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=4
 
-      - name: Run cargo miri example3
+      - name: Run cargo miri example3 (single-threaded executor)
         run: cargo miri run --example stepper_motor
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=1
+
+      - name: Run cargo miri example3 (multi-threaded executor)
+        run: cargo miri run --example stepper_motor
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=4
+
+      - name: Run cargo miri example4 (single-threaded executor)
+        run: cargo miri run --example assembly
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=1
+
+      - name: Run cargo miri example4 (multi-threaded executor)
+        run: cargo miri run --example assembly
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=4
 

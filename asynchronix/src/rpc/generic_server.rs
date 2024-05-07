@@ -14,8 +14,8 @@ use super::codegen::simulation::*;
 
 /// Transport-independent server implementation.
 ///
-/// This implementation implements the protobuf services without any
-/// transport-specific management.
+/// This implements the protobuf services without any transport-specific
+/// management.
 pub(crate) struct GenericServer<F> {
     sim_gen: F,
     sim_context: Option<(Simulation, EndpointRegistry, KeyRegistry)>,

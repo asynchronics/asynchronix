@@ -25,15 +25,22 @@ impl SimInit {
         Self::with_num_threads(num_cpus::get())
     }
 
-    /// Creates a builder for a multithreaded simulation running on the
-    /// specified number of threads.
+    /// Creates a builder for a simulation running on the specified number of
+    /// threads.
+    ///
+    /// Note that the number of worker threads is automatically constrained to
+    /// be between 1 and `usize::BITS` (inclusive).
     pub fn with_num_threads(num_threads: usize) -> Self {
-        // The current executor's implementation caps the number of thread to 64
-        // on 64-bit systems and 32 on 32-bit systems.
-        let num_threads = num_threads.min(usize::BITS as usize);
+        let num_threads = num_threads.clamp(1, usize::BITS as usize);
+
+        let executor = if num_threads == 1 {
+            Executor::new_single_threaded()
+        } else {
+            Executor::new_multi_threaded(num_threads)
+        };
 
         Self {
-            executor: Executor::new(num_threads),
+            executor,
             scheduler_queue: Arc::new(Mutex::new(PriorityQueue::new())),
             time: SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH)),
             clock: Box::new(NoClock::new()),
