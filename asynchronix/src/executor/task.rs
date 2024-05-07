@@ -287,12 +287,12 @@ where
 /// `Waker::will_wake` as the latter tests the pointers to the virtual tables
 /// for equality.
 ///
-/// Forcing the function to be inlined appears to solve this problem, but we may
-/// want to investigate more robust methods. Tokio has [switched][1] to a single
-/// non-generic virtual table declared as `static`, which then delegates each
-/// call with another virtual call. This does ensure that `Waker::will_wake`
-/// will always work, but the double indirection is a bit unfortunate and its
-/// cost would need to be evaluated.
+/// Preventing the function from being inlined appears to solve this problem,
+/// but we may want to investigate more robust methods. For unrelated reasons,
+/// Tokio has switched [1] to a single non-generic virtual table declared as
+/// `static` which then delegates each call to another virtual call. This does
+/// ensure that `Waker::will_wake` will always work, but the double indirection
+/// is a bit unfortunate and its cost would need to be evaluated.
 ///
 /// [1]: https://github.com/tokio-rs/tokio/pull/5213
 #[inline(never)]
