@@ -1,7 +1,8 @@
 #[cfg(asynchronix_loom)]
 #[allow(unused_imports)]
 pub(crate) mod sync {
-    pub(crate) use loom::sync::{Arc, Mutex};
+    pub(crate) use loom::sync::{Arc, LockResult, Mutex, MutexGuard};
+    pub(crate) use std::sync::PoisonError;
 
     pub(crate) mod atomic {
         pub(crate) use loom::sync::atomic::{
@@ -12,7 +13,7 @@ pub(crate) mod sync {
 #[cfg(not(asynchronix_loom))]
 #[allow(unused_imports)]
 pub(crate) mod sync {
-    pub(crate) use std::sync::{Arc, Mutex};
+    pub(crate) use std::sync::{Arc, LockResult, Mutex, MutexGuard, PoisonError};
 
     pub(crate) mod atomic {
         pub(crate) use std::sync::atomic::{
