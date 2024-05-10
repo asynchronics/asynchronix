@@ -497,8 +497,12 @@ mod tests {
                         let dummy_priority_queue = Arc::new(Mutex::new(PriorityQueue::new()));
                         let dummy_time =
                             SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH)).reader();
-                        let dummy_context =
-                            Context::new(dummy_address, dummy_priority_queue, dummy_time);
+                        let dummy_context = Context::new(
+                            String::new(),
+                            dummy_address,
+                            dummy_priority_queue,
+                            dummy_time,
+                        );
                         block_on(mailbox.recv(&mut counter, &dummy_context)).unwrap();
                     }
                 })
@@ -548,8 +552,12 @@ mod tests {
                         let dummy_priority_queue = Arc::new(Mutex::new(PriorityQueue::new()));
                         let dummy_time =
                             SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH)).reader();
-                        let dummy_context =
-                            Context::new(dummy_address, dummy_priority_queue, dummy_time);
+                        let dummy_context = Context::new(
+                            String::new(),
+                            dummy_address,
+                            dummy_priority_queue,
+                            dummy_time,
+                        );
                         block_on(mailbox.recv(&mut counter, &dummy_context)).unwrap();
                         thread::sleep(std::time::Duration::from_millis(100));
                     }

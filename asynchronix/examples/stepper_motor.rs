@@ -53,8 +53,15 @@ impl Motor {
     /// For the sake of simplicity, we do as if the rotor rotates
     /// instantaneously. If the current is too weak to overcome the load or when
     /// attempting to move to an opposite phase, the position remains unchanged.
-    pub async fn current_in(&mut self, current: (f64, f64)) {
+    pub async fn current_in(&mut self, current: (f64, f64), context: &Context<Self>) {
         assert!(!current.0.is_nan() && !current.1.is_nan());
+        println!(
+            "Model instance {} at time {}: setting currents: {:.2} and {:.2}",
+            context.name(),
+            context.time(),
+            current.0,
+            current.1
+        );
 
         let (target_phase, abs_current) = match (current.0 != 0.0, current.1 != 0.0) {
             (false, false) => return,
@@ -78,8 +85,15 @@ impl Motor {
     }
 
     /// Torque applied by the load [N·m] -- input port.
-    pub fn load(&mut self, torque: f64) {
+    pub fn load(&mut self, torque: f64, context: &Context<Self>) {
         assert!(torque >= 0.0);
+
+        println!(
+            "Model instance {} at time {}: setting load: {:.2}",
+            context.name(),
+            context.time(),
+            torque
+        );
 
         self.torque = torque;
     }
@@ -124,6 +138,13 @@ impl Driver {
 
     /// Sets the pulse rate (sign = direction) [Hz] -- input port.
     pub async fn pulse_rate(&mut self, pps: f64, context: &Context<Self>) {
+        println!(
+            "Model instance {} at time {}: setting pps: {:.2}",
+            context.name(),
+            context.time(),
+            pps
+        );
+
         let pps = pps.signum() * pps.abs().clamp(Self::MIN_PPS, Self::MAX_PPS);
         if pps == self.pps {
             return;
@@ -148,6 +169,12 @@ impl Driver {
         _: (),
         context: &'a Context<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
+        println!(
+            "Model instance {} at time {}: sending pulse",
+            context.name(),
+            context.time()
+        );
+
         async move {
             let current_out = match self.next_phase {
                 0 => (self.current, 0.0),
@@ -205,8 +232,8 @@ fn main() {
 
     // Assembly and initialization.
     let mut simu = SimInit::new()
-        .add_model(driver, driver_mbox)
-        .add_model(motor, motor_mbox)
+        .add_model(driver, driver_mbox, "driver")
+        .add_model(motor, motor_mbox, "motor")
         .init(t0);
 
     // ----------

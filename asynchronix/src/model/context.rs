@@ -81,6 +81,7 @@ use super::Model;
 // The self-scheduling caveat seems related to this issue:
 // https://github.com/rust-lang/rust/issues/78649
 pub struct Context<M: Model> {
+    name: String,
     sender: Sender<M>,
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
     time: SyncCellReader<TearableAtomicTime>,
@@ -89,15 +90,22 @@ pub struct Context<M: Model> {
 impl<M: Model> Context<M> {
     /// Creates a new local context.
     pub(crate) fn new(
+        name: String,
         sender: Sender<M>,
         scheduler_queue: Arc<Mutex<SchedulerQueue>>,
         time: SyncCellReader<TearableAtomicTime>,
     ) -> Self {
         Self {
+            name,
             sender,
             scheduler_queue,
             time,
         }
+    }
+
+    /// Returns the model instance name.
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Returns the current simulation time.
@@ -440,11 +448,13 @@ impl<M: Model> fmt::Debug for Context<M> {
 ///            let b = SubmodelB::default();
 ///            let a_mbox = Mailbox::new();
 ///            let b_mbox = Mailbox::new();
+///            let a_name = setup_context.name().to_string() + "::a";
+///            let b_name = setup_context.name().to_string() + "::b";
 ///
 ///            a.out.connect(SubmodelB::input, &b_mbox);
 ///
-///            setup_context.add_model(a, a_mbox);
-///            setup_context.add_model(b, b_mbox);
+///            setup_context.add_model(a, a_mbox, a_name);
+///            setup_context.add_model(b, b_mbox, b_name);
 ///    }
 /// }
 ///
@@ -472,11 +482,25 @@ impl<'a, M: Model> SetupContext<'a, M> {
         }
     }
 
+    /// Returns the model instance name.
+    pub fn name(&self) -> &str {
+        &self.context.name
+    }
+
     /// Adds a new model and its mailbox to the simulation bench.
-    pub fn add_model<N: Model>(&self, model: N, mailbox: Mailbox<N>) {
+    ///
+    /// The `name` argument needs not be unique (it can be an empty string) and
+    /// is used for convenience for model instance identification (e.g. for
+    /// logging purposes).
+    pub fn add_model<N: Model>(&self, model: N, mailbox: Mailbox<N>, name: impl Into<String>) {
+        let mut submodel_name = name.into();
+        if !self.context.name().is_empty() && !submodel_name.is_empty() {
+            submodel_name = self.context.name().to_string() + "." + &submodel_name;
+        }
         simulation::add_model(
             model,
             mailbox,
+            submodel_name,
             self.context.scheduler_queue.clone(),
             self.context.time.clone(),
             self.executor,
