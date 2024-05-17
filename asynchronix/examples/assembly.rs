@@ -79,8 +79,8 @@ impl Model for MotorAssembly {
         // clones.
         motor.position = self.position.clone();
 
-        setup_context.add_model(driver, driver_mbox);
-        setup_context.add_model(motor, motor_mbox);
+        setup_context.add_model(driver, driver_mbox, "driver");
+        setup_context.add_model(motor, motor_mbox, "motor");
     }
 }
 
@@ -105,7 +105,9 @@ fn main() {
     let t0 = MonotonicTime::EPOCH;
 
     // Assembly and initialization.
-    let mut simu = SimInit::new().add_model(assembly, assembly_mbox).init(t0);
+    let mut simu = SimInit::new()
+        .add_model(assembly, assembly_mbox, "assembly")
+        .init(t0);
 
     // ----------
     // Simulation.

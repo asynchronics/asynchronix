@@ -41,11 +41,27 @@ impl SimInit {
     }
 
     /// Adds a model and its mailbox to the simulation bench.
-    pub fn add_model<M: Model>(self, model: M, mailbox: Mailbox<M>) -> Self {
+    ///
+    /// The `name` argument needs not be unique (it can be the empty string) and
+    /// is used for convenience for the model instance identification (e.g. for
+    /// logging purposes).
+    pub fn add_model<M: Model>(
+        self,
+        model: M,
+        mailbox: Mailbox<M>,
+        name: impl Into<String>,
+    ) -> Self {
         let scheduler_queue = self.scheduler_queue.clone();
         let time = self.time.reader();
 
-        add_model(model, mailbox, scheduler_queue, time, &self.executor);
+        add_model(
+            model,
+            mailbox,
+            name.into(),
+            scheduler_queue,
+            time,
+            &self.executor,
+        );
 
         self
     }

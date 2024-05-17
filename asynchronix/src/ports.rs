@@ -65,7 +65,8 @@
 //!         let mut child = ChildModel::new();
 //!         let child_mbox = Mailbox::new();
 //!         child.output = self.output.clone();
-//!         setup_context.add_model(child, child_mbox);
+//!         let child_name = setup_context.name().to_string() + "::child";
+//!         setup_context.add_model(child, child_mbox, child_name);
 //!     }
 //! }
 //! ```

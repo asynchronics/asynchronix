@@ -666,13 +666,14 @@ impl Error for QueryError {}
 pub(crate) fn add_model<M: Model>(
     mut model: M,
     mailbox: Mailbox<M>,
+    name: String,
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
     time: SyncCellReader<TearableAtomicTime>,
     executor: &Executor,
 ) {
     let sender = mailbox.0.sender();
 
-    let context = Context::new(sender, scheduler_queue, time);
+    let context = Context::new(name, sender, scheduler_queue, time);
     let setup_context = SetupContext::new(&mailbox, &context, executor);
 
     model.setup(&setup_context);

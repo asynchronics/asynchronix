@@ -368,9 +368,9 @@ fn main() {
 
     // Assembly and initialization.
     let mut simu = SimInit::new()
-        .add_model(controller, controller_mbox)
-        .add_model(pump, pump_mbox)
-        .add_model(tank, tank_mbox)
+        .add_model(controller, controller_mbox, "controller")
+        .add_model(pump, pump_mbox, "pump")
+        .add_model(tank, tank_mbox, "tank")
         .init(t0);
 
     // ----------

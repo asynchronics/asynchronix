@@ -231,10 +231,10 @@
 //! // Pick an arbitrary simulation start time and build the simulation.
 //! let t0 = MonotonicTime::EPOCH;
 //! let mut simu = SimInit::new()
-//!     .add_model(multiplier1, multiplier1_mbox)
-//!     .add_model(multiplier2, multiplier2_mbox)
-//!     .add_model(delay1, delay1_mbox)
-//!     .add_model(delay2, delay2_mbox)
+//!     .add_model(multiplier1, multiplier1_mbox, "multiplier1")
+//!     .add_model(multiplier2, multiplier2_mbox, "multiplier2")
+//!     .add_model(delay1, delay1_mbox, "delay1")
+//!     .add_model(delay2, delay2_mbox, "delay2")
 //!     .init(t0);
 //! ```
 //!
@@ -319,10 +319,10 @@
 //! # let input_address = multiplier1_mbox.address();
 //! # let t0 = MonotonicTime::EPOCH;
 //! # let mut simu = SimInit::new()
-//! #     .add_model(multiplier1, multiplier1_mbox)
-//! #     .add_model(multiplier2, multiplier2_mbox)
-//! #     .add_model(delay1, delay1_mbox)
-//! #     .add_model(delay2, delay2_mbox)
+//! #     .add_model(multiplier1, multiplier1_mbox, "multiplier1")
+//! #     .add_model(multiplier2, multiplier2_mbox, "multiplier2")
+//! #     .add_model(delay1, delay1_mbox, "delay1")
+//! #     .add_model(delay2, delay2_mbox, "delay2")
 //! #     .init(t0);
 //! // Send a value to the first multiplier.
 //! simu.process_event(Multiplier::input, 21.0, &input_address);

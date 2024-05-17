@@ -33,7 +33,7 @@ fn model_schedule_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox).init(t0);
+    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0);
 
     simu.process_event(TestModel::trigger, (), addr);
     simu.step();
@@ -78,7 +78,7 @@ fn model_cancel_future_keyed_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox).init(t0);
+    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0);
 
     simu.process_event(TestModel::trigger, (), addr);
     simu.step();
@@ -124,7 +124,7 @@ fn model_cancel_same_time_keyed_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox).init(t0);
+    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0);
 
     simu.process_event(TestModel::trigger, (), addr);
     simu.step();
@@ -166,7 +166,7 @@ fn model_schedule_periodic_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox).init(t0);
+    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0);
 
     simu.process_event(TestModel::trigger, (), addr);
 
@@ -216,7 +216,7 @@ fn model_cancel_periodic_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox).init(t0);
+    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0);
 
     simu.process_event(TestModel::trigger, (), addr);
 

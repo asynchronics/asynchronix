@@ -38,7 +38,7 @@ fn passthrough_bench<T: Clone + Send + 'static>(
     model.output.connect_sink(&out_stream);
     let addr = mbox.address();
 
-    let simu = SimInit::new().add_model(model, mbox).init(t0);
+    let simu = SimInit::new().add_model(model, mbox, "").init(t0);
 
     (simu, addr, out_stream)
 }
@@ -246,7 +246,7 @@ fn timestamp_bench(
     let addr = mbox.address();
 
     let simu = SimInit::new()
-        .add_model(model, mbox)
+        .add_model(model, mbox, "")
         .set_clock(clock)
         .init(t0);
 
