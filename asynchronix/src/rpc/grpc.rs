@@ -1,4 +1,4 @@
-//! GRPC simulation server.
+//! gRPC simulation service.
 
 use std::net::SocketAddr;
 use std::sync::Mutex;
@@ -10,12 +10,12 @@ use crate::rpc::EndpointRegistry;
 use crate::simulation::SimInit;
 
 use super::codegen::simulation::*;
-use super::generic_server::GenericServer;
+use super::simulation_service::SimulationService;
 
-/// Runs a GRPC simulation server.
+/// Runs a gRPC simulation server.
 ///
 /// The first argument is a closure that is called every time the simulation is
-/// started by the remote client. It must create a new `SimInit` object
+/// (re)started by the remote client. It must create a new `SimInit` object
 /// complemented by a registry that exposes the public event and query
 /// interface.
 pub fn run<F>(sim_gen: F, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>>
@@ -27,7 +27,7 @@ where
         .enable_io()
         .build()?;
 
-    let sim_manager = GrpcServer::new(sim_gen);
+    let sim_manager = GrpcSimulationService::new(sim_gen);
 
     rt.block_on(async move {
         Server::builder()
@@ -39,33 +39,27 @@ where
     })
 }
 
-struct GrpcServer<F>
-where
-    F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
-{
-    inner: Mutex<GenericServer<F>>,
+struct GrpcSimulationService {
+    inner: Mutex<SimulationService>,
 }
 
-impl<F> GrpcServer<F>
-where
-    F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
-{
-    fn new(sim_gen: F) -> Self {
+impl GrpcSimulationService {
+    fn new<F>(sim_gen: F) -> Self
+    where
+        F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
+    {
         Self {
-            inner: Mutex::new(GenericServer::new(sim_gen)),
+            inner: Mutex::new(SimulationService::new(sim_gen)),
         }
     }
 
-    fn inner(&self) -> MutexGuard<'_, GenericServer<F>> {
+    fn inner(&self) -> MutexGuard<'_, SimulationService> {
         self.inner.lock().unwrap()
     }
 }
 
 #[tonic::async_trait]
-impl<F> simulation_server::Simulation for GrpcServer<F>
-where
-    F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
-{
+impl simulation_server::Simulation for GrpcSimulationService {
     async fn init(&self, request: Request<InitRequest>) -> Result<Response<InitReply>, Status> {
         let request = request.into_inner();
 
