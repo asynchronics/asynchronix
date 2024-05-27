@@ -332,6 +332,44 @@ pub mod close_sink_reply {
         Error(super::Error),
     }
 }
+/// A convenience message type for custom transport implementation.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AnyRequest {
+    /// Expects exactly 1 variant.
+    #[prost(oneof = "any_request::Request", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11")]
+    pub request: ::core::option::Option<any_request::Request>,
+}
+/// Nested message and enum types in `AnyRequest`.
+pub mod any_request {
+    /// Expects exactly 1 variant.
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Request {
+        #[prost(message, tag = "1")]
+        InitRequest(super::InitRequest),
+        #[prost(message, tag = "2")]
+        TimeRequest(super::TimeRequest),
+        #[prost(message, tag = "3")]
+        StepRequest(super::StepRequest),
+        #[prost(message, tag = "4")]
+        StepUntilRequest(super::StepUntilRequest),
+        #[prost(message, tag = "5")]
+        ScheduleEventRequest(super::ScheduleEventRequest),
+        #[prost(message, tag = "6")]
+        CancelEventRequest(super::CancelEventRequest),
+        #[prost(message, tag = "7")]
+        ProcessEventRequest(super::ProcessEventRequest),
+        #[prost(message, tag = "8")]
+        ProcessQueryRequest(super::ProcessQueryRequest),
+        #[prost(message, tag = "9")]
+        ReadEventsRequest(super::ReadEventsRequest),
+        #[prost(message, tag = "10")]
+        OpenSinkRequest(super::OpenSinkRequest),
+        #[prost(message, tag = "11")]
+        CloseSinkRequest(super::CloseSinkRequest),
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ErrorCode {

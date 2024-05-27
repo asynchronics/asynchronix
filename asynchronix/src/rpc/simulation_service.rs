@@ -1,3 +1,5 @@
+use std::error;
+use std::fmt;
 use std::time::Duration;
 
 use bytes::Buf;
@@ -9,86 +11,87 @@ use crate::rpc::key_registry::{KeyRegistry, KeyRegistryId};
 use crate::rpc::EndpointRegistry;
 use crate::simulation::{SimInit, Simulation};
 
-use super::codegen::custom_transport::*;
 use super::codegen::simulation::*;
 
-/// Transport-independent server implementation.
+/// Protobuf-based simulation manager.
 ///
-/// This implements the protobuf services without any transport-specific
-/// management.
-pub(crate) struct GenericServer<F> {
-    sim_gen: F,
+/// A `SimulationService` enables the management of the lifecycle of a
+/// simulation, including creating a
+/// [`Simulation`](crate::simulation::Simulation), invoking its methods and
+/// instantiating a new simulation.
+///
+/// Its methods map the various RPC service methods defined in
+/// `simulation.proto`.
+pub struct SimulationService {
+    sim_gen: Box<dyn FnMut() -> (SimInit, EndpointRegistry) + Send + 'static>,
     sim_context: Option<(Simulation, EndpointRegistry, KeyRegistry)>,
 }
 
-impl<F> GenericServer<F>
-where
-    F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
-{
-    /// Creates a new `GenericServer` without any active simulation.
-    pub(crate) fn new(sim_gen: F) -> Self {
+impl SimulationService {
+    /// Creates a new `SimulationService` without any active simulation.
+    ///
+    /// The argument is a closure that is called every time the simulation is
+    /// (re)started by the remote client. It must create a new `SimInit` object
+    /// complemented by a registry that exposes the public event and query
+    /// interface.
+    pub fn new<F>(sim_gen: F) -> Self
+    where
+        F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
+    {
         Self {
-            sim_gen,
+            sim_gen: Box::new(sim_gen),
             sim_context: None,
         }
     }
 
-    /// Processes an encoded `AnyRequest` message and returns an encoded
-    /// `AnyReply`.
-    #[allow(dead_code)]
-    pub(crate) fn service_request<B>(&mut self, request_buf: B) -> Vec<u8>
+    /// Processes an encoded `AnyRequest` message and returns an encoded reply.
+    pub fn process_request<B>(&mut self, request_buf: B) -> Result<Vec<u8>, InvalidRequest>
     where
         B: Buf,
     {
-        let reply = match AnyRequest::decode(request_buf) {
+        match AnyRequest::decode(request_buf) {
             Ok(AnyRequest { request: Some(req) }) => match req {
                 any_request::Request::InitRequest(request) => {
-                    any_reply::Reply::InitReply(self.init(request))
+                    Ok(self.init(request).encode_to_vec())
                 }
                 any_request::Request::TimeRequest(request) => {
-                    any_reply::Reply::TimeReply(self.time(request))
+                    Ok(self.time(request).encode_to_vec())
                 }
                 any_request::Request::StepRequest(request) => {
-                    any_reply::Reply::StepReply(self.step(request))
+                    Ok(self.step(request).encode_to_vec())
                 }
                 any_request::Request::StepUntilRequest(request) => {
-                    any_reply::Reply::StepUntilReply(self.step_until(request))
+                    Ok(self.step_until(request).encode_to_vec())
                 }
                 any_request::Request::ScheduleEventRequest(request) => {
-                    any_reply::Reply::ScheduleEventReply(self.schedule_event(request))
+                    Ok(self.schedule_event(request).encode_to_vec())
                 }
                 any_request::Request::CancelEventRequest(request) => {
-                    any_reply::Reply::CancelEventReply(self.cancel_event(request))
+                    Ok(self.cancel_event(request).encode_to_vec())
                 }
                 any_request::Request::ProcessEventRequest(request) => {
-                    any_reply::Reply::ProcessEventReply(self.process_event(request))
+                    Ok(self.process_event(request).encode_to_vec())
                 }
                 any_request::Request::ProcessQueryRequest(request) => {
-                    any_reply::Reply::ProcessQueryReply(self.process_query(request))
+                    Ok(self.process_query(request).encode_to_vec())
                 }
                 any_request::Request::ReadEventsRequest(request) => {
-                    any_reply::Reply::ReadEventsReply(self.read_events(request))
+                    Ok(self.read_events(request).encode_to_vec())
                 }
                 any_request::Request::OpenSinkRequest(request) => {
-                    any_reply::Reply::OpenSinkReply(self.open_sink(request))
+                    Ok(self.open_sink(request).encode_to_vec())
                 }
                 any_request::Request::CloseSinkRequest(request) => {
-                    any_reply::Reply::CloseSinkReply(self.close_sink(request))
+                    Ok(self.close_sink(request).encode_to_vec())
                 }
             },
-            Ok(AnyRequest { request: None }) => any_reply::Reply::Error(ServerError {
-                code: ServerErrorCode::EmptyRequest as i32,
-                message: "the message did not contain any request".to_string(),
+            Ok(AnyRequest { request: None }) => Err(InvalidRequest {
+                description: "the message did not contain any request".to_string(),
             }),
-            Err(err) => any_reply::Reply::Error(ServerError {
-                code: ServerErrorCode::UnknownRequest as i32,
-                message: format!("bad request: {}", err),
+            Err(err) => Err(InvalidRequest {
+                description: format!("bad request: {}", err),
             }),
-        };
-
-        let reply = AnyReply { reply: Some(reply) };
-
-        reply.encode_to_vec()
+        }
     }
 
     /// Initialize a simulation with the provided time.
@@ -605,6 +608,25 @@ where
         }
     }
 }
+
+impl fmt::Debug for SimulationService {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SimulationService").finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct InvalidRequest {
+    description: String,
+}
+
+impl fmt::Display for InvalidRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.description)
+    }
+}
+
+impl error::Error for InvalidRequest {}
 
 /// Attempts a cast from a `MonotonicTime` to a protobuf `Timestamp`.
 ///

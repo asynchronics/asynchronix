@@ -146,6 +146,23 @@ message CloseSinkReply {
   }
 }
 
+// A convenience message type for custom transport implementation.
+message AnyRequest {
+  oneof request { // Expects exactly 1 variant.
+    InitRequest init_request = 1;
+    TimeRequest time_request = 2;
+    StepRequest step_request = 3;
+    StepUntilRequest step_until_request = 4;
+    ScheduleEventRequest schedule_event_request = 5;
+    CancelEventRequest cancel_event_request = 6;
+    ProcessEventRequest process_event_request = 7;
+    ProcessQueryRequest process_query_request = 8;
+    ReadEventsRequest read_events_request = 9;
+    OpenSinkRequest open_sink_request = 10;
+    CloseSinkRequest close_sink_request = 11;
+  }
+}
+
 service Simulation {
   rpc Init(InitRequest) returns (InitReply);
   rpc Time(TimeRequest) returns (TimeReply);

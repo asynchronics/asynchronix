@@ -26,8 +26,10 @@ autotests = false
 rpc = ["dep:rmp-serde", "dep:serde", "dep:tonic", "dep:prost", "dep:prost-types", "dep:bytes"]
 # This feature forces protobuf/gRPC code (re-)generation.
 rpc-codegen = ["dep:tonic-build"]
-# gRPC server.
-grpc-server = ["rpc", "dep:tokio"]
+# gRPC service.
+grpc-service = ["rpc", "dep:tokio" , "tonic/transport"]
+# wasm service.
+wasm-service = ["rpc", "dep:wasm-bindgen"]
 # API-unstable public exports meant for external test/benchmarking; development only.
 dev-hooks = []
 # Logging of performance-related statistics; development only.
@@ -58,10 +60,12 @@ prost-types = { version = "0.12", optional = true }
 rmp-serde = { version = "1.1", optional = true }
 serde = { version = "1", optional = true }
 
-# gRPC dependencies.
+# gRPC service dependencies.
 tokio = { version = "1.0", features=["net"], optional = true }
-tonic = { version = "0.11", optional = true }
+tonic = { version = "0.11", default-features = false, features=["codegen", "prost"], optional = true }
 
+# WASM service dependencies.
+wasm-bindgen = { version = "0.2", optional = true }
 
 [target.'cfg(asynchronix_loom)'.dependencies]
 loom = "0.5"
