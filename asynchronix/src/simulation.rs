@@ -14,8 +14,9 @@
 //!    using the [`Address`]es of the target models,
 //! 3. instantiation of a [`SimInit`] simulation builder and migration of all
 //!    models and mailboxes to the builder with [`SimInit::add_model()`],
-//! 4. initialization of a [`Simulation`] instance with [`SimInit::init()`] or
-//!    [`SimInit::init_with_clock()`],
+//! 4. initialization of a [`Simulation`] instance with [`SimInit::init()`],
+//!    possibly preceded by the setup of a custom clock with
+//!    [`SimInit::set_clock()`],
 //! 5. discrete-time simulation, which typically involves scheduling events and
 //!    incrementing simulation time while observing the models outputs.
 //!
@@ -76,7 +77,7 @@
 //! such pathological deadlocks and the "expected" deadlock that occurs when all
 //! events in a given time slice have completed and all models are starved on an
 //! empty mailbox. Consequently, blocking method such as [`SimInit::init()`],
-//! [`Simulation::step()`], [`Simulation::send_event()`], etc., will return
+//! [`Simulation::step()`], [`Simulation::process_event()`], etc., will return
 //! without error after a pathological deadlock, leaving the user responsible
 //! for inferring the deadlock from the behavior of the simulation in the next
 //! steps. This is obviously not ideal, but is hopefully only a temporary state
@@ -86,18 +87,20 @@
 //!
 //! Although uncommon, there is sometimes a need for connecting and/or
 //! disconnecting models after they have been migrated to the simulation.
-//! Likewise, one may want to connect or disconnect an [`EventSlot`] or
-//! [`EventStream`] after the simulation has been instantiated.
+//! Likewise, one may want to connect or disconnect an
+//! [`EventSlot`](crate::ports::EventSlot) or
+//! [`EventBuffer`](crate::ports::EventBuffer) after the simulation has been
+//! instantiated.
 //!
 //! There is actually a very simple solution to this problem: since the
-//! [`InputFn`](crate::model::InputFn) trait also matches closures of type
-//! `FnOnce(&mut impl Model)`, it is enough to invoke
-//! [`Simulation::send_event()`] with a closure that connects or disconnects a
-//! port, such as:
+//! [`InputFn`] trait also matches closures of type `FnOnce(&mut impl Model)`,
+//! it is enough to invoke [`Simulation::process_event()`] with a closure that
+//! connects or disconnects a port, such as:
 //!
 //! ```
-//! # use asynchronix::model::{Model, Output};
-//! # use asynchronix::time::{MonotonicTime, Scheduler};
+//! # use asynchronix::model::{Context, Model};
+//! # use asynchronix::ports::Output;
+//! # use asynchronix::time::MonotonicTime;
 //! # use asynchronix::simulation::{Mailbox, SimInit};
 //! # pub struct ModelA {
 //! #     pub output: Output<i32>,
@@ -111,7 +114,7 @@
 //! # let modelA_addr = Mailbox::<ModelA>::new().address();
 //! # let modelB_addr = Mailbox::<ModelB>::new().address();
 //! # let mut simu = SimInit::new().init(MonotonicTime::EPOCH);
-//! simu.send_event(
+//! simu.process_event(
 //!     |m: &mut ModelA| {
 //!         m.output.connect(ModelB::input, modelB_addr);
 //!     },
@@ -119,12 +122,17 @@
 //!     &modelA_addr
 //! );
 //! ```
-mod endpoints;
 mod mailbox;
+mod scheduler;
 mod sim_init;
 
-pub use endpoints::{EventSlot, EventStream};
 pub use mailbox::{Address, Mailbox};
+pub(crate) use scheduler::{
+    schedule_event_at_unchecked, schedule_keyed_event_at_unchecked,
+    schedule_periodic_event_at_unchecked, schedule_periodic_keyed_event_at_unchecked,
+    KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction, SchedulerQueue,
+};
+pub use scheduler::{Action, ActionKey, Deadline, SchedulingError};
 pub use sim_init::SimInit;
 
 use std::error::Error;
@@ -136,37 +144,33 @@ use std::time::Duration;
 use recycle_box::{coerce_box, RecycleBox};
 
 use crate::executor::Executor;
-use crate::model::{InputFn, Model, ReplierFn};
-use crate::time::{
-    self, Clock, Deadline, EventKey, MonotonicTime, NoClock, ScheduledEvent, SchedulerQueue,
-    SchedulingError, TearableAtomicTime,
-};
-use crate::util::futures::SeqFuture;
+use crate::model::{Context, Model, SetupContext};
+use crate::ports::{InputFn, ReplierFn};
+use crate::time::{Clock, MonotonicTime, TearableAtomicTime};
+use crate::util::seq_futures::SeqFuture;
 use crate::util::slot;
-use crate::util::sync_cell::SyncCell;
+use crate::util::sync_cell::{SyncCell, SyncCellReader};
 
 /// Simulation environment.
 ///
 /// A `Simulation` is created by calling
-/// [`SimInit::init()`](crate::simulation::SimInit::init) or
-/// [`SimInit::init_with_clock()`](crate::simulation::SimInit::init_with_clock)
-/// method on a simulation initializer. It contains an asynchronous executor
-/// that runs all simulation models added beforehand to
-/// [`SimInit`](crate::simulation::SimInit).
+/// [`SimInit::init()`](crate::simulation::SimInit::init) on a simulation
+/// initializer. It contains an asynchronous executor that runs all simulation
+/// models added beforehand to [`SimInit`].
 ///
 /// A [`Simulation`] object also manages an event scheduling queue and
 /// simulation time. The scheduling queue can be accessed from the simulation
 /// itself, but also from models via the optional
-/// [`&Scheduler`](time::Scheduler) argument of input and replier port methods.
+/// [`&Context`](crate::model::Context) argument of input and replier port methods.
 /// Likewise, simulation time can be accessed with the [`Simulation::time()`]
-/// method, or from models with the [`Scheduler::time()`](time::Scheduler::time)
+/// method, or from models with the [`Context::time()`](crate::model::Context::time)
 /// method.
 ///
 /// Events and queries can be scheduled immediately, *i.e.* for the current
-/// simulation time, using [`send_event()`](Simulation::send_event) and
-/// [`send_query()`](Simulation::send_query). Calling these methods will block
-/// until all computations triggered by such event or query have completed. In
-/// the case of queries, the response is returned.
+/// simulation time, using [`process_event()`](Simulation::process_event) and
+/// [`send_query()`](Simulation::process_query). Calling these methods will
+/// block until all computations triggered by such event or query have
+/// completed. In the case of queries, the response is returned.
 ///
 /// Events can also be scheduled at a future simulation time using one of the
 /// [`schedule_*()`](Simulation::schedule_event) method. These methods queue an
@@ -177,7 +181,7 @@ use crate::util::sync_cell::SyncCell;
 ///
 /// 1. increment simulation time until that of the next scheduled event in
 ///    chronological order, then
-/// 2. call [`Clock::synchronize()`](time::Clock::synchronize) which, unless the
+/// 2. call [`Clock::synchronize()`](crate::time::Clock::synchronize) which, unless the
 ///    simulation is configured to run as fast as possible, blocks until the
 ///    desired wall clock time, and finally
 /// 3. run all computations scheduled for the new simulation time.
@@ -193,32 +197,18 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    /// Creates a new `Simulation`.
+    /// Creates a new `Simulation` with the specified clock.
     pub(crate) fn new(
         executor: Executor,
         scheduler_queue: Arc<Mutex<SchedulerQueue>>,
         time: SyncCell<TearableAtomicTime>,
+        clock: Box<dyn Clock + 'static>,
     ) -> Self {
         Self {
             executor,
             scheduler_queue,
             time,
-            clock: Box::new(NoClock::new()),
-        }
-    }
-
-    /// Creates a new `Simulation` with the specified clock.
-    pub(crate) fn with_clock(
-        executor: Executor,
-        scheduler_queue: Arc<Mutex<SchedulerQueue>>,
-        time: SyncCell<TearableAtomicTime>,
-        clock: impl Clock + 'static,
-    ) -> Self {
-        Self {
-            executor,
-            scheduler_queue,
-            time,
-            clock: Box::new(clock),
+            clock,
         }
     }
 
@@ -231,7 +221,7 @@ impl Simulation {
     /// that event as well as all other event scheduled for the same time.
     ///
     /// Processing is gated by a (possibly blocking) call to
-    /// [`Clock::synchronize()`](time::Clock::synchronize) on the configured
+    /// [`Clock::synchronize()`](crate::time::Clock::synchronize) on the configured
     /// simulation clock. This method blocks until all newly processed events
     /// have completed.
     pub fn step(&mut self) {
@@ -267,6 +257,37 @@ impl Simulation {
         Ok(())
     }
 
+    /// Schedules an action at a future time.
+    ///
+    /// An error is returned if the specified time is not in the future of the
+    /// current simulation time.
+    ///
+    /// If multiple actions send events at the same simulation time to the same
+    /// model, these events are guaranteed to be processed according to the
+    /// scheduling order of the actions.
+    pub fn schedule(
+        &mut self,
+        deadline: impl Deadline,
+        action: Action,
+    ) -> Result<(), SchedulingError> {
+        let now = self.time();
+        let time = deadline.into_time(now);
+        if now >= time {
+            return Err(SchedulingError::InvalidScheduledTime);
+        }
+
+        let mut scheduler_queue = self.scheduler_queue.lock().unwrap();
+
+        // The channel ID is set to the same value for all actions. This
+        // ensures that the relative scheduling order of all source events is
+        // preserved, which is important if some of them target the same models.
+        // The value 0 was chosen as it prevents collisions with channel IDs as
+        // the latter are always non-zero.
+        scheduler_queue.insert((time, 0), action);
+
+        Ok(())
+    }
+
     /// Schedules an event at a future time.
     ///
     /// An error is returned if the specified time is not in the future of the
@@ -275,7 +296,7 @@ impl Simulation {
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
     ///
-    /// See also: [`time::Scheduler::schedule_event`].
+    /// See also: [`Context::schedule_event`](crate::model::Context::schedule_event).
     pub fn schedule_event<M, F, T, S>(
         &mut self,
         deadline: impl Deadline,
@@ -294,7 +315,7 @@ impl Simulation {
         if now >= time {
             return Err(SchedulingError::InvalidScheduledTime);
         }
-        time::schedule_event_at_unchecked(time, func, arg, address.into().0, &self.scheduler_queue);
+        schedule_event_at_unchecked(time, func, arg, address.into().0, &self.scheduler_queue);
 
         Ok(())
     }
@@ -307,14 +328,14 @@ impl Simulation {
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
     ///
-    /// See also: [`time::Scheduler::schedule_keyed_event`].
+    /// See also: [`Context::schedule_keyed_event`](crate::model::Context::schedule_keyed_event).
     pub fn schedule_keyed_event<M, F, T, S>(
         &mut self,
         deadline: impl Deadline,
         func: F,
         arg: T,
         address: impl Into<Address<M>>,
-    ) -> Result<EventKey, SchedulingError>
+    ) -> Result<ActionKey, SchedulingError>
     where
         M: Model,
         F: for<'a> InputFn<'a, M, T, S>,
@@ -326,7 +347,7 @@ impl Simulation {
         if now >= time {
             return Err(SchedulingError::InvalidScheduledTime);
         }
-        let event_key = time::schedule_keyed_event_at_unchecked(
+        let event_key = schedule_keyed_event_at_unchecked(
             time,
             func,
             arg,
@@ -345,7 +366,7 @@ impl Simulation {
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
     ///
-    /// See also: [`time::Scheduler::schedule_periodic_event`].
+    /// See also: [`Context::schedule_periodic_event`](crate::model::Context::schedule_periodic_event).
     pub fn schedule_periodic_event<M, F, T, S>(
         &mut self,
         deadline: impl Deadline,
@@ -368,7 +389,7 @@ impl Simulation {
         if period.is_zero() {
             return Err(SchedulingError::NullRepetitionPeriod);
         }
-        time::schedule_periodic_event_at_unchecked(
+        schedule_periodic_event_at_unchecked(
             time,
             period,
             func,
@@ -389,7 +410,7 @@ impl Simulation {
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
     ///
-    /// See also: [`time::Scheduler::schedule_keyed_periodic_event`].
+    /// See also: [`Context::schedule_keyed_periodic_event`](crate::model::Context::schedule_keyed_periodic_event).
     pub fn schedule_keyed_periodic_event<M, F, T, S>(
         &mut self,
         deadline: impl Deadline,
@@ -397,7 +418,7 @@ impl Simulation {
         func: F,
         arg: T,
         address: impl Into<Address<M>>,
-    ) -> Result<EventKey, SchedulingError>
+    ) -> Result<ActionKey, SchedulingError>
     where
         M: Model,
         F: for<'a> InputFn<'a, M, T, S> + Clone,
@@ -412,7 +433,7 @@ impl Simulation {
         if period.is_zero() {
             return Err(SchedulingError::NullRepetitionPeriod);
         }
-        let event_key = time::schedule_periodic_keyed_event_at_unchecked(
+        let event_key = schedule_periodic_keyed_event_at_unchecked(
             time,
             period,
             func,
@@ -424,10 +445,19 @@ impl Simulation {
         Ok(event_key)
     }
 
-    /// Sends and processes an event, blocking until completion.
+    /// Processes an action immediately, blocking until completion.
+    ///
+    /// Simulation time remains unchanged. The periodicity of the action, if
+    /// any, is ignored.
+    pub fn process(&mut self, action: Action) {
+        action.spawn_and_forget(&self.executor);
+        self.executor.run();
+    }
+
+    /// Processes an event immediately, blocking until completion.
     ///
     /// Simulation time remains unchanged.
-    pub fn send_event<M, F, T, S>(&mut self, func: F, arg: T, address: impl Into<Address<M>>)
+    pub fn process_event<M, F, T, S>(&mut self, func: F, arg: T, address: impl Into<Address<M>>)
     where
         M: Model,
         F: for<'a> InputFn<'a, M, T, S>,
@@ -454,10 +484,10 @@ impl Simulation {
         self.executor.run();
     }
 
-    /// Sends and processes a query, blocking until completion.
+    /// Processes a query immediately, blocking until completion.
     ///
     /// Simulation time remains unchanged.
-    pub fn send_query<M, F, T, R, S>(
+    pub fn process_query<M, F, T, R, S>(
         &mut self,
         func: F,
         arg: T,
@@ -497,36 +527,34 @@ impl Simulation {
         reply_reader.try_read().map_err(|_| QueryError {})
     }
 
-    /// Advances simulation time to that of the next scheduled event if its
+    /// Advances simulation time to that of the next scheduled action if its
     /// scheduling time does not exceed the specified bound, processing that
-    /// event as well as all other events scheduled for the same time.
+    /// action as well as all other actions scheduled for the same time.
     ///
-    /// If at least one event was found that satisfied the time bound, the
+    /// If at least one action was found that satisfied the time bound, the
     /// corresponding new simulation time is returned.
     fn step_to_next_bounded(&mut self, upper_time_bound: MonotonicTime) -> Option<MonotonicTime> {
-        // Function pulling the next event. If the event is periodic, it is
+        // Function pulling the next action. If the action is periodic, it is
         // immediately re-scheduled.
-        fn pull_next_event(
-            scheduler_queue: &mut MutexGuard<SchedulerQueue>,
-        ) -> Box<dyn ScheduledEvent> {
-            let ((time, channel_id), event) = scheduler_queue.pull().unwrap();
-            if let Some((event_clone, period)) = event.next() {
-                scheduler_queue.insert((time + period, channel_id), event_clone);
+        fn pull_next_action(scheduler_queue: &mut MutexGuard<SchedulerQueue>) -> Action {
+            let ((time, channel_id), action) = scheduler_queue.pull().unwrap();
+            if let Some((action_clone, period)) = action.next() {
+                scheduler_queue.insert((time + period, channel_id), action_clone);
             }
 
-            event
+            action
         }
 
         // Closure returning the next key which time stamp is no older than the
-        // upper bound, if any. Cancelled events are pulled and discarded.
+        // upper bound, if any. Cancelled actions are pulled and discarded.
         let peek_next_key = |scheduler_queue: &mut MutexGuard<SchedulerQueue>| {
             loop {
                 match scheduler_queue.peek() {
-                    Some((&k, t)) if k.0 <= upper_time_bound => {
-                        if !t.is_cancelled() {
-                            break Some(k);
+                    Some((&key, action)) if key.0 <= upper_time_bound => {
+                        if !action.is_cancelled() {
+                            break Some(key);
                         }
-                        // Discard cancelled events.
+                        // Discard cancelled actions.
                         scheduler_queue.pull();
                     }
                     _ => break None,
@@ -540,37 +568,37 @@ impl Simulation {
         self.time.write(current_key.0);
 
         loop {
-            let event = pull_next_event(&mut scheduler_queue);
+            let action = pull_next_action(&mut scheduler_queue);
             let mut next_key = peek_next_key(&mut scheduler_queue);
             if next_key != Some(current_key) {
-                // Since there are no other events targeting the same mailbox
-                // and the same time, the event is spawned immediately.
-                event.spawn_and_forget(&self.executor);
+                // Since there are no other actions targeting the same mailbox
+                // and the same time, the action is spawned immediately.
+                action.spawn_and_forget(&self.executor);
             } else {
                 // To ensure that their relative order of execution is
-                // preserved, all event targeting the same mailbox are executed
-                // sequentially within a single compound future.
-                let mut event_sequence = SeqFuture::new();
-                event_sequence.push(event.into_future());
+                // preserved, all actions targeting the same mailbox are
+                // executed sequentially within a single compound future.
+                let mut action_sequence = SeqFuture::new();
+                action_sequence.push(action.into_future());
                 loop {
-                    let event = pull_next_event(&mut scheduler_queue);
-                    event_sequence.push(event.into_future());
+                    let action = pull_next_action(&mut scheduler_queue);
+                    action_sequence.push(action.into_future());
                     next_key = peek_next_key(&mut scheduler_queue);
                     if next_key != Some(current_key) {
                         break;
                     }
                 }
 
-                // Spawn a compound future that sequentially polls all events
+                // Spawn a compound future that sequentially polls all actions
                 // targeting the same mailbox.
-                self.executor.spawn_and_forget(event_sequence);
+                self.executor.spawn_and_forget(action_sequence);
             }
 
             current_key = match next_key {
-                // If the next event is scheduled at the same time, update the
+                // If the next action is scheduled at the same time, update the
                 // key and continue.
                 Some(k) if k.0 == current_key.0 => k,
-                // Otherwise wait until all events have completed and return.
+                // Otherwise wait until all actions have completed and return.
                 _ => {
                     drop(scheduler_queue); // make sure the queue's mutex is released.
                     let current_time = current_key.0;
@@ -584,10 +612,10 @@ impl Simulation {
         }
     }
 
-    /// Iteratively advances simulation time and processes all events scheduled
+    /// Iteratively advances simulation time and processes all actions scheduled
     /// up to the specified target time.
     ///
-    /// Once the method returns it is guaranteed that (i) all events scheduled
+    /// Once the method returns it is guaranteed that (i) all actions scheduled
     /// up to the specified target time have completed and (ii) the final
     /// simulation time matches the target time.
     ///
@@ -598,7 +626,7 @@ impl Simulation {
             match self.step_to_next_bounded(target_time) {
                 // The target time was reached exactly.
                 Some(t) if t == target_time => return,
-                // No events are scheduled before or at the target time.
+                // No actions are scheduled before or at the target time.
                 None => {
                     // Update the simulation time.
                     self.time.write(target_time);
@@ -633,3 +661,26 @@ impl fmt::Display for QueryError {
 }
 
 impl Error for QueryError {}
+
+/// Adds a model and its mailbox to the simulation bench.
+pub(crate) fn add_model<M: Model>(
+    mut model: M,
+    mailbox: Mailbox<M>,
+    name: String,
+    scheduler_queue: Arc<Mutex<SchedulerQueue>>,
+    time: SyncCellReader<TearableAtomicTime>,
+    executor: &Executor,
+) {
+    let sender = mailbox.0.sender();
+
+    let context = Context::new(name, sender, scheduler_queue, time);
+    let setup_context = SetupContext::new(&mailbox, &context, executor);
+
+    model.setup(&setup_context);
+
+    let mut receiver = mailbox.0;
+    executor.spawn_and_forget(async move {
+        let mut model = model.init(&context).await.0;
+        while receiver.recv(&mut model, &context).await.is_ok() {}
+    });
+}

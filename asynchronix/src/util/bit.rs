@@ -1,7 +1,5 @@
 //! Bit manipulation and algorithms.
 
-#![allow(unused)]
-
 /// Find the position of the `Nᵗʰ` set bit starting the search from the least
 /// significant bit.
 ///

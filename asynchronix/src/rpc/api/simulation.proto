@@ -1,0 +1,178 @@
+// The main simulation protocol.
+
+syntax = "proto3";
+package simulation;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+enum ErrorCode {
+  INTERNAL_ERROR = 0;
+  SIMULATION_NOT_STARTED = 1;
+  MISSING_ARGUMENT = 2;
+  INVALID_TIME = 3;
+  INVALID_DURATION = 4;
+  INVALID_MESSAGE = 5;
+  INVALID_KEY = 6;
+  SOURCE_NOT_FOUND = 10;
+  SINK_NOT_FOUND = 11;
+  KEY_NOT_FOUND = 12;
+  SIMULATION_TIME_OUT_OF_RANGE = 13;
+}
+
+message Error {
+  ErrorCode code = 1;
+  string message = 2;
+}
+
+message EventKey {
+  uint64 subkey1 = 1;
+  uint64 subkey2 = 2;
+}
+
+message InitRequest { google.protobuf.Timestamp time = 1; }
+message InitReply {
+  oneof result { // Always returns exactly 1 variant.
+    google.protobuf.Empty empty = 1;
+    Error error = 100;
+  }
+}
+
+message TimeRequest {}
+message TimeReply {
+  oneof result { // Always returns exactly 1 variant.
+    google.protobuf.Timestamp time = 1;
+    Error error = 100;
+  }
+}
+
+message StepRequest {}
+message StepReply {
+  oneof result { // Always returns exactly 1 variant.
+    google.protobuf.Timestamp time = 1;
+    Error error = 100;
+  }
+}
+
+message StepUntilRequest {
+  oneof deadline { // Always returns exactly 1 variant.
+    google.protobuf.Timestamp time = 1;
+    google.protobuf.Duration duration = 2;
+  }
+}
+message StepUntilReply {
+  oneof result { // Always returns exactly 1 variant.
+    google.protobuf.Timestamp time = 1;
+    Error error = 100;
+  }
+}
+
+message ScheduleEventRequest {
+  oneof deadline { // Expects exactly 1 variant.
+    google.protobuf.Timestamp time = 1;
+    google.protobuf.Duration duration = 2;
+  }
+  string source_name = 3;
+  bytes event = 4;
+  google.protobuf.Duration period = 5;
+  bool with_key = 6;
+}
+message ScheduleEventReply {
+  oneof result { // Always returns exactly 1 variant.
+    google.protobuf.Empty empty = 1;
+    EventKey key = 2;
+    Error error = 100;
+  }
+}
+
+message CancelEventRequest { EventKey key = 1; }
+message CancelEventReply {
+  oneof result { // Always returns exactly 1 variant.
+    google.protobuf.Empty empty = 1;
+    Error error = 100;
+  }
+}
+
+message ProcessEventRequest {
+  string source_name = 1;
+  bytes event = 2;
+}
+message ProcessEventReply {
+  oneof result { // Always returns exactly 1 variant.
+    google.protobuf.Empty empty = 1;
+    Error error = 100;
+  }
+}
+
+message ProcessQueryRequest {
+  string source_name = 1;
+  bytes request = 2;
+}
+message ProcessQueryReply {
+  // This field is hoisted because protobuf3 does not support `repeated` within
+  // a `oneof`. It is Always empty if an error is returned
+  repeated bytes replies = 1;
+  oneof result { // Always returns exactly 1 variant.
+    google.protobuf.Empty empty = 10;
+    Error error = 100;
+  }
+}
+
+message ReadEventsRequest { string sink_name = 1; }
+message ReadEventsReply {
+  // This field is hoisted because protobuf3 does not support `repeated` within
+  // a `oneof`. It is Always empty if an error is returned
+  repeated bytes events = 1;
+  oneof result { // Always returns exactly 1 variant.
+    google.protobuf.Empty empty = 10;
+    Error error = 100;
+  }
+}
+
+message OpenSinkRequest { string sink_name = 1; }
+message OpenSinkReply {
+  oneof result { // Always returns exactly 1 variant.
+    google.protobuf.Empty empty = 10;
+    Error error = 100;
+  }
+}
+
+message CloseSinkRequest { string sink_name = 1; }
+message CloseSinkReply {
+  oneof result { // Always returns exactly 1 variant.
+    google.protobuf.Empty empty = 10;
+    Error error = 100;
+  }
+}
+
+// A convenience message type for custom transport implementation.
+message AnyRequest {
+  oneof request { // Expects exactly 1 variant.
+    InitRequest init_request = 1;
+    TimeRequest time_request = 2;
+    StepRequest step_request = 3;
+    StepUntilRequest step_until_request = 4;
+    ScheduleEventRequest schedule_event_request = 5;
+    CancelEventRequest cancel_event_request = 6;
+    ProcessEventRequest process_event_request = 7;
+    ProcessQueryRequest process_query_request = 8;
+    ReadEventsRequest read_events_request = 9;
+    OpenSinkRequest open_sink_request = 10;
+    CloseSinkRequest close_sink_request = 11;
+  }
+}
+
+service Simulation {
+  rpc Init(InitRequest) returns (InitReply);
+  rpc Time(TimeRequest) returns (TimeReply);
+  rpc Step(StepRequest) returns (StepReply);
+  rpc StepUntil(StepUntilRequest) returns (StepUntilReply);
+  rpc ScheduleEvent(ScheduleEventRequest) returns (ScheduleEventReply);
+  rpc CancelEvent(CancelEventRequest) returns (CancelEventReply);
+  rpc ProcessEvent(ProcessEventRequest) returns (ProcessEventReply);
+  rpc ProcessQuery(ProcessQueryRequest) returns (ProcessQueryReply);
+  rpc ReadEvents(ReadEventsRequest) returns (ReadEventsReply);
+  rpc OpenSink(OpenSinkRequest) returns (OpenSinkReply);
+  rpc CloseSink(CloseSinkRequest) returns (CloseSinkReply);
+}

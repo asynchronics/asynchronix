@@ -9,7 +9,7 @@ name = "asynchronix"
 authors = ["Serge Barral <serge.barral@asynchronics.com>"]
 version = "0.2.2"
 edition = "2021"
-rust-version = "1.64"
+rust-version = "1.77.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/asynchronics/asynchronix"
 readme = "../README.md"
@@ -20,17 +20,29 @@ categories = ["simulation", "aerospace", "science"]
 keywords = ["simulation", "discrete-event", "systems", "cyberphysical", "real-time"]
 autotests = false
 
+
 [features]
-serde = ["dep:serde"]
+# Remote procedure call API.
+rpc = ["dep:rmp-serde", "dep:serde", "dep:tonic", "dep:prost", "dep:prost-types", "dep:bytes"]
+# This feature forces protobuf/gRPC code (re-)generation.
+rpc-codegen = ["dep:tonic-build"]
+# gRPC service.
+grpc-service = ["rpc", "dep:tokio" , "tonic/transport"]
+# wasm service.
+wasm-service = ["rpc", "dep:wasm-bindgen"]
 # API-unstable public exports meant for external test/benchmarking; development only.
 dev-hooks = []
 # Logging of performance-related statistics; development only.
 dev-logs = []
 
+
 [dependencies]
+# Mandatory dependencies.
 async-event = "0.1"
 crossbeam-utils = "0.8"
 diatomic-waker = "0.1"
+dyn-clone = "1.0"
+futures-channel = "0.3"
 futures-task = "0.3"
 multishot = "0.3.2"
 num_cpus = "1.13"
@@ -39,20 +51,35 @@ recycle-box = "0.2"
 slab = "0.4"
 spin_sleep = "1"
 st3 = "0.4"
+tai-time = "0.3"
 
-[dependencies.serde]
-version = "1"
-optional = true
-features = ["derive"]
+# Common RPC dependencies.
+bytes = { version = "1", default-features = false, optional = true }
+prost = { version = "0.12", optional = true }
+prost-types = { version = "0.12", optional = true }
+rmp-serde = { version = "1.1", optional = true }
+serde = { version = "1", optional = true }
+
+# gRPC service dependencies.
+tokio = { version = "1.0", features=["net"], optional = true }
+tonic = { version = "0.11", default-features = false, features=["codegen", "prost"], optional = true }
+
+# WASM service dependencies.
+wasm-bindgen = { version = "0.2", optional = true }
 
 [target.'cfg(asynchronix_loom)'.dependencies]
 loom = "0.5"
 waker-fn = "1.1"
 
+
 [dev-dependencies]
 futures-util = "0.3"
-futures-channel = "0.3"
 futures-executor = "0.3"
+
+
+[build-dependencies]
+tonic-build = { version = "0.11", optional = true }
+
 
 [[test]]
 name = "integration"

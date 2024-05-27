@@ -8,7 +8,6 @@ use std::error;
 use std::fmt;
 use std::future::Future;
 use std::marker::PhantomData;
-use std::num::NonZeroUsize;
 use std::sync::atomic::{self, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -19,8 +18,7 @@ use recycle_box::RecycleBox;
 use queue::{PopError, PushError, Queue};
 use recycle_box::coerce_box;
 
-use crate::model::Model;
-use crate::time::Scheduler;
+use crate::model::{Context, Model};
 
 /// Data shared between the receiver and the senders.
 struct Inner<M> {
@@ -46,7 +44,7 @@ impl<M: 'static> Inner<M> {
 }
 
 /// A receiver which can asynchronously execute `async` message that take an
-/// argument of type `&mut M` and an optional `&Scheduler<M>` argument.
+/// argument of type `&mut M` and an optional `&Context<M>` argument.
 pub(crate) struct Receiver<M> {
     /// Shared data.
     inner: Arc<Inner<M>>,
@@ -91,7 +89,7 @@ impl<M: Model> Receiver<M> {
     pub(crate) async fn recv(
         &mut self,
         model: &mut M,
-        scheduler: &Scheduler<M>,
+        context: &Context<M>,
     ) -> Result<(), RecvError> {
         let msg = unsafe {
             self.inner
@@ -107,7 +105,7 @@ impl<M: Model> Receiver<M> {
         match msg {
             Some(mut msg) => {
                 // Consume the message to obtain a boxed future.
-                let fut = msg.call_once(model, scheduler, self.future_box.take().unwrap());
+                let fut = msg.call_once(model, context, self.future_box.take().unwrap());
 
                 // Now that `msg` was consumed and its slot in the queue was
                 // freed, signal to one awaiting sender that one slot is
@@ -154,7 +152,7 @@ impl<M: Model> Receiver<M> {
     /// time, but an identifier may be reused after all handles to a channel
     /// have been dropped.
     pub(crate) fn channel_id(&self) -> ChannelId {
-        ChannelId(NonZeroUsize::new(&*self.inner as *const Inner<M> as usize).unwrap())
+        ChannelId(&*self.inner as *const Inner<M> as usize)
     }
 }
 
@@ -189,7 +187,7 @@ impl<M: Model> Sender<M> {
     where
         F: for<'a> FnOnce(
                 &'a mut M,
-                &'a Scheduler<M>,
+                &'a Context<M>,
                 RecycleBox<()>,
             ) -> RecycleBox<dyn Future<Output = ()> + Send + 'a>
             + Send
@@ -255,8 +253,8 @@ impl<M: Model> Sender<M> {
     /// All channels are guaranteed to have different identifiers at any given
     /// time, but an identifier may be reused after all handles to a channel
     /// have been dropped.
-    pub(crate) fn channel_id(&self) -> ChannelId {
-        ChannelId(NonZeroUsize::new(&*self.inner as *const Inner<M> as usize).unwrap())
+    pub(crate) fn channel_id(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
     }
 }
 
@@ -312,7 +310,7 @@ impl<M> fmt::Debug for Sender<M> {
 }
 
 /// A closure that can be called once to create a future boxed in a `RecycleBox`
-/// from an `&mut M`, a `&Scheduler<M>` and an empty `RecycleBox`.
+/// from an `&mut M`, a `&Context<M>` and an empty `RecycleBox`.
 ///
 /// This is basically a workaround to emulate an `FnOnce` with the equivalent of
 /// an `FnMut` so that it is possible to call it as a `dyn` trait stored in a
@@ -328,7 +326,7 @@ trait MessageFn<M: Model>: Send {
     fn call_once<'a>(
         &mut self,
         model: &'a mut M,
-        scheduler: &'a Scheduler<M>,
+        context: &'a Context<M>,
         recycle_box: RecycleBox<()>,
     ) -> RecycleBox<dyn Future<Output = ()> + Send + 'a>;
 }
@@ -350,7 +348,7 @@ impl<F, M: Model> MessageFn<M> for MessageFnOnce<F, M>
 where
     F: for<'a> FnOnce(
             &'a mut M,
-            &'a Scheduler<M>,
+            &'a Context<M>,
             RecycleBox<()>,
         ) -> RecycleBox<dyn Future<Output = ()> + Send + 'a>
         + Send,
@@ -358,18 +356,18 @@ where
     fn call_once<'a>(
         &mut self,
         model: &'a mut M,
-        scheduler: &'a Scheduler<M>,
+        context: &'a Context<M>,
         recycle_box: RecycleBox<()>,
     ) -> RecycleBox<dyn Future<Output = ()> + Send + 'a> {
         let closure = self.msg_fn.take().unwrap();
 
-        (closure)(model, scheduler, recycle_box)
+        (closure)(model, context, recycle_box)
     }
 }
 
 /// Unique identifier for a channel.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct ChannelId(NonZeroUsize);
+pub(crate) struct ChannelId(usize);
 
 impl fmt::Display for ChannelId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

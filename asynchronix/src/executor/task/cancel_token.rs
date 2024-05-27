@@ -25,7 +25,7 @@ struct VTable {
 /// but not currently scheduled (no `Runnable` exist) then the future is
 /// dropped immediately. Otherwise, the future will be dropped at a later
 /// time by the scheduled `Runnable` once it runs.
-unsafe fn cancel<F: Future, S, T>(ptr: *const ())
+unsafe fn cancel<F, S, T>(ptr: *const ())
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
@@ -123,7 +123,7 @@ where
 }
 
 /// Drops the token without cancelling the task.
-unsafe fn drop<F: Future, S, T>(ptr: *const ())
+unsafe fn drop<F, S, T>(ptr: *const ())
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
@@ -180,7 +180,7 @@ impl CancelToken {
     ///   allocator,
     /// - the reference count has been incremented to account for this new task
     ///   reference.
-    pub(super) unsafe fn new_unchecked<F: Future, S, T>(task: *const Task<F, S, T>) -> Self
+    pub(super) unsafe fn new_unchecked<F, S, T>(task: *const Task<F, S, T>) -> Self
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static,

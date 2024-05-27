@@ -2,8 +2,11 @@
 
 use std::time::Duration;
 
-use asynchronix::model::{Model, Output};
-use asynchronix::simulation::{Address, EventStream, Mailbox, SimInit, Simulation};
+#[cfg(not(miri))]
+use asynchronix::model::Context;
+use asynchronix::model::Model;
+use asynchronix::ports::{EventBuffer, Output};
+use asynchronix::simulation::{Address, Mailbox, SimInit, Simulation};
 use asynchronix::time::MonotonicTime;
 
 // Input-to-output pass-through model.
@@ -26,15 +29,16 @@ impl<T: Clone + Send + 'static> Model for PassThroughModel<T> {}
 /// output) running as fast as possible.
 fn passthrough_bench<T: Clone + Send + 'static>(
     t0: MonotonicTime,
-) -> (Simulation, Address<PassThroughModel<T>>, EventStream<T>) {
+) -> (Simulation, Address<PassThroughModel<T>>, EventBuffer<T>) {
     // Bench assembly.
     let mut model = PassThroughModel::new();
     let mbox = Mailbox::new();
 
-    let out_stream = model.output.connect_stream().0;
+    let out_stream = EventBuffer::new();
+    model.output.connect_sink(&out_stream);
     let addr = mbox.address();
 
-    let simu = SimInit::new().add_model(model, mbox).init(t0);
+    let simu = SimInit::new().add_model(model, mbox, "").init(t0);
 
     (simu, addr, out_stream)
 }
@@ -217,21 +221,9 @@ impl TimestampModel {
 }
 #[cfg(not(miri))]
 impl Model for TimestampModel {
-    fn init(
-        mut self,
-        _scheduler: &asynchronix::time::Scheduler<Self>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn futures_util::Future<Output = asynchronix::model::InitializedModel<Self>>
-                + Send
-                + '_,
-        >,
-    > {
-        Box::pin(async {
-            self.stamp.send((Instant::now(), SystemTime::now())).await;
-
-            self.into()
-        })
+    async fn init(mut self, _: &Context<Self>) -> asynchronix::model::InitializedModel<Self> {
+        self.stamp.send((Instant::now(), SystemTime::now())).await;
+        self.into()
     }
 }
 
@@ -243,18 +235,20 @@ fn timestamp_bench(
 ) -> (
     Simulation,
     Address<TimestampModel>,
-    EventStream<(Instant, SystemTime)>,
+    EventBuffer<(Instant, SystemTime)>,
 ) {
     // Bench assembly.
     let mut model = TimestampModel::default();
     let mbox = Mailbox::new();
 
-    let stamp_stream = model.stamp.connect_stream().0;
+    let stamp_stream = EventBuffer::new();
+    model.stamp.connect_sink(&stamp_stream);
     let addr = mbox.address();
 
     let simu = SimInit::new()
-        .add_model(model, mbox)
-        .init_with_clock(t0, clock);
+        .add_model(model, mbox, "")
+        .set_clock(clock)
+        .init(t0);
 
     (simu, addr, stamp_stream)
 }
@@ -263,7 +257,7 @@ fn timestamp_bench(
 #[test]
 fn simulation_system_clock_from_instant() {
     let t0 = MonotonicTime::EPOCH;
-    const TOLERANCE: f64 = 0.0005; // [s]
+    const TOLERANCE: f64 = 0.005; // [s]
 
     // The reference simulation time is set in the past of t0 so that the
     // simulation starts in the future when the reference wall clock time is

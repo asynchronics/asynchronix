@@ -31,13 +31,12 @@
 //!                      (-)
 //! ```
 
-use std::future::Future;
-use std::pin::Pin;
 use std::time::Duration;
 
-use asynchronix::model::{InitializedModel, Model, Output};
-use asynchronix::simulation::{Mailbox, SimInit};
-use asynchronix::time::{EventKey, MonotonicTime, Scheduler};
+use asynchronix::model::{Context, InitializedModel, Model};
+use asynchronix::ports::{EventSlot, Output};
+use asynchronix::simulation::{ActionKey, Mailbox, SimInit};
+use asynchronix::time::MonotonicTime;
 
 /// Water pump.
 pub struct Pump {
@@ -81,7 +80,7 @@ pub struct Controller {
     water_sense: WaterSenseState,
     /// Event key, which if present indicates that the machine is currently
     /// brewing -- internal state.
-    stop_brew_key: Option<EventKey>,
+    stop_brew_key: Option<ActionKey>,
 }
 
 impl Controller {
@@ -121,7 +120,7 @@ impl Controller {
     }
 
     /// Starts brewing or cancels the current brew -- input port.
-    pub async fn brew_cmd(&mut self, _: (), scheduler: &Scheduler<Self>) {
+    pub async fn brew_cmd(&mut self, _: (), context: &Context<Self>) {
         // If a brew was ongoing, sending the brew command is interpreted as a
         // request to cancel it.
         if let Some(key) = self.stop_brew_key.take() {
@@ -140,7 +139,7 @@ impl Controller {
 
         // Schedule the `stop_brew()` method and turn on the pump.
         self.stop_brew_key = Some(
-            scheduler
+            context
                 .schedule_keyed_event(self.brew_time, Self::stop_brew, ())
                 .unwrap(),
         );
@@ -189,7 +188,7 @@ impl Tank {
     }
 
     /// Water volume added [m³] -- input port.
-    pub async fn fill(&mut self, added_volume: f64, scheduler: &Scheduler<Self>) {
+    pub async fn fill(&mut self, added_volume: f64, context: &Context<Self>) {
         // Ignore zero and negative values. We could also impose a maximum based
         // on tank capacity.
         if added_volume <= 0.0 {
@@ -207,11 +206,11 @@ impl Tank {
             state.set_empty_key.cancel();
 
             // Update the volume, saturating at 0 in case of rounding errors.
-            let time = scheduler.time();
+            let time = context.time();
             let elapsed_time = time.duration_since(state.last_volume_update).as_secs_f64();
             self.volume = (self.volume - state.flow_rate * elapsed_time).max(0.0);
 
-            self.schedule_empty(state.flow_rate, time, scheduler).await;
+            self.schedule_empty(state.flow_rate, time, context).await;
 
             // There is no need to broadcast the state of the water sense since
             // it could not be previously `Empty` (otherwise the dynamic state
@@ -229,10 +228,10 @@ impl Tank {
     /// # Panics
     ///
     /// This method will panic if the flow rate is negative.
-    pub async fn set_flow_rate(&mut self, flow_rate: f64, scheduler: &Scheduler<Self>) {
+    pub async fn set_flow_rate(&mut self, flow_rate: f64, context: &Context<Self>) {
         assert!(flow_rate >= 0.0);
 
-        let time = scheduler.time();
+        let time = context.time();
 
         // If the flow rate was non-zero up to now, update the volume.
         if let Some(state) = self.dynamic_state.take() {
@@ -244,7 +243,7 @@ impl Tank {
             self.volume = (self.volume - state.flow_rate * elapsed_time).max(0.0);
         }
 
-        self.schedule_empty(flow_rate, time, scheduler).await;
+        self.schedule_empty(flow_rate, time, context).await;
     }
 
     /// Schedules a callback for when the tank becomes empty.
@@ -257,7 +256,7 @@ impl Tank {
         &mut self,
         flow_rate: f64,
         time: MonotonicTime,
-        scheduler: &Scheduler<Self>,
+        context: &Context<Self>,
     ) {
         // Determine when the tank will be empty at the current flow rate.
         let duration_until_empty = if self.volume == 0.0 {
@@ -274,7 +273,7 @@ impl Tank {
         let duration_until_empty = Duration::from_secs_f64(duration_until_empty);
 
         // Schedule the next update.
-        match scheduler.schedule_keyed_event(duration_until_empty, Self::set_empty, ()) {
+        match context.schedule_keyed_event(duration_until_empty, Self::set_empty, ()) {
             Ok(set_empty_key) => {
                 let state = TankDynamicState {
                     last_volume_update: time,
@@ -301,21 +300,16 @@ impl Tank {
 
 impl Model for Tank {
     /// Broadcasts the initial state of the water sense.
-    fn init(
-        mut self,
-        _scheduler: &Scheduler<Self>,
-    ) -> Pin<Box<dyn Future<Output = InitializedModel<Self>> + Send + '_>> {
-        Box::pin(async move {
-            self.water_sense
-                .send(if self.volume == 0.0 {
-                    WaterSenseState::Empty
-                } else {
-                    WaterSenseState::NotEmpty
-                })
-                .await;
+    async fn init(mut self, _: &Context<Self>) -> InitializedModel<Self> {
+        self.water_sense
+            .send(if self.volume == 0.0 {
+                WaterSenseState::Empty
+            } else {
+                WaterSenseState::NotEmpty
+            })
+            .await;
 
-            self.into()
-        })
+        self.into()
     }
 }
 
@@ -323,7 +317,7 @@ impl Model for Tank {
 /// is non-zero.
 struct TankDynamicState {
     last_volume_update: MonotonicTime,
-    set_empty_key: EventKey,
+    set_empty_key: ActionKey,
     flow_rate: f64,
 }
 
@@ -364,7 +358,8 @@ fn main() {
     pump.flow_rate.connect(Tank::set_flow_rate, &tank_mbox);
 
     // Model handles for simulation.
-    let mut flow_rate = pump.flow_rate.connect_slot().0;
+    let mut flow_rate = EventSlot::new();
+    pump.flow_rate.connect_sink(&flow_rate);
     let controller_addr = controller_mbox.address();
     let tank_addr = tank_mbox.address();
 
@@ -373,9 +368,9 @@ fn main() {
 
     // Assembly and initialization.
     let mut simu = SimInit::new()
-        .add_model(controller, controller_mbox)
-        .add_model(pump, pump_mbox)
-        .add_model(tank, tank_mbox)
+        .add_model(controller, controller_mbox, "controller")
+        .add_model(pump, pump_mbox, "pump")
+        .add_model(tank, tank_mbox, "tank")
         .init(t0);
 
     // ----------
@@ -387,48 +382,48 @@ fn main() {
     assert_eq!(simu.time(), t);
 
     // Brew one espresso shot with the default brew time.
-    simu.send_event(Controller::brew_cmd, (), &controller_addr);
-    assert_eq!(flow_rate.take(), Some(pump_flow_rate));
+    simu.process_event(Controller::brew_cmd, (), &controller_addr);
+    assert_eq!(flow_rate.next(), Some(pump_flow_rate));
 
     simu.step();
     t += Controller::DEFAULT_BREW_TIME;
     assert_eq!(simu.time(), t);
-    assert_eq!(flow_rate.take(), Some(0.0));
+    assert_eq!(flow_rate.next(), Some(0.0));
 
     // Drink too much coffee.
     let volume_per_shot = pump_flow_rate * Controller::DEFAULT_BREW_TIME.as_secs_f64();
     let shots_per_tank = (init_tank_volume / volume_per_shot) as u64; // YOLO--who cares about floating-point rounding errors?
     for _ in 0..(shots_per_tank - 1) {
-        simu.send_event(Controller::brew_cmd, (), &controller_addr);
-        assert_eq!(flow_rate.take(), Some(pump_flow_rate));
+        simu.process_event(Controller::brew_cmd, (), &controller_addr);
+        assert_eq!(flow_rate.next(), Some(pump_flow_rate));
         simu.step();
         t += Controller::DEFAULT_BREW_TIME;
         assert_eq!(simu.time(), t);
-        assert_eq!(flow_rate.take(), Some(0.0));
+        assert_eq!(flow_rate.next(), Some(0.0));
     }
 
     // Check that the tank becomes empty before the completion of the next shot.
-    simu.send_event(Controller::brew_cmd, (), &controller_addr);
+    simu.process_event(Controller::brew_cmd, (), &controller_addr);
     simu.step();
     assert!(simu.time() < t + Controller::DEFAULT_BREW_TIME);
     t = simu.time();
-    assert_eq!(flow_rate.take(), Some(0.0));
+    assert_eq!(flow_rate.next(), Some(0.0));
 
     // Try to brew another shot while the tank is still empty.
-    simu.send_event(Controller::brew_cmd, (), &controller_addr);
-    assert!(flow_rate.take().is_none());
+    simu.process_event(Controller::brew_cmd, (), &controller_addr);
+    assert!(flow_rate.next().is_none());
 
     // Change the brew time and fill up the tank.
     let brew_time = Duration::new(30, 0);
-    simu.send_event(Controller::brew_time, brew_time, &controller_addr);
-    simu.send_event(Tank::fill, 1.0e-3, tank_addr);
-    simu.send_event(Controller::brew_cmd, (), &controller_addr);
-    assert_eq!(flow_rate.take(), Some(pump_flow_rate));
+    simu.process_event(Controller::brew_time, brew_time, &controller_addr);
+    simu.process_event(Tank::fill, 1.0e-3, tank_addr);
+    simu.process_event(Controller::brew_cmd, (), &controller_addr);
+    assert_eq!(flow_rate.next(), Some(pump_flow_rate));
 
     simu.step();
     t += brew_time;
     assert_eq!(simu.time(), t);
-    assert_eq!(flow_rate.take(), Some(0.0));
+    assert_eq!(flow_rate.next(), Some(0.0));
 
     // Interrupt the brew after 15s by pressing again the brew button.
     simu.schedule_event(
@@ -438,11 +433,11 @@ fn main() {
         &controller_addr,
     )
     .unwrap();
-    simu.send_event(Controller::brew_cmd, (), &controller_addr);
-    assert_eq!(flow_rate.take(), Some(pump_flow_rate));
+    simu.process_event(Controller::brew_cmd, (), &controller_addr);
+    assert_eq!(flow_rate.next(), Some(pump_flow_rate));
 
     simu.step();
     t += Duration::from_secs(15);
     assert_eq!(simu.time(), t);
-    assert_eq!(flow_rate.take(), Some(0.0));
+    assert_eq!(flow_rate.next(), Some(0.0));
 }

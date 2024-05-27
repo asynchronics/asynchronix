@@ -15,12 +15,12 @@
 //! ```
 
 use std::future::Future;
-use std::pin::Pin;
 use std::time::Duration;
 
-use asynchronix::model::{InitializedModel, Model, Output};
+use asynchronix::model::{Context, InitializedModel, Model};
+use asynchronix::ports::{EventBuffer, Output};
 use asynchronix::simulation::{Mailbox, SimInit};
-use asynchronix::time::{MonotonicTime, Scheduler};
+use asynchronix::time::MonotonicTime;
 
 /// Stepper motor.
 pub struct Motor {
@@ -40,7 +40,7 @@ impl Motor {
     pub const TORQUE_CONSTANT: f64 = 1.0;
 
     /// Creates a motor with the specified initial position.
-    fn new(position: u16) -> Self {
+    pub fn new(position: u16) -> Self {
         Self {
             position: Default::default(),
             pos: position % Self::STEPS_PER_REV,
@@ -53,8 +53,15 @@ impl Motor {
     /// For the sake of simplicity, we do as if the rotor rotates
     /// instantaneously. If the current is too weak to overcome the load or when
     /// attempting to move to an opposite phase, the position remains unchanged.
-    pub async fn current_in(&mut self, current: (f64, f64)) {
+    pub async fn current_in(&mut self, current: (f64, f64), context: &Context<Self>) {
         assert!(!current.0.is_nan() && !current.1.is_nan());
+        println!(
+            "Model instance {} at time {}: setting currents: {:.2} and {:.2}",
+            context.name(),
+            context.time(),
+            current.0,
+            current.1
+        );
 
         let (target_phase, abs_current) = match (current.0 != 0.0, current.1 != 0.0) {
             (false, false) => return,
@@ -78,8 +85,15 @@ impl Motor {
     }
 
     /// Torque applied by the load [N·m] -- input port.
-    pub fn load(&mut self, torque: f64) {
+    pub fn load(&mut self, torque: f64, context: &Context<Self>) {
         assert!(torque >= 0.0);
+
+        println!(
+            "Model instance {} at time {}: setting load: {:.2}",
+            context.name(),
+            context.time(),
+            torque
+        );
 
         self.torque = torque;
     }
@@ -87,15 +101,9 @@ impl Motor {
 
 impl Model for Motor {
     /// Broadcasts the initial position of the motor.
-    fn init(
-        mut self,
-        _scheduler: &Scheduler<Self>,
-    ) -> Pin<Box<dyn Future<Output = InitializedModel<Self>> + Send + '_>> {
-        Box::pin(async move {
-            self.position.send(self.pos).await;
-
-            self.into()
-        })
+    async fn init(mut self, _: &Context<Self>) -> InitializedModel<Self> {
+        self.position.send(self.pos).await;
+        self.into()
     }
 }
 
@@ -129,7 +137,14 @@ impl Driver {
     }
 
     /// Sets the pulse rate (sign = direction) [Hz] -- input port.
-    pub async fn pulse_rate(&mut self, pps: f64, scheduler: &Scheduler<Self>) {
+    pub async fn pulse_rate(&mut self, pps: f64, context: &Context<Self>) {
+        println!(
+            "Model instance {} at time {}: setting pps: {:.2}",
+            context.name(),
+            context.time(),
+            pps
+        );
+
         let pps = pps.signum() * pps.abs().clamp(Self::MIN_PPS, Self::MAX_PPS);
         if pps == self.pps {
             return;
@@ -141,7 +156,7 @@ impl Driver {
         // Trigger the rotation if the motor is currently idle. Otherwise the
         // new value will be accounted for at the next pulse.
         if is_idle {
-            self.send_pulse((), scheduler).await;
+            self.send_pulse((), context).await;
         }
     }
 
@@ -152,8 +167,14 @@ impl Driver {
     fn send_pulse<'a>(
         &'a mut self,
         _: (),
-        scheduler: &'a Scheduler<Self>,
+        context: &'a Context<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
+        println!(
+            "Model instance {} at time {}: sending pulse",
+            context.name(),
+            context.time()
+        );
+
         async move {
             let current_out = match self.next_phase {
                 0 => (self.current, 0.0),
@@ -173,7 +194,7 @@ impl Driver {
             let pulse_duration = Duration::from_secs_f64(1.0 / self.pps.abs());
 
             // Schedule the next pulse.
-            scheduler
+            context
                 .schedule_event(pulse_duration, Self::send_pulse, ())
                 .unwrap();
         }
@@ -182,6 +203,7 @@ impl Driver {
 
 impl Model for Driver {}
 
+#[allow(dead_code)]
 fn main() {
     // ---------------
     // Bench assembly.
@@ -200,7 +222,8 @@ fn main() {
     driver.current_out.connect(Motor::current_in, &motor_mbox);
 
     // Model handles for simulation.
-    let mut position = motor.position.connect_stream().0;
+    let mut position = EventBuffer::new();
+    motor.position.connect_sink(&position);
     let motor_addr = motor_mbox.address();
     let driver_addr = driver_mbox.address();
 
@@ -209,8 +232,8 @@ fn main() {
 
     // Assembly and initialization.
     let mut simu = SimInit::new()
-        .add_model(driver, driver_mbox)
-        .add_model(motor, motor_mbox)
+        .add_model(driver, driver_mbox, "driver")
+        .add_model(motor, motor_mbox, "motor")
         .init(t0);
 
     // ----------
@@ -258,7 +281,7 @@ fn main() {
     assert!(position.next().is_none());
 
     // Increase the load beyond the torque limit for a 1A driver current.
-    simu.send_event(Motor::load, 2.0, &motor_addr);
+    simu.process_event(Motor::load, 2.0, &motor_addr);
 
     // Advance simulation time and check that the motor is blocked.
     simu.step();
@@ -274,7 +297,7 @@ fn main() {
 
     // Decrease the load below the torque limit for a 1A driver current and
     // advance simulation time.
-    simu.send_event(Motor::load, 0.5, &motor_addr);
+    simu.process_event(Motor::load, 0.5, &motor_addr);
     simu.step();
     t += Duration::new(0, 100_000_000);
 
@@ -298,7 +321,7 @@ fn main() {
 
     // Now make the motor rotate in the opposite direction. Note that this
     // driver only accounts for a new PPS at the next pulse.
-    simu.send_event(Driver::pulse_rate, -10.0, &driver_addr);
+    simu.process_event(Driver::pulse_rate, -10.0, &driver_addr);
     simu.step();
     t += Duration::new(0, 100_000_000);
     assert_eq!(simu.time(), t);

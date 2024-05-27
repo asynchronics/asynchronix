@@ -1,7 +1,5 @@
 //! Pseudo-random number generation.
 
-#![allow(unused)]
-
 use std::cell::Cell;
 
 /// A pseudo-random generator for 64-bit integers based on Wang Yi's Wyrand.

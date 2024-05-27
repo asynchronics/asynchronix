@@ -143,7 +143,6 @@ impl<T: TearableAtomic> SyncCell<T> {
 
 /// A handle to a `SyncCell` that enables synchronized reads from multiple
 /// threads.
-#[derive(Clone)]
 pub(crate) struct SyncCellReader<T: TearableAtomic> {
     inner: Arc<Inner<T>>,
 }
@@ -182,6 +181,14 @@ impl<T: TearableAtomic> SyncCellReader<T> {
             Ok(value)
         } else {
             Err(SyncCellReadError {})
+        }
+    }
+}
+
+impl<T: TearableAtomic> Clone for SyncCellReader<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
         }
     }
 }

@@ -111,7 +111,7 @@ impl<K: Copy + Ord, V> PriorityQueue<K, V> {
 
 #[cfg(all(test, not(asynchronix_loom)))]
 mod tests {
-    use super::*;
+    use super::PriorityQueue;
 
     #[test]
     fn priority_smoke() {

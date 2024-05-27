@@ -15,7 +15,7 @@ impl Executor {
     ///
     /// The maximum number of threads is set with the `pool_size` parameter.
     pub fn new(pool_size: usize) -> Self {
-        Self(executor::Executor::new(pool_size))
+        Self(executor::Executor::new_multi_threaded(pool_size))
     }
 
     /// Spawns a task which output will never be retrieved.

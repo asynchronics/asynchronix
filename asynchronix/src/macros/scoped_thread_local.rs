@@ -7,19 +7,18 @@ use std::ptr;
 /// Declare a new thread-local storage scoped key of type `ScopedKey<T>`.
 ///
 /// This is based on the `scoped-tls` crate, with slight modifications, such as
-/// the use of the newly available `const` qualifier for TLS.
+/// the addition of a `ScopedLocalKey::unset` method and the use of a `map`
+/// method that returns `Option::None` when the value is not set, rather than
+/// panicking as `with` would.
 macro_rules! scoped_thread_local {
     ($(#[$attrs:meta])* $vis:vis static $name:ident: $ty:ty) => (
         $(#[$attrs])*
         $vis static $name: $crate::macros::scoped_thread_local::ScopedLocalKey<$ty>
-            = $crate::macros::scoped_thread_local::ScopedLocalKey {
-                inner: {
-                    thread_local!(static FOO: ::std::cell::Cell<*const ()> = const {
-                        std::cell::Cell::new(::std::ptr::null())
-                    });
-                    &FOO
-                },
-                _marker: ::std::marker::PhantomData,
+            = unsafe {
+                ::std::thread_local!(static FOO: ::std::cell::Cell<*const ()> = const {
+                        ::std::cell::Cell::new(::std::ptr::null())
+                });
+                $crate::macros::scoped_thread_local::ScopedLocalKey::new(&FOO)
             };
     )
 }
@@ -28,13 +27,24 @@ pub(crate) use scoped_thread_local;
 /// Type representing a thread local storage key corresponding to a reference
 /// to the type parameter `T`.
 pub(crate) struct ScopedLocalKey<T> {
-    pub(crate) inner: &'static LocalKey<Cell<*const ()>>,
-    pub(crate) _marker: marker::PhantomData<T>,
+    inner: &'static LocalKey<Cell<*const ()>>,
+    _marker: marker::PhantomData<T>,
 }
 
 unsafe impl<T> Sync for ScopedLocalKey<T> {}
 
 impl<T> ScopedLocalKey<T> {
+    #[doc(hidden)]
+    /// # Safety
+    ///
+    /// Should only be called through the public macro.
+    pub(crate) const unsafe fn new(inner: &'static LocalKey<Cell<*const ()>>) -> Self {
+        Self {
+            inner,
+            _marker: marker::PhantomData,
+        }
+    }
+
     /// Inserts a value into this scoped thread local storage slot for the
     /// duration of a closure.
     pub(crate) fn set<F, R>(&'static self, t: &T, f: F) -> R

@@ -1,14 +1,16 @@
 use std::time::{Duration, Instant, SystemTime};
 
+use tai_time::MonotonicClock;
+
 use crate::time::MonotonicTime;
 
 /// A type that can be used to synchronize a simulation.
 ///
-/// This trait abstract over the different types of clocks, such as
+/// This trait abstracts over different types of clocks, such as
 /// as-fast-as-possible and real-time clocks.
 ///
-/// A clock can be associated to a simulation at initialization time by calling
-/// [`SimInit::init_with_clock()`](crate::simulation::SimInit::init_with_clock).
+/// A clock can be associated to a simulation prior to initialization by calling
+/// [`SimInit::set_clock()`](crate::simulation::SimInit::set_clock).
 pub trait Clock: Send {
     /// Blocks until the deadline.
     fn synchronize(&mut self, deadline: MonotonicTime) -> SyncStatus;
@@ -49,10 +51,7 @@ impl Clock for NoClock {
 /// This clock accepts an arbitrary reference time and remains synchronized with
 /// the system's monotonic clock.
 #[derive(Copy, Clone, Debug)]
-pub struct SystemClock {
-    wall_clock_ref: Instant,
-    simulation_ref: MonotonicTime,
-}
+pub struct SystemClock(MonotonicClock);
 
 impl SystemClock {
     /// Constructs a `SystemClock` with an offset between simulation clock and
@@ -69,7 +68,7 @@ impl SystemClock {
     /// use asynchronix::simulation::SimInit;
     /// use asynchronix::time::{MonotonicTime, SystemClock};
     ///
-    /// let t0 = MonotonicTime::new(1_234_567_890, 0);
+    /// let t0 = MonotonicTime::new(1_234_567_890, 0).unwrap();
     ///
     /// // Make the simulation start in 1s.
     /// let clock = SystemClock::from_instant(t0, Instant::now() + Duration::from_secs(1));
@@ -77,13 +76,14 @@ impl SystemClock {
     /// let simu = SimInit::new()
     /// //  .add_model(...)
     /// //  .add_model(...)
-    ///     .init_with_clock(t0, clock);
+    ///     .set_clock(clock)
+    ///     .init(t0);
     /// ```
     pub fn from_instant(simulation_ref: MonotonicTime, wall_clock_ref: Instant) -> Self {
-        Self {
-            wall_clock_ref,
+        Self(MonotonicClock::init_from_instant(
             simulation_ref,
-        }
+            wall_clock_ref,
+        ))
     }
 
     /// Constructs a `SystemClock` with an offset between simulation clock and
@@ -109,7 +109,7 @@ impl SystemClock {
     /// use asynchronix::simulation::SimInit;
     /// use asynchronix::time::{MonotonicTime, SystemClock};
     ///
-    /// let t0 = MonotonicTime::new(1_234_567_890, 0);
+    /// let t0 = MonotonicTime::new(1_234_567_890, 0).unwrap();
     ///
     /// // Make the simulation start at the next full second boundary.
     /// let now_secs = UNIX_EPOCH.elapsed().unwrap().as_secs();
@@ -120,58 +120,14 @@ impl SystemClock {
     /// let simu = SimInit::new()
     /// //  .add_model(...)
     /// //  .add_model(...)
-    ///     .init_with_clock(t0, clock);
+    ///     .set_clock(clock)
+    ///     .init(t0);
     /// ```
     pub fn from_system_time(simulation_ref: MonotonicTime, wall_clock_ref: SystemTime) -> Self {
-        // Select the best-correlated `Instant`/`SystemTime` pair from several
-        // samples to improve robustness towards possible thread suspension
-        // between the calls to `SystemTime::now()` and `Instant::now()`.
-        const SAMPLES: usize = 3;
-
-        let mut last_instant = Instant::now();
-        let mut min_delta = Duration::MAX;
-        let mut ref_time = None;
-
-        // Select the best-correlated instant/date pair.
-        for _ in 0..SAMPLES {
-            // The inner loop is to work around monotonic clock platform bugs
-            // that may cause `checked_duration_since` to fail.
-            let (date, instant, delta) = loop {
-                let date = SystemTime::now();
-                let instant = Instant::now();
-                let delta = instant.checked_duration_since(last_instant);
-                last_instant = instant;
-
-                if let Some(delta) = delta {
-                    break (date, instant, delta);
-                }
-            };
-
-            // Store the current instant/date if the time elapsed since the last
-            // measurement is shorter than the previous candidate.
-            if min_delta > delta {
-                min_delta = delta;
-                ref_time = Some((instant, date));
-            }
-        }
-
-        // Set the selected instant/date as the wall clock reference and adjust
-        // the simulation reference accordingly.
-        let (instant_ref, date_ref) = ref_time.unwrap();
-        let simulation_ref = if date_ref > wall_clock_ref {
-            let correction = date_ref.duration_since(wall_clock_ref).unwrap();
-
-            simulation_ref + correction
-        } else {
-            let correction = wall_clock_ref.duration_since(date_ref).unwrap();
-
-            simulation_ref - correction
-        };
-
-        Self {
-            wall_clock_ref: instant_ref,
+        Self(MonotonicClock::init_from_system_time(
             simulation_ref,
-        }
+            wall_clock_ref,
+        ))
     }
 }
 
@@ -179,22 +135,14 @@ impl Clock for SystemClock {
     /// Blocks until the system time corresponds to the specified simulation
     /// time.
     fn synchronize(&mut self, deadline: MonotonicTime) -> SyncStatus {
-        let target_time = if deadline >= self.simulation_ref {
-            self.wall_clock_ref + deadline.duration_since(self.simulation_ref)
-        } else {
-            self.wall_clock_ref - self.simulation_ref.duration_since(deadline)
-        };
+        let now = self.0.now();
+        if now <= deadline {
+            spin_sleep::sleep(deadline.duration_since(now));
 
-        let now = Instant::now();
-
-        match target_time.checked_duration_since(now) {
-            Some(sleep_duration) => {
-                spin_sleep::sleep(sleep_duration);
-
-                SyncStatus::Synchronized
-            }
-            None => SyncStatus::OutOfSync(now.duration_since(target_time)),
+            return SyncStatus::Synchronized;
         }
+
+        SyncStatus::OutOfSync(now.duration_since(deadline))
     }
 }
 
@@ -231,5 +179,31 @@ impl Clock for AutoSystemClock {
             }
             Some(clock) => clock.synchronize(deadline),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn smoke_system_clock() {
+        let t0 = MonotonicTime::EPOCH;
+        const TOLERANCE: f64 = 0.0005; // [s]
+
+        let now = Instant::now();
+        let mut clock = SystemClock::from_instant(t0, now);
+        let t1 = t0 + Duration::from_millis(200);
+        clock.synchronize(t1);
+        let elapsed = now.elapsed().as_secs_f64();
+        let dt = t1.duration_since(t0).as_secs_f64();
+
+        assert!(
+            (dt - elapsed) <= TOLERANCE,
+            "Expected t = {:.6}s +/- {:.6}s, measured t = {:.6}s",
+            dt,
+            TOLERANCE,
+            elapsed,
+        );
     }
 }

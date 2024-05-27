@@ -36,30 +36,35 @@
 //!
 //! Models can contain four kinds of ports:
 //!
-//! * _output ports_, which are instances of the [`Output`](model::Output) type
+//! * _output ports_, which are instances of the [`Output`](ports::Output) type
 //!   and can be used to broadcast a message,
 //! * _requestor ports_, which are instances of the
-//!   [`Requestor`](model::Requestor) type and can be used to broadcast a
+//!   [`Requestor`](ports::Requestor) type and can be used to broadcast a
 //!   message and receive an iterator yielding the replies from all connected
 //!   replier ports,
 //! * _input ports_, which are synchronous or asynchronous methods that
-//!   implement the [`InputFn`](model::InputFn) trait and take an `&mut self`
+//!   implement the [`InputFn`](ports::InputFn) trait and take an `&mut self`
 //!   argument, a message argument, and an optional
-//!   [`&Scheduler`](time::Scheduler) argument,
+//!   [`&Context`](model::Context) argument,
 //! * _replier ports_, which are similar to input ports but implement the
-//!   [`ReplierFn`](model::ReplierFn) trait and return a reply.
+//!   [`ReplierFn`](ports::ReplierFn) trait and return a reply.
 //!
 //! Messages that are broadcast by an output port to an input port are referred
 //! to as *events*, while messages exchanged between requestor and replier ports
 //! are referred to as *requests* and *replies*.
 //!
 //! Models must implement the [`Model`](model::Model) trait. The main purpose of
-//! this trait is to allow models to specify an `init()` method that is
-//! guaranteed to run once and only once when the simulation is initialized,
-//! _i.e._ after all models have been connected but before the simulation
-//! starts. The `init()` method has a default implementation, so models that do
-//! not require initialization can simply implement the trait with a one-liner
-//! such as `impl Model for MyModel {}`.
+//! this trait is to allow models to specify
+//! * a `setup()` method that is called once during model addtion to simulation,
+//!   this method allows e.g. creation and interconnection of submodels inside
+//!   the model,
+//! * an `init()` method that is guaranteed to run once and only once when the
+//!   simulation is initialized, _i.e._ after all models have been connected but
+//!   before the simulation starts.
+//!
+//! The `setup()` and `init()` methods have default implementations, so models
+//! that do not require setup and initialization can simply implement the trait
+//! with a one-liner such as `impl Model for MyModel {}`.
 //!
 //! #### A simple model
 //!
@@ -78,7 +83,8 @@
 //! `Multiplier` could be implemented as follows:
 //!
 //! ```
-//! use asynchronix::model::{Model, Output};
+//! use asynchronix::model::Model;
+//! use asynchronix::ports::Output;
 //!
 //! #[derive(Default)]
 //! pub struct Multiplier {
@@ -92,28 +98,28 @@
 //! impl Model for Multiplier {}
 //! ```
 //!
-//! #### A model using the local scheduler
+//! #### A model using the local context
 //!
 //! Models frequently need to schedule actions at a future time or simply get
 //! access to the current simulation time. To do so, input and replier methods
-//! can take an optional argument that gives them access to a local scheduler.
+//! can take an optional argument that gives them access to a local context.
 //!
-//! To show how the local scheduler can be used in practice, let us implement
+//! To show how the local context can be used in practice, let us implement
 //! `Delay`, a model which simply forwards its input unmodified after a 1s
 //! delay:
 //!
 //! ```
 //! use std::time::Duration;
-//! use asynchronix::model::{Model, Output};
-//! use asynchronix::time::Scheduler;
+//! use asynchronix::model::{Context, Model};
+//! use asynchronix::ports::Output;
 //!
 //! #[derive(Default)]
 //! pub struct Delay {
 //!    pub output: Output<f64>,
 //! }
 //! impl Delay {
-//!     pub fn input(&mut self, value: f64, scheduler: &Scheduler<Self>) {
-//!         scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
+//!     pub fn input(&mut self, value: f64, context: &Context<Self>) {
+//!         context.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //!     }
 //!
 //!     async fn send(&mut self, value: f64) {
@@ -135,7 +141,7 @@
 //! [`Address`](simulation::Mailbox)es pointing to that mailbox.
 //!
 //! Addresses are used among others to connect models: each output or requestor
-//! ports has a `connect()` method that takes as argument a function pointer to
+//! port has a `connect()` method that takes as argument a function pointer to
 //! the corresponding input or replier port method and the address of the
 //! targeted model.
 //!
@@ -166,8 +172,8 @@
 //! ```
 //! # mod models {
 //! #     use std::time::Duration;
-//! #     use asynchronix::model::{Model, Output};
-//! #     use asynchronix::time::Scheduler;
+//! #     use asynchronix::model::{Context, Model};
+//! #     use asynchronix::ports::Output;
 //! #     #[derive(Default)]
 //! #     pub struct Multiplier {
 //! #         pub output: Output<f64>,
@@ -183,8 +189,8 @@
 //! #        pub output: Output<f64>,
 //! #     }
 //! #     impl Delay {
-//! #         pub fn input(&mut self, value: f64, scheduler: &Scheduler<Self>) {
-//! #             scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
+//! #         pub fn input(&mut self, value: f64, context: &Context<Self>) {
+//! #             context.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //! #         }
 //! #         async fn send(&mut self, value: f64) { // this method can be private
 //! #             self.output.send(value).await;
@@ -193,6 +199,7 @@
 //! #     impl Model for Delay {}
 //! # }
 //! use std::time::Duration;
+//! use asynchronix::ports::EventSlot;
 //! use asynchronix::simulation::{Mailbox, SimInit};
 //! use asynchronix::time::MonotonicTime;
 //!
@@ -217,16 +224,17 @@
 //! delay1.output.connect(Delay::input, &delay2_mbox);
 //!
 //! // Keep handles to the system input and output for the simulation.
-//! let mut output_slot = delay2.output.connect_slot().0;
+//! let mut output_slot = EventSlot::new();
+//! delay2.output.connect_sink(&output_slot);
 //! let input_address = multiplier1_mbox.address();
 //!
 //! // Pick an arbitrary simulation start time and build the simulation.
 //! let t0 = MonotonicTime::EPOCH;
 //! let mut simu = SimInit::new()
-//!     .add_model(multiplier1, multiplier1_mbox)
-//!     .add_model(multiplier2, multiplier2_mbox)
-//!     .add_model(delay1, delay1_mbox)
-//!     .add_model(delay2, delay2_mbox)
+//!     .add_model(multiplier1, multiplier1_mbox, "multiplier1")
+//!     .add_model(multiplier2, multiplier2_mbox, "multiplier2")
+//!     .add_model(delay1, delay1_mbox, "delay1")
+//!     .add_model(delay2, delay2_mbox, "delay2")
 //!     .init(t0);
 //! ```
 //!
@@ -239,23 +247,20 @@
 //!    deadline using for instance
 //!    [`Simulation::step_by()`](simulation::Simulation::step_by).
 //! 2. by sending events or queries without advancing simulation time, using
-//!    [`Simulation::send_event()`](simulation::Simulation::send_event) or
-//!    [`Simulation::send_query()`](simulation::Simulation::send_query),
+//!    [`Simulation::process_event()`](simulation::Simulation::process_event) or
+//!    [`Simulation::send_query()`](simulation::Simulation::process_query),
 //! 3. by scheduling events, using for instance
 //!    [`Simulation::schedule_event()`](simulation::Simulation::schedule_event).
 //!
-//! When a simulation is initialized via
-//! [`SimInit::init()`](simulation::SimInit::init) then the simulation will run
-//! as fast as possible, without regard for the actual wall clock time.
-//! Alternatively, it is possible to initialize a simulation via
-//! [`SimInit::init_with_clock()`](simulation::SimInit::init_with_clock) to bind
-//! the simulation time to the wall clock time using a custom
-//! [`Clock`](time::Clock) type or a readily-available real-time clock such as
-//! [`AutoSystemClock`](time::AutoSystemClock).
+//! When initialized with the default clock, the simulation will run as fast as
+//! possible, without regard for the actual wall clock time. Alternatively, the
+//! simulation time can be synchronized to the wall clock time using
+//! [`SimInit::set_clock()`](simulation::SimInit::set_clock) and providing a
+//! custom [`Clock`](time::Clock) type or a readily-available real-time clock
+//! such as [`AutoSystemClock`](time::AutoSystemClock).
 //!
-//! Simulation outputs can be monitored using
-//! [`EventSlot`](simulation::EventSlot)s and
-//! [`EventStream`](simulation::EventStream)s, which can be connected to any
+//! Simulation outputs can be monitored using [`EventSlot`](ports::EventSlot)s
+//! and [`EventBuffer`](ports::EventBuffer)s, which can be connected to any
 //! model's output port. While an event slot only gives access to the last value
 //! sent from a port, an event stream is an iterator that yields all events that
 //! were sent in first-in-first-out order.
@@ -266,8 +271,8 @@
 //! ```
 //! # mod models {
 //! #     use std::time::Duration;
-//! #     use asynchronix::model::{Model, Output};
-//! #     use asynchronix::time::Scheduler;
+//! #     use asynchronix::model::{Context, Model};
+//! #     use asynchronix::ports::Output;
 //! #     #[derive(Default)]
 //! #     pub struct Multiplier {
 //! #         pub output: Output<f64>,
@@ -283,8 +288,8 @@
 //! #        pub output: Output<f64>,
 //! #     }
 //! #     impl Delay {
-//! #         pub fn input(&mut self, value: f64, scheduler: &Scheduler<Self>) {
-//! #             scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
+//! #         pub fn input(&mut self, value: f64, context: &Context<Self>) {
+//! #             context.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //! #         }
 //! #         async fn send(&mut self, value: f64) { // this method can be private
 //! #             self.output.send(value).await;
@@ -293,6 +298,7 @@
 //! #     impl Model for Delay {}
 //! # }
 //! # use std::time::Duration;
+//! # use asynchronix::ports::EventSlot;
 //! # use asynchronix::simulation::{Mailbox, SimInit};
 //! # use asynchronix::time::MonotonicTime;
 //! # use models::{Delay, Multiplier};
@@ -308,31 +314,32 @@
 //! # multiplier1.output.connect(Multiplier::input, &multiplier2_mbox);
 //! # multiplier2.output.connect(Delay::input, &delay2_mbox);
 //! # delay1.output.connect(Delay::input, &delay2_mbox);
-//! # let mut output_slot = delay2.output.connect_slot().0;
+//! # let mut output_slot = EventSlot::new();
+//! # delay2.output.connect_sink(&output_slot);
 //! # let input_address = multiplier1_mbox.address();
 //! # let t0 = MonotonicTime::EPOCH;
 //! # let mut simu = SimInit::new()
-//! #     .add_model(multiplier1, multiplier1_mbox)
-//! #     .add_model(multiplier2, multiplier2_mbox)
-//! #     .add_model(delay1, delay1_mbox)
-//! #     .add_model(delay2, delay2_mbox)
+//! #     .add_model(multiplier1, multiplier1_mbox, "multiplier1")
+//! #     .add_model(multiplier2, multiplier2_mbox, "multiplier2")
+//! #     .add_model(delay1, delay1_mbox, "delay1")
+//! #     .add_model(delay2, delay2_mbox, "delay2")
 //! #     .init(t0);
 //! // Send a value to the first multiplier.
-//! simu.send_event(Multiplier::input, 21.0, &input_address);
+//! simu.process_event(Multiplier::input, 21.0, &input_address);
 //!
 //! // The simulation is still at t0 so nothing is expected at the output of the
 //! // second delay gate.
-//! assert!(output_slot.take().is_none());
+//! assert!(output_slot.next().is_none());
 //!
 //! // Advance simulation time until the next event and check the time and output.
 //! simu.step();
 //! assert_eq!(simu.time(), t0 + Duration::from_secs(1));
-//! assert_eq!(output_slot.take(), Some(84.0));
+//! assert_eq!(output_slot.next(), Some(84.0));
 //!
 //! // Get the answer to the ultimate question of life, the universe & everything.
 //! simu.step();
 //! assert_eq!(simu.time(), t0 + Duration::from_secs(2));
-//! assert_eq!(output_slot.take(), Some(42.0));
+//! assert_eq!(output_slot.next(), Some(42.0));
 //! ```
 //!
 //! # Message ordering guarantees
@@ -390,15 +397,14 @@
 //!
 //! * the [`model`] module provides more details about the signatures of input
 //!   and replier port methods and discusses model initialization in the
-//!   documentation of [`model::Model`],
+//!   documentation of [`model::Model`] and self-scheduling methods as well as
+//!   scheduling cancellation in the documentation of [`model::Context`],
 //! * the [`simulation`] module discusses how the capacity of mailboxes may
 //!   affect the simulation, how connections can be modified after the
 //!   simulation was instantiated, and which pathological situations can lead to
 //!   a deadlock,
-//! * the [`time`] module discusses in particular self-scheduling methods and
-//!   scheduling cancellation in the documentation of [`time::Scheduler`] while
-//!   the monotonic timestamp format used for simulations is documented in
-//!   [`time::MonotonicTime`].
+//! * the [`time`] module discusses in particular the monotonic timestamp format
+//!   used for simulations ([`time::MonotonicTime`]).
 #![warn(missing_docs, missing_debug_implementations, unreachable_pub)]
 
 pub(crate) mod channel;
@@ -406,6 +412,9 @@ pub(crate) mod executor;
 mod loom_exports;
 pub(crate) mod macros;
 pub mod model;
+pub mod ports;
+#[cfg(feature = "rpc")]
+pub mod rpc;
 pub mod simulation;
 pub mod time;
 pub(crate) mod util;

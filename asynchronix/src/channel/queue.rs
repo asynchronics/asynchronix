@@ -85,7 +85,7 @@ struct Slot<T: ?Sized> {
     message: UnsafeCell<MessageBox<T>>,
 }
 
-/// An fast MPSC queue that stores its items in recyclable boxes.
+/// A fast MPSC queue that stores its items in recyclable boxes.
 ///
 /// The item may be unsized.
 ///
