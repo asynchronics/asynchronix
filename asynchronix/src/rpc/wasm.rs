@@ -20,7 +20,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use super::{EndpointRegistry, SimulationService};
+use super::{SimulationService, SinkRegistry};
 use crate::simulation::SimInit;
 
 /// A simulation service that can be used from JavaScript.
@@ -75,7 +75,7 @@ impl WasmSimulationService {
     /// interface.
     pub fn new<F>(sim_gen: F) -> Self
     where
-        F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
+        F: FnMut() -> (SimInit, SinkRegistry) + Send + 'static,
     {
         Self(SimulationService::new(sim_gen))
     }

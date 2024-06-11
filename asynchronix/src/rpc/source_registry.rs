@@ -8,19 +8,18 @@ use rmp_serde::encode::Error as RmpEncodeError;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::ports::{EventSinkStream, EventSource, QuerySource, ReplyReceiver};
+use crate::ports::{EventSource, QuerySource, ReplyReceiver};
 use crate::simulation::{Action, ActionKey};
 
 /// A registry that holds all sources and sinks meant to be accessed through
 /// remote procedure calls.
 #[derive(Default)]
-pub struct EndpointRegistry {
+pub struct SourceRegistry {
     event_sources: HashMap<String, Box<dyn EventSourceAny>>,
     query_sources: HashMap<String, Box<dyn QuerySourceAny>>,
-    sinks: HashMap<String, Box<dyn EventSinkStreamAny>>,
 }
 
-impl EndpointRegistry {
+impl SourceRegistry {
     /// Creates an empty `EndpointRegistry`.
     pub fn new() -> Self {
         Self::default()
@@ -82,40 +81,15 @@ impl EndpointRegistry {
     pub(crate) fn get_query_source_mut(&mut self, name: &str) -> Option<&mut dyn QuerySourceAny> {
         self.query_sources.get_mut(name).map(|s| s.as_mut())
     }
-
-    /// Adds a sink to the registry.
-    ///
-    /// If the specified name is already in use for another sink, the sink
-    /// provided as argument is returned in the error.
-    pub fn add_event_sink<S>(&mut self, sink: S, name: impl Into<String>) -> Result<(), S>
-    where
-        S: EventSinkStream + Send + 'static,
-        S::Item: Serialize,
-    {
-        match self.sinks.entry(name.into()) {
-            Entry::Vacant(s) => {
-                s.insert(Box::new(sink));
-
-                Ok(())
-            }
-            Entry::Occupied(_) => Err(sink),
-        }
-    }
-
-    /// Returns a mutable reference to the specified sink if it is in the
-    /// registry.
-    pub(crate) fn get_event_sink_mut(&mut self, name: &str) -> Option<&mut dyn EventSinkStreamAny> {
-        self.sinks.get_mut(name).map(|s| s.as_mut())
-    }
 }
 
-impl fmt::Debug for EndpointRegistry {
+impl fmt::Debug for SourceRegistry {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "EndpointRegistry ({} sources, {} sinks)",
+            "SourceRegistry ({} event sources, {} query sources)",
             self.event_sources.len(),
-            self.sinks.len()
+            self.query_sources.len()
         )
     }
 }
@@ -235,50 +209,6 @@ where
 
     fn reply_type_name(&self) -> &'static str {
         std::any::type_name::<R>()
-    }
-}
-
-/// A type-erased `EventSinkStream`.
-pub(crate) trait EventSinkStreamAny: Send + 'static {
-    /// Human-readable name of the event type, as returned by
-    /// `any::type_name()`.
-    fn event_type_name(&self) -> &'static str;
-
-    /// Starts or resumes the collection of new events.
-    fn open(&mut self);
-
-    /// Pauses the collection of new events.
-    fn close(&mut self);
-
-    /// Encode and collect all events in a vector.
-    fn collect(&mut self) -> Result<Vec<Vec<u8>>, RmpEncodeError>;
-}
-
-impl<E> EventSinkStreamAny for E
-where
-    E: EventSinkStream + Send + 'static,
-    E::Item: Serialize,
-{
-    fn event_type_name(&self) -> &'static str {
-        std::any::type_name::<E::Item>()
-    }
-
-    fn open(&mut self) {
-        self.open();
-    }
-
-    fn close(&mut self) {
-        self.close();
-    }
-
-    fn collect(&mut self) -> Result<Vec<Vec<u8>>, RmpEncodeError> {
-        self.__try_fold(Vec::new(), |mut encoded_events, event| {
-            rmp_serde::to_vec_named(&event).map(|encoded_event| {
-                encoded_events.push(encoded_event);
-
-                encoded_events
-            })
-        })
     }
 }
 

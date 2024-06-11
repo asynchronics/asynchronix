@@ -1,3 +1,5 @@
+//! Cached read-write lock.
+
 use std::ops::{Deref, DerefMut};
 
 use crate::loom_exports::sync::atomic::{AtomicUsize, Ordering};

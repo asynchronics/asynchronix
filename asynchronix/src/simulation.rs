@@ -218,7 +218,7 @@ impl Simulation {
     }
 
     /// Advances simulation time to that of the next scheduled event, processing
-    /// that event as well as all other event scheduled for the same time.
+    /// that event as well as all other events scheduled for the same time.
     ///
     /// Processing is gated by a (possibly blocking) call to
     /// [`Clock::synchronize()`](crate::time::Clock::synchronize) on the configured

@@ -1,162 +1,75 @@
-mod management_service;
-mod monitoring_service;
-
-use std::error;
 use std::fmt;
 use std::time::Duration;
 
-use bytes::Buf;
-use prost::Message;
 use prost_types::Timestamp;
 use tai_time::MonotonicTime;
 
 use crate::rpc::key_registry::{KeyRegistry, KeyRegistryId};
-use crate::rpc::{SinkRegistry, SourceRegistry};
-use crate::simulation::{SimInit, Simulation};
+use crate::rpc::SourceRegistry;
+use crate::simulation::Simulation;
 
-use super::codegen::simulation::*;
-use super::sink_registry;
-
-use management_service::ManagementService;
-use monitoring_service::MonitoringService;
+use super::super::codegen::simulation::*;
 
 /// Protobuf-based simulation manager.
 ///
-/// A `SimulationService` enables the management of the lifecycle of a
-/// simulation, including creating a
-/// [`Simulation`](crate::simulation::Simulation), invoking its methods and
-/// instantiating a new simulation.
+/// A `ManagementService` enables the management of the lifecycle of a
+/// simulation.
 ///
-/// Its methods map the various RPC service methods defined in
+/// Its methods map the various RPC management service methods defined in
 /// `simulation.proto`.
-pub struct SimulationService {
-    sim_gen: Box<dyn FnMut() -> (SimInit, SourceRegistry, SinkRegistry) + Send + 'static>,
-    services: Option<(ManagementService, MonitoringService)>,
+pub(crate) struct ManagementService {
+    simulation: Simulation,
+    source_registry: SourceRegistry,
+    key_registry: KeyRegistry,
 }
 
-impl SimulationService {
-    /// Creates a new `SimulationService` without any active simulation.
-    ///
-    /// The argument is a closure that is called every time the simulation is
-    /// (re)started by the remote client. It must create a new `SimInit` object
-    /// complemented by a registry that exposes the public event and query
-    /// interface.
-    pub fn new<F>(sim_gen: F) -> Self
-    where
-        F: FnMut() -> (SimInit, SourceRegistry, SinkRegistry) + Send + 'static,
-    {
+impl ManagementService {
+    /// Creates a new `ManagementService`.
+    pub(crate) fn new(
+        simulation: Simulation,
+        source_registry: SourceRegistry,
+        key_registry: KeyRegistry,
+    ) -> Self {
         Self {
-            sim_gen: Box::new(sim_gen),
-            services: None,
-        }
-    }
-
-    /// Processes an encoded `AnyRequest` message and returns an encoded reply.
-    /*pub fn process_request<B>(&mut self, request_buf: B) -> Result<Vec<u8>, InvalidRequest>
-    where
-        B: Buf,
-    {
-        match AnyRequest::decode(request_buf) {
-            Ok(AnyRequest { request: Some(req) }) => match req {
-                any_request::Request::InitRequest(request) => {
-                    Ok(self.init(request).encode_to_vec())
-                }
-                any_request::Request::TimeRequest(request) => {
-                    Ok(self.time(request).encode_to_vec())
-                }
-                any_request::Request::StepRequest(request) => {
-                    Ok(self.step(request).encode_to_vec())
-                }
-                any_request::Request::StepUntilRequest(request) => {
-                    Ok(self.step_until(request).encode_to_vec())
-                }
-                any_request::Request::ScheduleEventRequest(request) => {
-                    Ok(self.schedule_event(request).encode_to_vec())
-                }
-                any_request::Request::CancelEventRequest(request) => {
-                    Ok(self.cancel_event(request).encode_to_vec())
-                }
-                any_request::Request::ProcessEventRequest(request) => {
-                    Ok(self.process_event(request).encode_to_vec())
-                }
-                any_request::Request::ProcessQueryRequest(request) => {
-                    Ok(self.process_query(request).encode_to_vec())
-                }
-            },
-            Ok(AnyRequest { request: None }) => Err(InvalidRequest {
-                description: "the message did not contain any request".to_string(),
-            }),
-            Err(err) => Err(InvalidRequest {
-                description: format!("bad request: {}", err),
-            }),
-        }
-    }*/
-
-    /// Initialize a simulation with the provided time.
-    ///
-    /// If a simulation is already active, it is destructed and replaced with a
-    /// new simulation.
-    ///
-    /// If the initialization time is not provided, it is initialized with the
-    /// epoch of `MonotonicTime` (1970-01-01 00:00:00 TAI).
-    pub(crate) fn init(&mut self, request: InitRequest) -> InitReply {
-        let start_time = request.time.unwrap_or_default();
-        let reply = if let Some(start_time) = timestamp_to_monotonic(start_time) {
-            let (sim_init, source_registry, sink_registry) = (self.sim_gen)();
-            let simulation = sim_init.init(start_time);
-            self.services = Some((
-                ManagementService::new(simulation, source_registry, KeyRegistry::default()),
-                MonitoringService::new(sink_registry),
-            ));
-
-            init_reply::Result::Empty(())
-        } else {
-            init_reply::Result::Error(Error {
-                code: ErrorCode::InvalidTime as i32,
-                message: "out-of-range nanosecond field".to_string(),
-            })
-        };
-
-        InitReply {
-            result: Some(reply),
+            simulation,
+            source_registry,
+            key_registry,
         }
     }
 
     /// Returns the current simulation time.
-    pub(crate) fn time(&mut self, request: TimeRequest) -> TimeReply {
-        if let Some((management_service, ..)) = &mut self.services {
-            management_service.time(request)
+    pub(crate) fn time(&mut self, _request: TimeRequest) -> TimeReply {
+        let reply = if let Some(timestamp) = monotonic_to_timestamp(self.simulation.time()) {
+            time_reply::Result::Time(timestamp)
         } else {
-            TimeReply {
-                result: Some(time_reply::Result::Error(simulation_not_started_error())),
-            }
+            time_reply::Result::Error(Error {
+                code: ErrorCode::SimulationTimeOutOfRange as i32,
+                message: "the final simulation time is out of range".to_string(),
+            })
+        };
+
+        TimeReply {
+            result: Some(reply),
         }
     }
 
     /// Advances simulation time to that of the next scheduled event, processing
-    /// that event as well as all other events scheduled for the same time.
+    /// that event as well as all other event scheduled for the same time.
     ///
     /// Processing is gated by a (possibly blocking) call to
     /// [`Clock::synchronize()`](crate::time::Clock::synchronize) on the
     /// configured simulation clock. This method blocks until all newly
     /// processed events have completed.
     pub(crate) fn step(&mut self, _request: StepRequest) -> StepReply {
-        let reply = match &mut self.sim_context {
-            Some((simulation, ..)) => {
-                simulation.step();
-                if let Some(timestamp) = monotonic_to_timestamp(simulation.time()) {
-                    step_reply::Result::Time(timestamp)
-                } else {
-                    step_reply::Result::Error(Error {
-                        code: ErrorCode::SimulationTimeOutOfRange as i32,
-                        message: "the final simulation time is out of range".to_string(),
-                    })
-                }
-            }
-            None => step_reply::Result::Error(Error {
-                code: ErrorCode::SimulationNotStarted as i32,
-                message: "the simulation was not started".to_string(),
-            }),
+        self.simulation.step();
+
+        let reply = if let Some(timestamp) = monotonic_to_timestamp(self.simulation.time()) {
+            step_reply::Result::Time(timestamp)
+        } else {
+            step_reply::Result::Error(Error {
+                code: ErrorCode::SimulationTimeOutOfRange as i32,
+                message: "the final simulation time is out of range".to_string(),
+            })
         };
 
         StepReply {
@@ -178,44 +91,29 @@ impl SimulationService {
                 .deadline
                 .ok_or((ErrorCode::MissingArgument, "missing deadline argument"))?;
 
-            let simulation = match deadline {
+            match deadline {
                 step_until_request::Deadline::Time(time) => {
                     let time = timestamp_to_monotonic(time)
                         .ok_or((ErrorCode::InvalidTime, "out-of-range nanosecond field"))?;
 
-                    let (simulation, ..) = self.sim_context.as_mut().ok_or((
-                        ErrorCode::SimulationNotStarted,
-                        "the simulation was not started",
-                    ))?;
-
-                    simulation.step_until(time).map_err(|_| {
+                    self.simulation.step_until(time).map_err(|_| {
                         (
                             ErrorCode::InvalidTime,
                             "the specified deadline lies in the past",
                         )
                     })?;
-
-                    simulation
                 }
-
                 step_until_request::Deadline::Duration(duration) => {
                     let duration = to_positive_duration(duration).ok_or((
                         ErrorCode::InvalidDuration,
                         "the specified deadline lies in the past",
                     ))?;
 
-                    let (simulation, ..) = self.sim_context.as_mut().ok_or((
-                        ErrorCode::SimulationNotStarted,
-                        "the simulation was not started",
-                    ))?;
-
-                    simulation.step_by(duration);
-
-                    simulation
+                    self.simulation.step_by(duration);
                 }
             };
 
-            let timestamp = monotonic_to_timestamp(simulation.time()).ok_or((
+            let timestamp = monotonic_to_timestamp(self.simulation.time()).ok_or((
                 ErrorCode::SimulationTimeOutOfRange,
                 "the final simulation time is out of range",
             ))?;
@@ -250,12 +148,6 @@ impl SimulationService {
                 })
                 .transpose()?;
 
-            let (simulation, endpoint_registry, key_registry) =
-                self.sim_context.as_mut().ok_or((
-                    ErrorCode::SimulationNotStarted,
-                    "the simulation was not started".to_string(),
-                ))?;
-
             let deadline = request.deadline.ok_or((
                 ErrorCode::MissingArgument,
                 "missing deadline argument".to_string(),
@@ -273,14 +165,17 @@ impl SimulationService {
                         "the specified scheduling deadline is not in the future".to_string(),
                     ))?;
 
-                    simulation.time() + duration
+                    self.simulation.time() + duration
                 }
             };
 
-            let source = endpoint_registry.get_event_source_mut(source_name).ok_or((
-                ErrorCode::SourceNotFound,
-                "no event source is registered with the name '{}'".to_string(),
-            ))?;
+            let source = self
+                .source_registry
+                .get_event_source_mut(source_name)
+                .ok_or((
+                    ErrorCode::SourceNotFound,
+                    "no event source is registered with the name '{}'".to_string(),
+                ))?;
 
             let (action, action_key) = match (with_key, period) {
                 (false, None) => source.event(msgpack_event).map(|action| (action, None)),
@@ -306,16 +201,17 @@ impl SimulationService {
 
             let key_id = action_key.map(|action_key| {
                 // Free stale keys from the registry.
-                key_registry.remove_expired_keys(simulation.time());
+                self.key_registry
+                    .remove_expired_keys(self.simulation.time());
 
                 if period.is_some() {
-                    key_registry.insert_eternal_key(action_key)
+                    self.key_registry.insert_eternal_key(action_key)
                 } else {
-                    key_registry.insert_key(action_key, deadline)
+                    self.key_registry.insert_key(action_key, deadline)
                 }
             });
 
-            simulation.process(action);
+            self.simulation.process(action);
 
             Ok(key_id)
         }();
@@ -353,15 +249,11 @@ impl SimulationService {
                 .map_err(|_| (ErrorCode::InvalidKey, "invalid event key".to_string()))?;
             let subkey2 = key.subkey2;
 
-            let (simulation, _, key_registry) = self.sim_context.as_mut().ok_or((
-                ErrorCode::SimulationNotStarted,
-                "the simulation was not started".to_string(),
-            ))?;
-
             let key_id = KeyRegistryId::from_raw_parts(subkey1, subkey2);
 
-            key_registry.remove_expired_keys(simulation.time());
-            let key = key_registry.extract_key(key_id).ok_or((
+            self.key_registry
+                .remove_expired_keys(self.simulation.time());
+            let key = self.key_registry.extract_key(key_id).ok_or((
                 ErrorCode::InvalidKey,
                 "invalid or expired event key".to_string(),
             ))?;
@@ -391,15 +283,13 @@ impl SimulationService {
             let source_name = &request.source_name;
             let msgpack_event = &request.event;
 
-            let (simulation, registry, _) = self.sim_context.as_mut().ok_or((
-                ErrorCode::SimulationNotStarted,
-                "the simulation was not started".to_string(),
-            ))?;
-
-            let source = registry.get_event_source_mut(source_name).ok_or((
-                ErrorCode::SourceNotFound,
-                "no source is registered with the name '{}'".to_string(),
-            ))?;
+            let source = self
+                .source_registry
+                .get_event_source_mut(source_name)
+                .ok_or((
+                    ErrorCode::SourceNotFound,
+                    "no source is registered with the name '{}'".to_string(),
+                ))?;
 
             let event = source.event(msgpack_event).map_err(|_| {
                 (
@@ -411,7 +301,7 @@ impl SimulationService {
                 )
             })?;
 
-            simulation.process(event);
+            self.simulation.process(event);
 
             Ok(())
         }();
@@ -436,15 +326,13 @@ impl SimulationService {
             let source_name = &request.source_name;
             let msgpack_request = &request.request;
 
-            let (simulation, registry, _) = self.sim_context.as_mut().ok_or((
-                ErrorCode::SimulationNotStarted,
-                "the simulation was not started".to_string(),
-            ))?;
-
-            let source = registry.get_query_source_mut(source_name).ok_or((
-                ErrorCode::SourceNotFound,
-                "no source is registered with the name '{}'".to_string(),
-            ))?;
+            let source = self
+                .source_registry
+                .get_query_source_mut(source_name)
+                .ok_or((
+                    ErrorCode::SourceNotFound,
+                    "no source is registered with the name '{}'".to_string(),
+                ))?;
 
             let (query, mut promise) = source.query(msgpack_request).map_err(|_| {
                 (
@@ -456,7 +344,7 @@ impl SimulationService {
                 )
             })?;
 
-            simulation.process(query);
+            self.simulation.process(query);
 
             let replies = promise.take_collect().ok_or((
                 ErrorCode::InternalError,
@@ -490,30 +378,9 @@ impl SimulationService {
     }
 }
 
-impl fmt::Debug for SimulationService {
+impl fmt::Debug for ManagementService {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SimulationService").finish_non_exhaustive()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct InvalidRequest {
-    description: String,
-}
-
-impl fmt::Display for InvalidRequest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.description)
-    }
-}
-
-impl error::Error for InvalidRequest {}
-
-/// An error returned when a simulation was not started.
-fn simulation_not_started_error() -> Error {
-    Error {
-        code: ErrorCode::SimulationNotStarted as i32,
-        message: "the simulation was not started".to_string(),
+        f.debug_struct("ManagementService").finish_non_exhaustive()
     }
 }
 
