@@ -414,6 +414,8 @@ pub(crate) mod macros;
 pub mod model;
 pub mod ports;
 #[cfg(feature = "rpc")]
+pub mod registry;
+#[cfg(feature = "rpc")]
 pub mod rpc;
 pub mod simulation;
 pub mod time;

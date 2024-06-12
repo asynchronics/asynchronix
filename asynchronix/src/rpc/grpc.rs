@@ -6,11 +6,12 @@ use std::sync::MutexGuard;
 
 use tonic::{transport::Server, Request, Response, Status};
 
-use crate::rpc::EndpointRegistry;
+use crate::registry::EndpointRegistry;
 use crate::simulation::SimInit;
 
 use super::codegen::simulation::*;
-use super::simulation_service::SimulationService;
+use super::key_registry::KeyRegistry;
+use super::services::{timestamp_to_monotonic, ControllerService, MonitorService};
 
 /// Runs a gRPC simulation server.
 ///
@@ -22,8 +23,10 @@ pub fn run<F>(sim_gen: F, addr: SocketAddr) -> Result<(), Box<dyn std::error::Er
 where
     F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
 {
-    // Use a single-threaded server.
-    let rt = tokio::runtime::Builder::new_current_thread()
+    // Use 2 threads so that the controller and monitor services can be used
+    // concurrently.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_io()
         .build()?;
 
@@ -40,21 +43,37 @@ where
 }
 
 struct GrpcSimulationService {
-    inner: Mutex<SimulationService>,
+    sim_gen: Mutex<Box<dyn FnMut() -> (SimInit, EndpointRegistry) + Send + 'static>>,
+    controller_service: Mutex<ControllerService>,
+    monitor_service: Mutex<MonitorService>,
 }
 
 impl GrpcSimulationService {
-    fn new<F>(sim_gen: F) -> Self
+    /// Creates a new `GrpcSimulationService` without any active simulation.
+    ///
+    /// The argument is a closure that is called every time the simulation is
+    /// (re)started by the remote client. It must create a new `SimInit` object
+    /// complemented by a registry that exposes the public event and query
+    /// interface.
+    pub(crate) fn new<F>(sim_gen: F) -> Self
     where
         F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
     {
         Self {
-            inner: Mutex::new(SimulationService::new(sim_gen)),
+            sim_gen: Mutex::new(Box::new(sim_gen)),
+            controller_service: Mutex::new(ControllerService::NotStarted),
+            monitor_service: Mutex::new(MonitorService::NotStarted),
         }
     }
 
-    fn inner(&self) -> MutexGuard<'_, SimulationService> {
-        self.inner.lock().unwrap()
+    /// Locks the controller and returns the mutex guard.
+    fn controller(&self) -> MutexGuard<'_, ControllerService> {
+        self.controller_service.lock().unwrap()
+    }
+
+    /// Locks the monitor and returns the mutex guard.
+    fn monitor(&self) -> MutexGuard<'_, MonitorService> {
+        self.monitor_service.lock().unwrap()
     }
 }
 
@@ -63,17 +82,41 @@ impl simulation_server::Simulation for GrpcSimulationService {
     async fn init(&self, request: Request<InitRequest>) -> Result<Response<InitReply>, Status> {
         let request = request.into_inner();
 
-        Ok(Response::new(self.inner().init(request)))
+        let start_time = request.time.unwrap_or_default();
+        let reply = if let Some(start_time) = timestamp_to_monotonic(start_time) {
+            let (sim_init, endpoint_registry) = (self.sim_gen.lock().unwrap())();
+            let simulation = sim_init.init(start_time);
+            *self.controller() = ControllerService::Started {
+                simulation,
+                event_source_registry: endpoint_registry.event_source_registry,
+                query_source_registry: endpoint_registry.query_source_registry,
+                key_registry: KeyRegistry::default(),
+            };
+            *self.monitor() = MonitorService::Started {
+                event_sink_registry: endpoint_registry.event_sink_registry,
+            };
+
+            init_reply::Result::Empty(())
+        } else {
+            init_reply::Result::Error(Error {
+                code: ErrorCode::InvalidTime as i32,
+                message: "out-of-range nanosecond field".to_string(),
+            })
+        };
+
+        Ok(Response::new(InitReply {
+            result: Some(reply),
+        }))
     }
     async fn time(&self, request: Request<TimeRequest>) -> Result<Response<TimeReply>, Status> {
         let request = request.into_inner();
 
-        Ok(Response::new(self.inner().time(request)))
+        Ok(Response::new(self.controller().time(request)))
     }
     async fn step(&self, request: Request<StepRequest>) -> Result<Response<StepReply>, Status> {
         let request = request.into_inner();
 
-        Ok(Response::new(self.inner().step(request)))
+        Ok(Response::new(self.controller().step(request)))
     }
     async fn step_until(
         &self,
@@ -81,7 +124,7 @@ impl simulation_server::Simulation for GrpcSimulationService {
     ) -> Result<Response<StepUntilReply>, Status> {
         let request = request.into_inner();
 
-        Ok(Response::new(self.inner().step_until(request)))
+        Ok(Response::new(self.controller().step_until(request)))
     }
     async fn schedule_event(
         &self,
@@ -89,7 +132,7 @@ impl simulation_server::Simulation for GrpcSimulationService {
     ) -> Result<Response<ScheduleEventReply>, Status> {
         let request = request.into_inner();
 
-        Ok(Response::new(self.inner().schedule_event(request)))
+        Ok(Response::new(self.controller().schedule_event(request)))
     }
     async fn cancel_event(
         &self,
@@ -97,7 +140,7 @@ impl simulation_server::Simulation for GrpcSimulationService {
     ) -> Result<Response<CancelEventReply>, Status> {
         let request = request.into_inner();
 
-        Ok(Response::new(self.inner().cancel_event(request)))
+        Ok(Response::new(self.controller().cancel_event(request)))
     }
     async fn process_event(
         &self,
@@ -105,7 +148,7 @@ impl simulation_server::Simulation for GrpcSimulationService {
     ) -> Result<Response<ProcessEventReply>, Status> {
         let request = request.into_inner();
 
-        Ok(Response::new(self.inner().process_event(request)))
+        Ok(Response::new(self.controller().process_event(request)))
     }
     async fn process_query(
         &self,
@@ -113,7 +156,7 @@ impl simulation_server::Simulation for GrpcSimulationService {
     ) -> Result<Response<ProcessQueryReply>, Status> {
         let request = request.into_inner();
 
-        Ok(Response::new(self.inner().process_query(request)))
+        Ok(Response::new(self.controller().process_query(request)))
     }
     async fn read_events(
         &self,
@@ -121,7 +164,7 @@ impl simulation_server::Simulation for GrpcSimulationService {
     ) -> Result<Response<ReadEventsReply>, Status> {
         let request = request.into_inner();
 
-        Ok(Response::new(self.inner().read_events(request)))
+        Ok(Response::new(self.monitor().read_events(request)))
     }
     async fn open_sink(
         &self,
@@ -129,7 +172,7 @@ impl simulation_server::Simulation for GrpcSimulationService {
     ) -> Result<Response<OpenSinkReply>, Status> {
         let request = request.into_inner();
 
-        Ok(Response::new(self.inner().open_sink(request)))
+        Ok(Response::new(self.monitor().open_sink(request)))
     }
     async fn close_sink(
         &self,
@@ -137,6 +180,6 @@ impl simulation_server::Simulation for GrpcSimulationService {
     ) -> Result<Response<CloseSinkReply>, Status> {
         let request = request.into_inner();
 
-        Ok(Response::new(self.inner().close_sink(request)))
+        Ok(Response::new(self.monitor().close_sink(request)))
     }
 }

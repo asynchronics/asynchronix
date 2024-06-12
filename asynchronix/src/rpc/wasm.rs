@@ -20,8 +20,10 @@
 
 use wasm_bindgen::prelude::*;
 
-use super::{SimulationService, SinkRegistry};
+use crate::registry::EndpointRegistry;
 use crate::simulation::SimInit;
+
+use super::protobuf::ProtobufService;
 
 /// A simulation service that can be used from JavaScript.
 ///
@@ -49,7 +51,7 @@ use crate::simulation::SimInit;
 /// ```
 #[wasm_bindgen(js_name = SimulationService)]
 #[derive(Debug)]
-pub struct WasmSimulationService(SimulationService);
+pub struct WasmSimulationService(ProtobufService);
 
 #[wasm_bindgen(js_class = SimulationService)]
 impl WasmSimulationService {
@@ -75,8 +77,8 @@ impl WasmSimulationService {
     /// interface.
     pub fn new<F>(sim_gen: F) -> Self
     where
-        F: FnMut() -> (SimInit, SinkRegistry) + Send + 'static,
+        F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
     {
-        Self(SimulationService::new(sim_gen))
+        Self(ProtobufService::new(sim_gen))
     }
 }
