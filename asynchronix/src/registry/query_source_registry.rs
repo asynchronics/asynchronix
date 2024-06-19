@@ -2,13 +2,15 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
 
-use rmp_serde::decode::Error as RmpDecodeError;
-use rmp_serde::encode::Error as RmpEncodeError;
+use ciborium;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::ports::{QuerySource, ReplyReceiver};
 use crate::simulation::Action;
+
+type DeserializationError = ciborium::de::Error<std::io::Error>;
+type SerializationError = ciborium::ser::Error<std::io::Error>;
 
 /// A registry that holds all sources and sinks meant to be accessed through
 /// remote procedure calls.
@@ -52,18 +54,18 @@ impl fmt::Debug for QuerySourceRegistry {
     }
 }
 
-/// A type-erased `QuerySource` that operates on MessagePack-encoded serialized
-/// queries and returns MessagePack-encoded replies.
+/// A type-erased `QuerySource` that operates on CBOR-encoded serialized queries
+/// and returns CBOR-encoded replies.
 pub(crate) trait QuerySourceAny: Send + 'static {
     /// Returns an action which, when processed, broadcasts a query to all
     /// connected replier ports.
     ///
     ///
-    /// The argument is expected to conform to the serde MessagePack encoding.
+    /// The argument is expected to conform to the serde CBOR encoding.
     fn query(
         &mut self,
-        msgpack_arg: &[u8],
-    ) -> Result<(Action, Box<dyn ReplyReceiverAny>), RmpDecodeError>;
+        arg: &[u8],
+    ) -> Result<(Action, Box<dyn ReplyReceiverAny>), DeserializationError>;
 
     /// Human-readable name of the request type, as returned by
     /// `any::type_name()`.
@@ -81,9 +83,9 @@ where
 {
     fn query(
         &mut self,
-        msgpack_arg: &[u8],
-    ) -> Result<(Action, Box<dyn ReplyReceiverAny>), RmpDecodeError> {
-        rmp_serde::from_read(msgpack_arg).map(|arg| {
+        arg: &[u8],
+    ) -> Result<(Action, Box<dyn ReplyReceiverAny>), DeserializationError> {
+        ciborium::from_reader(arg).map(|arg| {
             let (action, reply_recv) = self.query(arg);
             let reply_recv: Box<dyn ReplyReceiverAny> = Box::new(reply_recv);
 
@@ -100,20 +102,21 @@ where
     }
 }
 
-/// A type-erased `ReplyReceiver` that returns MessagePack-encoded replies..
+/// A type-erased `ReplyReceiver` that returns CBOR-encoded replies.
 pub(crate) trait ReplyReceiverAny {
     /// Take the replies, if any, encode them and collect them in a vector.
-    fn take_collect(&mut self) -> Option<Result<Vec<Vec<u8>>, RmpEncodeError>>;
+    fn take_collect(&mut self) -> Option<Result<Vec<Vec<u8>>, SerializationError>>;
 }
 
 impl<R: Serialize + 'static> ReplyReceiverAny for ReplyReceiver<R> {
-    fn take_collect(&mut self) -> Option<Result<Vec<Vec<u8>>, RmpEncodeError>> {
+    fn take_collect(&mut self) -> Option<Result<Vec<Vec<u8>>, SerializationError>> {
         let replies = self.take()?;
 
         let encoded_replies = (move || {
             let mut encoded_replies = Vec::new();
             for reply in replies {
-                let encoded_reply = rmp_serde::to_vec_named(&reply)?;
+                let mut encoded_reply = Vec::new();
+                ciborium::into_writer(&reply, &mut encoded_reply)?;
                 encoded_replies.push(encoded_reply);
             }
 

@@ -33,12 +33,13 @@ impl MonitorService {
                     format!("no sink is registered with the name '{}'", sink_name),
                 ))?;
 
-                sink.collect().map_err(|_| {
+                sink.collect().map_err(|e| {
                     to_error(
                         ErrorCode::InvalidMessage,
                         format!(
-                            "the event could not be serialized from type '{}'",
-                            sink.event_type_name()
+                            "the event could not be serialized from type '{}': {}",
+                            sink.event_type_name(),
+                            e
                         ),
                     )
                 })

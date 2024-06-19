@@ -149,7 +149,7 @@ impl ControllerService {
                 ..
             } => move || -> Result<Option<KeyRegistryId>, Error> {
                 let source_name = &request.source_name;
-                let msgpack_event = &request.event;
+                let event = &request.event;
                 let with_key = request.with_key;
                 let period = request
                     .period
@@ -188,23 +188,24 @@ impl ControllerService {
                 ))?;
 
                 let (action, action_key) = match (with_key, period) {
-                    (false, None) => source.event(msgpack_event).map(|action| (action, None)),
+                    (false, None) => source.event(event).map(|action| (action, None)),
                     (false, Some(period)) => source
-                        .periodic_event(period, msgpack_event)
+                        .periodic_event(period, event)
                         .map(|action| (action, None)),
                     (true, None) => source
-                        .keyed_event(msgpack_event)
+                        .keyed_event(event)
                         .map(|(action, key)| (action, Some(key))),
                     (true, Some(period)) => source
-                        .keyed_periodic_event(period, msgpack_event)
+                        .keyed_periodic_event(period, event)
                         .map(|(action, key)| (action, Some(key))),
                 }
-                .map_err(|_| {
+                .map_err(|e| {
                     to_error(
                         ErrorCode::InvalidMessage,
                         format!(
-                            "the event could not be deserialized as type '{}'",
-                            source.event_type_name()
+                            "the event could not be deserialized as type '{}': {}",
+                            source.event_type_name(),
+                            e
                         ),
                     )
                 })?;
@@ -296,19 +297,20 @@ impl ControllerService {
                 ..
             } => move || -> Result<(), Error> {
                 let source_name = &request.source_name;
-                let msgpack_event = &request.event;
+                let event = &request.event;
 
                 let source = event_source_registry.get_mut(source_name).ok_or(to_error(
                     ErrorCode::SourceNotFound,
                     "no source is registered with the name '{}'".to_string(),
                 ))?;
 
-                let event = source.event(msgpack_event).map_err(|_| {
+                let event = source.event(event).map_err(|e| {
                     to_error(
                         ErrorCode::InvalidMessage,
                         format!(
-                            "the event could not be deserialized as type '{}'",
-                            source.event_type_name()
+                            "the event could not be deserialized as type '{}': {}",
+                            source.event_type_name(),
+                            e
                         ),
                     )
                 })?;
@@ -340,19 +342,20 @@ impl ControllerService {
                 ..
             } => move || -> Result<Vec<Vec<u8>>, Error> {
                 let source_name = &request.source_name;
-                let msgpack_request = &request.request;
+                let request = &request.request;
 
                 let source = query_source_registry.get_mut(source_name).ok_or(to_error(
                     ErrorCode::SourceNotFound,
                     "no source is registered with the name '{}'".to_string(),
                 ))?;
 
-                let (query, mut promise) = source.query(msgpack_request).map_err(|_| {
+                let (query, mut promise) = source.query(request).map_err(|e| {
                     to_error(
                         ErrorCode::InvalidMessage,
                         format!(
-                            "the request could not be deserialized as type '{}'",
-                            source.request_type_name()
+                            "the request could not be deserialized as type '{}': {}",
+                            source.request_type_name(),
+                            e
                         ),
                     )
                 })?;
@@ -364,12 +367,13 @@ impl ControllerService {
                     "a reply to the query was expected but none was available".to_string(),
                 ))?;
 
-                replies.map_err(|_| {
+                replies.map_err(|e| {
                     to_error(
                         ErrorCode::InvalidMessage,
                         format!(
-                            "the reply could not be serialized as type '{}'",
-                            source.reply_type_name()
+                            "the reply could not be serialized as type '{}': {}",
+                            source.reply_type_name(),
+                            e
                         ),
                     )
                 })

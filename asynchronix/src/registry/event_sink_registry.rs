@@ -2,10 +2,12 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
 
-use rmp_serde::encode::Error as RmpEncodeError;
+use ciborium;
 use serde::Serialize;
 
 use crate::ports::EventSinkStream;
+
+type SerializationError = ciborium::ser::Error<std::io::Error>;
 
 /// A registry that holds all sources and sinks meant to be accessed through
 /// remote procedure calls.
@@ -58,7 +60,7 @@ pub(crate) trait EventSinkStreamAny: Send + 'static {
     fn close(&mut self);
 
     /// Encode and collect all events in a vector.
-    fn collect(&mut self) -> Result<Vec<Vec<u8>>, RmpEncodeError>;
+    fn collect(&mut self) -> Result<Vec<Vec<u8>>, SerializationError>;
 }
 
 impl<E> EventSinkStreamAny for E
@@ -78,10 +80,11 @@ where
         self.close();
     }
 
-    fn collect(&mut self) -> Result<Vec<Vec<u8>>, RmpEncodeError> {
+    fn collect(&mut self) -> Result<Vec<Vec<u8>>, SerializationError> {
         self.__try_fold(Vec::new(), |mut encoded_events, event| {
-            rmp_serde::to_vec_named(&event).map(|encoded_event| {
-                encoded_events.push(encoded_event);
+            let mut buffer = Vec::new();
+            ciborium::into_writer(&event, &mut buffer).map(|_| {
+                encoded_events.push(buffer);
 
                 encoded_events
             })
