@@ -3,11 +3,13 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::Duration;
 
-use rmp_serde::decode::Error as RmpDecodeError;
+use ciborium;
 use serde::de::DeserializeOwned;
 
 use crate::ports::EventSource;
 use crate::simulation::{Action, ActionKey};
+
+type DeserializationError = ciborium::de::Error<std::io::Error>;
 
 /// A registry that holds all sources and sinks meant to be accessed through
 /// remote procedure calls.
@@ -50,41 +52,43 @@ impl fmt::Debug for EventSourceRegistry {
     }
 }
 
-/// A type-erased `EventSource` that operates on MessagePack-encoded serialized
-/// events.
+/// A type-erased `EventSource` that operates on CBOR-encoded serialized events.
 pub(crate) trait EventSourceAny: Send + 'static {
     /// Returns an action which, when processed, broadcasts an event to all
     /// connected input ports.
     ///
-    /// The argument is expected to conform to the serde MessagePack encoding.
-    fn event(&mut self, msgpack_arg: &[u8]) -> Result<Action, RmpDecodeError>;
+    /// The argument is expected to conform to the serde CBOR encoding.
+    fn event(&mut self, serialized_arg: &[u8]) -> Result<Action, DeserializationError>;
 
     /// Returns a cancellable action and a cancellation key; when processed, the
     /// action broadcasts an event to all connected input ports.
     ///
-    /// The argument is expected to conform to the serde MessagePack encoding.
-    fn keyed_event(&mut self, msgpack_arg: &[u8]) -> Result<(Action, ActionKey), RmpDecodeError>;
+    /// The argument is expected to conform to the serde CBOR encoding.
+    fn keyed_event(
+        &mut self,
+        serialized_arg: &[u8],
+    ) -> Result<(Action, ActionKey), DeserializationError>;
 
     /// Returns a periodically recurring action which, when processed,
     /// broadcasts an event to all connected input ports.
     ///
-    /// The argument is expected to conform to the serde MessagePack encoding.
+    /// The argument is expected to conform to the serde CBOR encoding.
     fn periodic_event(
         &mut self,
         period: Duration,
-        msgpack_arg: &[u8],
-    ) -> Result<Action, RmpDecodeError>;
+        serialized_arg: &[u8],
+    ) -> Result<Action, DeserializationError>;
 
     /// Returns a cancellable, periodically recurring action and a cancellation
     /// key; when processed, the action broadcasts an event to all connected
     /// input ports.
     ///
-    /// The argument is expected to conform to the serde MessagePack encoding.
+    /// The argument is expected to conform to the serde CBOR encoding.
     fn keyed_periodic_event(
         &mut self,
         period: Duration,
-        msgpack_arg: &[u8],
-    ) -> Result<(Action, ActionKey), RmpDecodeError>;
+        serialized_arg: &[u8],
+    ) -> Result<(Action, ActionKey), DeserializationError>;
 
     /// Human-readable name of the event type, as returned by
     /// `any::type_name()`.
@@ -95,25 +99,28 @@ impl<T> EventSourceAny for EventSource<T>
 where
     T: DeserializeOwned + Clone + Send + 'static,
 {
-    fn event(&mut self, msgpack_arg: &[u8]) -> Result<Action, RmpDecodeError> {
-        rmp_serde::from_read(msgpack_arg).map(|arg| self.event(arg))
+    fn event(&mut self, serialized_arg: &[u8]) -> Result<Action, DeserializationError> {
+        ciborium::from_reader(serialized_arg).map(|arg| self.event(arg))
     }
-    fn keyed_event(&mut self, msgpack_arg: &[u8]) -> Result<(Action, ActionKey), RmpDecodeError> {
-        rmp_serde::from_read(msgpack_arg).map(|arg| self.keyed_event(arg))
+    fn keyed_event(
+        &mut self,
+        serialized_arg: &[u8],
+    ) -> Result<(Action, ActionKey), DeserializationError> {
+        ciborium::from_reader(serialized_arg).map(|arg| self.keyed_event(arg))
     }
     fn periodic_event(
         &mut self,
         period: Duration,
-        msgpack_arg: &[u8],
-    ) -> Result<Action, RmpDecodeError> {
-        rmp_serde::from_read(msgpack_arg).map(|arg| self.periodic_event(period, arg))
+        serialized_arg: &[u8],
+    ) -> Result<Action, DeserializationError> {
+        ciborium::from_reader(serialized_arg).map(|arg| self.periodic_event(period, arg))
     }
     fn keyed_periodic_event(
         &mut self,
         period: Duration,
-        msgpack_arg: &[u8],
-    ) -> Result<(Action, ActionKey), RmpDecodeError> {
-        rmp_serde::from_read(msgpack_arg).map(|arg| self.keyed_periodic_event(period, arg))
+        serialized_arg: &[u8],
+    ) -> Result<(Action, ActionKey), DeserializationError> {
+        ciborium::from_reader(serialized_arg).map(|arg| self.keyed_periodic_event(period, arg))
     }
     fn event_type_name(&self) -> &'static str {
         std::any::type_name::<T>()
