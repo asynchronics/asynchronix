@@ -54,6 +54,22 @@ impl Deadline for MonotonicTime {
     }
 }
 
+/// Managed handle to a scheduled action.
+///
+/// An `AutoActionKey` is a managed handle to a scheduled action that cancels
+/// action on drop.
+#[derive(Debug)]
+#[must_use = "managed action key shall be used"]
+pub struct AutoActionKey {
+    is_cancelled: Arc<AtomicBool>,
+}
+
+impl Drop for AutoActionKey {
+    fn drop(&mut self) {
+        self.is_cancelled.store(true, Ordering::Relaxed);
+    }
+}
+
 /// Handle to a scheduled action.
 ///
 /// An `ActionKey` can be used to cancel a scheduled action.
@@ -79,6 +95,13 @@ impl ActionKey {
     /// Cancels the associated action.
     pub fn cancel(self) {
         self.is_cancelled.store(true, Ordering::Relaxed);
+    }
+
+    /// Converts action key to a managed key.
+    pub fn into_auto(self) -> AutoActionKey {
+        AutoActionKey {
+            is_cancelled: self.is_cancelled,
+        }
     }
 }
 
