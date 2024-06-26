@@ -132,7 +132,7 @@ pub(crate) use scheduler::{
     schedule_periodic_event_at_unchecked, schedule_periodic_keyed_event_at_unchecked,
     KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction, SchedulerQueue,
 };
-pub use scheduler::{Action, ActionKey, Deadline, SchedulingError};
+pub use scheduler::{Action, ActionKey, AutoActionKey, Deadline, SchedulingError};
 pub use sim_init::SimInit;
 
 use std::error::Error;
