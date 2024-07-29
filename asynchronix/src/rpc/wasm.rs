@@ -18,6 +18,7 @@
 //! `SimulationService`, and [`WasmSimulationService::process_request`] as
 //! `SimulationService.processRequest`.
 
+use serde::de::DeserializeOwned;
 use wasm_bindgen::prelude::*;
 
 use crate::registry::EndpointRegistry;
@@ -75,9 +76,10 @@ impl WasmSimulationService {
     /// (re)started by the remote client. It must create a new `SimInit` object
     /// complemented by a registry that exposes the public event and query
     /// interface.
-    pub fn new<F>(sim_gen: F) -> Self
+    pub fn new<F, I>(sim_gen: F) -> Self
     where
-        F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
+        F: FnMut(I) -> (SimInit, EndpointRegistry) + Send + 'static,
+        I: DeserializeOwned,
     {
         Self(ProtobufService::new(sim_gen))
     }

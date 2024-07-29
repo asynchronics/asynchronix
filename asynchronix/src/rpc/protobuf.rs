@@ -3,13 +3,14 @@ use std::fmt;
 
 use bytes::Buf;
 use prost::Message;
+use serde::de::DeserializeOwned;
 
 use crate::registry::EndpointRegistry;
 use crate::rpc::key_registry::KeyRegistry;
 use crate::simulation::SimInit;
 
 use super::codegen::simulation::*;
-use super::services::{timestamp_to_monotonic, ControllerService, MonitorService};
+use super::services::{ControllerService, InitService, MonitorService};
 
 /// Protobuf-based simulation manager.
 ///
@@ -21,7 +22,7 @@ use super::services::{timestamp_to_monotonic, ControllerService, MonitorService}
 /// Its methods map the various RPC service methods defined in
 /// `simulation.proto`.
 pub(crate) struct ProtobufService {
-    sim_gen: Box<dyn FnMut() -> (SimInit, EndpointRegistry) + Send + 'static>,
+    init_service: InitService,
     controller_service: ControllerService,
     monitor_service: MonitorService,
 }
@@ -29,16 +30,17 @@ pub(crate) struct ProtobufService {
 impl ProtobufService {
     /// Creates a new `ProtobufService` without any active simulation.
     ///
-    /// The argument is a closure that is called every time the simulation is
-    /// (re)started by the remote client. It must create a new `SimInit` object
-    /// complemented by a registry that exposes the public event and query
-    /// interface.
-    pub(crate) fn new<F>(sim_gen: F) -> Self
+    /// The argument is a closure that takes an initialization configuration and
+    /// is called every time the simulation is (re)started by the remote client.
+    /// It must create a new `SimInit` object complemented by a registry that
+    /// exposes the public event and query interface.
+    pub(crate) fn new<F, I>(sim_gen: F) -> Self
     where
-        F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
+        F: FnMut(I) -> (SimInit, EndpointRegistry) + Send + 'static,
+        I: DeserializeOwned,
     {
         Self {
-            sim_gen: Box::new(sim_gen),
+            init_service: InitService::new(sim_gen),
             controller_service: ControllerService::NotStarted,
             monitor_service: MonitorService::NotStarted,
         }
@@ -106,10 +108,9 @@ impl ProtobufService {
     /// If the initialization time is not provided, it is initialized with the
     /// epoch of `MonotonicTime` (1970-01-01 00:00:00 TAI).
     fn init(&mut self, request: InitRequest) -> InitReply {
-        let start_time = request.time.unwrap_or_default();
-        let reply = if let Some(start_time) = timestamp_to_monotonic(start_time) {
-            let (sim_init, endpoint_registry) = (self.sim_gen)();
-            let simulation = sim_init.init(start_time);
+        let (reply, bench) = self.init_service.init(request);
+
+        if let Some((simulation, endpoint_registry)) = bench {
             self.controller_service = ControllerService::Started {
                 simulation,
                 event_source_registry: endpoint_registry.event_source_registry,
@@ -119,18 +120,9 @@ impl ProtobufService {
             self.monitor_service = MonitorService::Started {
                 event_sink_registry: endpoint_registry.event_sink_registry,
             };
-
-            init_reply::Result::Empty(())
-        } else {
-            init_reply::Result::Error(Error {
-                code: ErrorCode::InvalidTime as i32,
-                message: "out-of-range nanosecond field".to_string(),
-            })
-        };
-
-        InitReply {
-            result: Some(reply),
         }
+
+        reply
     }
 }
 
