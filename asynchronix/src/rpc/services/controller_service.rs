@@ -330,7 +330,7 @@ impl ControllerService {
         }
     }
 
-    /// Broadcasts an event from an event source immediately, blocking until
+    /// Broadcasts a query from a query source immediately, blocking until
     /// completion.
     ///
     /// Simulation time remains unchanged.

@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 
+use serde::de::DeserializeOwned;
 use tonic::{transport::Server, Request, Response, Status};
 
 use crate::registry::EndpointRegistry;
@@ -11,18 +12,31 @@ use crate::simulation::SimInit;
 
 use super::codegen::simulation::*;
 use super::key_registry::KeyRegistry;
-use super::services::{timestamp_to_monotonic, ControllerService, MonitorService};
+use super::services::InitService;
+use super::services::{ControllerService, MonitorService};
 
 /// Runs a gRPC simulation server.
 ///
-/// The first argument is a closure that is called every time the simulation is
-/// (re)started by the remote client. It must create a new `SimInit` object
-/// complemented by a registry that exposes the public event and query
-/// interface.
-pub fn run<F>(sim_gen: F, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>>
+/// The first argument is a closure that takes an initialization configuration
+/// and is called every time the simulation is (re)started by the remote client.
+/// It must create a new `SimInit` object complemented by a registry that
+/// exposes the public event and query interface.
+pub fn run<F, I>(sim_gen: F, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>>
 where
-    F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
+    F: FnMut(I) -> (SimInit, EndpointRegistry) + Send + 'static,
+    I: DeserializeOwned,
 {
+    run_service(GrpcSimulationService::new(sim_gen), addr)
+}
+
+/// Monomorphization of the networking code.
+///
+/// Keeping this as a separate monomorphized fragment can even triple
+/// compilation speed for incremental release builds.
+fn run_service(
+    service: GrpcSimulationService,
+    addr: SocketAddr,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Use 2 threads so that the controller and monitor services can be used
     // concurrently.
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -30,11 +44,9 @@ where
         .enable_io()
         .build()?;
 
-    let sim_manager = GrpcSimulationService::new(sim_gen);
-
     rt.block_on(async move {
         Server::builder()
-            .add_service(simulation_server::SimulationServer::new(sim_manager))
+            .add_service(simulation_server::SimulationServer::new(service))
             .serve(addr)
             .await?;
 
@@ -43,7 +55,7 @@ where
 }
 
 struct GrpcSimulationService {
-    sim_gen: Mutex<Box<dyn FnMut() -> (SimInit, EndpointRegistry) + Send + 'static>>,
+    init_service: Mutex<InitService>,
     controller_service: Mutex<ControllerService>,
     monitor_service: Mutex<MonitorService>,
 }
@@ -51,19 +63,25 @@ struct GrpcSimulationService {
 impl GrpcSimulationService {
     /// Creates a new `GrpcSimulationService` without any active simulation.
     ///
-    /// The argument is a closure that is called every time the simulation is
-    /// (re)started by the remote client. It must create a new `SimInit` object
-    /// complemented by a registry that exposes the public event and query
-    /// interface.
-    pub(crate) fn new<F>(sim_gen: F) -> Self
+    /// The argument is a closure that takes an initialization configuration and
+    /// is called every time the simulation is (re)started by the remote client.
+    /// It must create a new `SimInit` object complemented by a registry that
+    /// exposes the public event and query interface.
+    pub(crate) fn new<F, I>(sim_gen: F) -> Self
     where
-        F: FnMut() -> (SimInit, EndpointRegistry) + Send + 'static,
+        F: FnMut(I) -> (SimInit, EndpointRegistry) + Send + 'static,
+        I: DeserializeOwned,
     {
         Self {
-            sim_gen: Mutex::new(Box::new(sim_gen)),
+            init_service: Mutex::new(InitService::new(sim_gen)),
             controller_service: Mutex::new(ControllerService::NotStarted),
             monitor_service: Mutex::new(MonitorService::NotStarted),
         }
+    }
+
+    /// Locks the initializer and returns the mutex guard.
+    fn initializer(&self) -> MutexGuard<'_, InitService> {
+        self.init_service.lock().unwrap()
     }
 
     /// Locks the controller and returns the mutex guard.
@@ -82,10 +100,9 @@ impl simulation_server::Simulation for GrpcSimulationService {
     async fn init(&self, request: Request<InitRequest>) -> Result<Response<InitReply>, Status> {
         let request = request.into_inner();
 
-        let start_time = request.time.unwrap_or_default();
-        let reply = if let Some(start_time) = timestamp_to_monotonic(start_time) {
-            let (sim_init, endpoint_registry) = (self.sim_gen.lock().unwrap())();
-            let simulation = sim_init.init(start_time);
+        let (reply, bench) = self.initializer().init(request);
+
+        if let Some((simulation, endpoint_registry)) = bench {
             *self.controller() = ControllerService::Started {
                 simulation,
                 event_source_registry: endpoint_registry.event_source_registry,
@@ -95,18 +112,9 @@ impl simulation_server::Simulation for GrpcSimulationService {
             *self.monitor() = MonitorService::Started {
                 event_sink_registry: endpoint_registry.event_sink_registry,
             };
+        }
 
-            init_reply::Result::Empty(())
-        } else {
-            init_reply::Result::Error(Error {
-                code: ErrorCode::InvalidTime as i32,
-                message: "out-of-range nanosecond field".to_string(),
-            })
-        };
-
-        Ok(Response::new(InitReply {
-            result: Some(reply),
-        }))
+        Ok(Response::new(reply))
     }
     async fn time(&self, request: Request<TimeRequest>) -> Result<Response<TimeReply>, Status> {
         let request = request.into_inner();

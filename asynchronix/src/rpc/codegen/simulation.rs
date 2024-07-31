@@ -20,6 +20,8 @@ pub struct EventKey {
 pub struct InitRequest {
     #[prost(message, optional, tag = "1")]
     pub time: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub cfg: ::prost::alloc::vec::Vec<u8>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -382,8 +384,7 @@ pub enum ErrorCode {
     InvalidKey = 6,
     SourceNotFound = 10,
     SinkNotFound = 11,
-    KeyNotFound = 12,
-    SimulationTimeOutOfRange = 13,
+    SimulationTimeOutOfRange = 12,
 }
 impl ErrorCode {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -401,7 +402,6 @@ impl ErrorCode {
             ErrorCode::InvalidKey => "INVALID_KEY",
             ErrorCode::SourceNotFound => "SOURCE_NOT_FOUND",
             ErrorCode::SinkNotFound => "SINK_NOT_FOUND",
-            ErrorCode::KeyNotFound => "KEY_NOT_FOUND",
             ErrorCode::SimulationTimeOutOfRange => "SIMULATION_TIME_OUT_OF_RANGE",
         }
     }
@@ -417,7 +417,6 @@ impl ErrorCode {
             "INVALID_KEY" => Some(Self::InvalidKey),
             "SOURCE_NOT_FOUND" => Some(Self::SourceNotFound),
             "SINK_NOT_FOUND" => Some(Self::SinkNotFound),
-            "KEY_NOT_FOUND" => Some(Self::KeyNotFound),
             "SIMULATION_TIME_OUT_OF_RANGE" => Some(Self::SimulationTimeOutOfRange),
             _ => None,
         }

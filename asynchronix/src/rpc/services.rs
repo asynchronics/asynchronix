@@ -1,4 +1,5 @@
 mod controller_service;
+mod init_service;
 mod monitor_service;
 
 use std::time::Duration;
@@ -9,6 +10,7 @@ use tai_time::MonotonicTime;
 use super::codegen::simulation::{Error, ErrorCode};
 
 pub(crate) use controller_service::ControllerService;
+pub(crate) use init_service::InitService;
 pub(crate) use monitor_service::MonitorService;
 
 /// Transforms an error code and a message into a Protobuf error.

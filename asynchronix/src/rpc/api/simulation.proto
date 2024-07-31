@@ -17,8 +17,7 @@ enum ErrorCode {
   INVALID_KEY = 6;
   SOURCE_NOT_FOUND = 10;
   SINK_NOT_FOUND = 11;
-  KEY_NOT_FOUND = 12;
-  SIMULATION_TIME_OUT_OF_RANGE = 13;
+  SIMULATION_TIME_OUT_OF_RANGE = 12;
 }
 
 message Error {
@@ -31,7 +30,10 @@ message EventKey {
   uint64 subkey2 = 2;
 }
 
-message InitRequest { google.protobuf.Timestamp time = 1; }
+message InitRequest {
+    google.protobuf.Timestamp time = 1;
+    bytes cfg = 2;
+}
 message InitReply {
   oneof result { // Always returns exactly 1 variant.
     google.protobuf.Empty empty = 1;
