@@ -48,16 +48,20 @@ fn simulation_schedule_events() {
     let t0 = MonotonicTime::EPOCH;
     let (mut simu, addr, mut output) = passthrough_bench(t0);
 
+    let scheduler = simu.scheduler();
+
     // Queue 2 events at t0+3s and t0+2s, in reverse order.
-    simu.schedule_event(Duration::from_secs(3), PassThroughModel::input, (), &addr)
+    scheduler
+        .schedule_event(Duration::from_secs(3), PassThroughModel::input, (), &addr)
         .unwrap();
-    simu.schedule_event(
-        t0 + Duration::from_secs(2),
-        PassThroughModel::input,
-        (),
-        &addr,
-    )
-    .unwrap();
+    scheduler
+        .schedule_event(
+            t0 + Duration::from_secs(2),
+            PassThroughModel::input,
+            (),
+            &addr,
+        )
+        .unwrap();
 
     // Move to the 1st event at t0+2s.
     simu.step();
@@ -65,7 +69,8 @@ fn simulation_schedule_events() {
     assert!(output.next().is_some());
 
     // Schedule another event in 4s (at t0+6s).
-    simu.schedule_event(Duration::from_secs(4), PassThroughModel::input, (), &addr)
+    scheduler
+        .schedule_event(Duration::from_secs(4), PassThroughModel::input, (), &addr)
         .unwrap();
 
     // Move to the 2nd event at t0+3s.
@@ -85,7 +90,9 @@ fn simulation_schedule_keyed_events() {
     let t0 = MonotonicTime::EPOCH;
     let (mut simu, addr, mut output) = passthrough_bench(t0);
 
-    let event_t1 = simu
+    let scheduler = simu.scheduler();
+
+    let event_t1 = scheduler
         .schedule_keyed_event(
             t0 + Duration::from_secs(1),
             PassThroughModel::input,
@@ -94,11 +101,12 @@ fn simulation_schedule_keyed_events() {
         )
         .unwrap();
 
-    let event_t2_1 = simu
+    let event_t2_1 = scheduler
         .schedule_keyed_event(Duration::from_secs(2), PassThroughModel::input, 21, &addr)
         .unwrap();
 
-    simu.schedule_event(Duration::from_secs(2), PassThroughModel::input, 22, &addr)
+    scheduler
+        .schedule_event(Duration::from_secs(2), PassThroughModel::input, 22, &addr)
         .unwrap();
 
     // Move to the 1st event at t0+1.
@@ -124,23 +132,27 @@ fn simulation_schedule_periodic_events() {
     let t0 = MonotonicTime::EPOCH;
     let (mut simu, addr, mut output) = passthrough_bench(t0);
 
+    let scheduler = simu.scheduler();
+
     // Queue 2 periodic events at t0 + 3s + k*2s.
-    simu.schedule_periodic_event(
-        Duration::from_secs(3),
-        Duration::from_secs(2),
-        PassThroughModel::input,
-        1,
-        &addr,
-    )
-    .unwrap();
-    simu.schedule_periodic_event(
-        t0 + Duration::from_secs(3),
-        Duration::from_secs(2),
-        PassThroughModel::input,
-        2,
-        &addr,
-    )
-    .unwrap();
+    scheduler
+        .schedule_periodic_event(
+            Duration::from_secs(3),
+            Duration::from_secs(2),
+            PassThroughModel::input,
+            1,
+            &addr,
+        )
+        .unwrap();
+    scheduler
+        .schedule_periodic_event(
+            t0 + Duration::from_secs(3),
+            Duration::from_secs(2),
+            PassThroughModel::input,
+            2,
+            &addr,
+        )
+        .unwrap();
 
     // Move to the next events at t0 + 3s + k*2s.
     for k in 0..10 {
@@ -160,16 +172,19 @@ fn simulation_schedule_periodic_keyed_events() {
     let t0 = MonotonicTime::EPOCH;
     let (mut simu, addr, mut output) = passthrough_bench(t0);
 
+    let scheduler = simu.scheduler();
+
     // Queue 2 periodic events at t0 + 3s + k*2s.
-    simu.schedule_periodic_event(
-        Duration::from_secs(3),
-        Duration::from_secs(2),
-        PassThroughModel::input,
-        1,
-        &addr,
-    )
-    .unwrap();
-    let event2_key = simu
+    scheduler
+        .schedule_periodic_event(
+            Duration::from_secs(3),
+            Duration::from_secs(2),
+            PassThroughModel::input,
+            1,
+            &addr,
+        )
+        .unwrap();
+    let event2_key = scheduler
         .schedule_keyed_periodic_event(
             t0 + Duration::from_secs(3),
             Duration::from_secs(2),
@@ -279,14 +294,17 @@ fn simulation_system_clock_from_instant() {
 
         let (mut simu, addr, mut stamp) = timestamp_bench(t0, clock);
 
+        let scheduler = simu.scheduler();
+
         // Queue a single event at t0 + 0.1s.
-        simu.schedule_event(
-            Duration::from_secs_f64(0.1),
-            TimestampModel::trigger,
-            (),
-            &addr,
-        )
-        .unwrap();
+        scheduler
+            .schedule_event(
+                Duration::from_secs_f64(0.1),
+                TimestampModel::trigger,
+                (),
+                &addr,
+            )
+            .unwrap();
 
         // Check the stamps.
         for expected_time in [
@@ -333,14 +351,17 @@ fn simulation_system_clock_from_system_time() {
 
         let (mut simu, addr, mut stamp) = timestamp_bench(t0, clock);
 
+        let scheduler = simu.scheduler();
+
         // Queue a single event at t0 + 0.1s.
-        simu.schedule_event(
-            Duration::from_secs_f64(0.1),
-            TimestampModel::trigger,
-            (),
-            &addr,
-        )
-        .unwrap();
+        scheduler
+            .schedule_event(
+                Duration::from_secs_f64(0.1),
+                TimestampModel::trigger,
+                (),
+                &addr,
+            )
+            .unwrap();
 
         // Check the stamps.
         for expected_time in [
@@ -376,24 +397,28 @@ fn simulation_auto_system_clock() {
     let (mut simu, addr, mut stamp) = timestamp_bench(t0, AutoSystemClock::new());
     let instant_t0 = Instant::now();
 
+    let scheduler = simu.scheduler();
+
     // Queue a periodic event at t0 + 0.2s + k*0.2s.
-    simu.schedule_periodic_event(
-        Duration::from_secs_f64(0.2),
-        Duration::from_secs_f64(0.2),
-        TimestampModel::trigger,
-        (),
-        &addr,
-    )
-    .unwrap();
+    scheduler
+        .schedule_periodic_event(
+            Duration::from_secs_f64(0.2),
+            Duration::from_secs_f64(0.2),
+            TimestampModel::trigger,
+            (),
+            &addr,
+        )
+        .unwrap();
 
     // Queue a single event at t0 + 0.3s.
-    simu.schedule_event(
-        Duration::from_secs_f64(0.3),
-        TimestampModel::trigger,
-        (),
-        &addr,
-    )
-    .unwrap();
+    scheduler
+        .schedule_event(
+            Duration::from_secs_f64(0.3),
+            TimestampModel::trigger,
+            (),
+            &addr,
+        )
+        .unwrap();
 
     // Check the stamps.
     for expected_time in [0.0, 0.2, 0.3, 0.4, 0.6] {

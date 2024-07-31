@@ -8,7 +8,7 @@ use crate::time::{MonotonicTime, TearableAtomicTime};
 use crate::util::priority_queue::PriorityQueue;
 use crate::util::sync_cell::SyncCell;
 
-use super::{add_model, Mailbox, SchedulerQueue, Simulation};
+use super::{add_model, Mailbox, Scheduler, SchedulerQueue, Simulation};
 
 /// Builder for a multi-threaded, discrete-event simulation.
 pub struct SimInit {
@@ -58,17 +58,8 @@ impl SimInit {
         mailbox: Mailbox<M>,
         name: impl Into<String>,
     ) -> Self {
-        let scheduler_queue = self.scheduler_queue.clone();
-        let time = self.time.reader();
-
-        add_model(
-            model,
-            mailbox,
-            name.into(),
-            scheduler_queue,
-            time,
-            &self.executor,
-        );
+        let scheduler = Scheduler::new(self.scheduler_queue.clone(), self.time.reader());
+        add_model(model, mailbox, name.into(), scheduler, &self.executor);
 
         self
     }

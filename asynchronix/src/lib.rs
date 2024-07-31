@@ -119,7 +119,7 @@
 //! }
 //! impl Delay {
 //!     pub fn input(&mut self, value: f64, context: &Context<Self>) {
-//!         context.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
+//!         context.scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //!     }
 //!
 //!     async fn send(&mut self, value: f64) {
@@ -190,7 +190,7 @@
 //! #     }
 //! #     impl Delay {
 //! #         pub fn input(&mut self, value: f64, context: &Context<Self>) {
-//! #             context.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
+//! #             context.scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //! #         }
 //! #         async fn send(&mut self, value: f64) { // this method can be private
 //! #             self.output.send(value).await;
@@ -250,7 +250,7 @@
 //!    [`Simulation::process_event()`](simulation::Simulation::process_event) or
 //!    [`Simulation::send_query()`](simulation::Simulation::process_query),
 //! 3. by scheduling events, using for instance
-//!    [`Simulation::schedule_event()`](simulation::Simulation::schedule_event).
+//!    [`Scheduler::schedule_event()`](simulation::Scheduler::schedule_event).
 //!
 //! When initialized with the default clock, the simulation will run as fast as
 //! possible, without regard for the actual wall clock time. Alternatively, the
@@ -289,7 +289,7 @@
 //! #     }
 //! #     impl Delay {
 //! #         pub fn input(&mut self, value: f64, context: &Context<Self>) {
-//! #             context.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
+//! #             context.scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //! #         }
 //! #         async fn send(&mut self, value: f64) { // this method can be private
 //! #             self.output.send(value).await;
@@ -370,7 +370,7 @@
 //!
 //! The first guarantee (and only the first) also extends to events scheduled
 //! from a simulation with a
-//! [`Simulation::schedule_*()`](simulation::Simulation::schedule_event) method:
+//! [`Scheduler::schedule_*()`](simulation::Scheduler::schedule_event) method:
 //! if the scheduler contains several events to be delivered at the same time to
 //! the same model, these events will always be processed in the order in which
 //! they were scheduled.

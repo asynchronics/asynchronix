@@ -140,6 +140,7 @@ impl Controller {
         // Schedule the `stop_brew()` method and turn on the pump.
         self.stop_brew_key = Some(
             context
+                .scheduler
                 .schedule_keyed_event(self.brew_time, Self::stop_brew, ())
                 .unwrap(),
         );
@@ -206,7 +207,7 @@ impl Tank {
             state.set_empty_key.cancel();
 
             // Update the volume, saturating at 0 in case of rounding errors.
-            let time = context.time();
+            let time = context.scheduler.time();
             let elapsed_time = time.duration_since(state.last_volume_update).as_secs_f64();
             self.volume = (self.volume - state.flow_rate * elapsed_time).max(0.0);
 
@@ -231,7 +232,7 @@ impl Tank {
     pub async fn set_flow_rate(&mut self, flow_rate: f64, context: &Context<Self>) {
         assert!(flow_rate >= 0.0);
 
-        let time = context.time();
+        let time = context.scheduler.time();
 
         // If the flow rate was non-zero up to now, update the volume.
         if let Some(state) = self.dynamic_state.take() {
@@ -273,7 +274,10 @@ impl Tank {
         let duration_until_empty = Duration::from_secs_f64(duration_until_empty);
 
         // Schedule the next update.
-        match context.schedule_keyed_event(duration_until_empty, Self::set_empty, ()) {
+        match context
+            .scheduler
+            .schedule_keyed_event(duration_until_empty, Self::set_empty, ())
+        {
             Ok(set_empty_key) => {
                 let state = TankDynamicState {
                     last_volume_update: time,
@@ -373,6 +377,8 @@ fn main() {
         .add_model(tank, tank_mbox, "tank")
         .init(t0);
 
+    let scheduler = simu.scheduler();
+
     // ----------
     // Simulation.
     // ----------
@@ -426,13 +432,14 @@ fn main() {
     assert_eq!(flow_rate.next(), Some(0.0));
 
     // Interrupt the brew after 15s by pressing again the brew button.
-    simu.schedule_event(
-        Duration::from_secs(15),
-        Controller::brew_cmd,
-        (),
-        &controller_addr,
-    )
-    .unwrap();
+    scheduler
+        .schedule_event(
+            Duration::from_secs(15),
+            Controller::brew_cmd,
+            (),
+            &controller_addr,
+        )
+        .unwrap();
     simu.process_event(Controller::brew_cmd, (), &controller_addr);
     assert_eq!(flow_rate.next(), Some(pump_flow_rate));
 

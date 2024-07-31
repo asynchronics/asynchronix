@@ -109,6 +109,8 @@ fn main() {
         .add_model(assembly, assembly_mbox, "assembly")
         .init(t0);
 
+    let scheduler = simu.scheduler();
+
     // ----------
     // Simulation.
     // ----------
@@ -120,13 +122,14 @@ fn main() {
     assert!(position.next().is_none());
 
     // Start the motor in 2s with a PPS of 10Hz.
-    simu.schedule_event(
-        Duration::from_secs(2),
-        MotorAssembly::pulse_rate,
-        10.0,
-        &assembly_addr,
-    )
-    .unwrap();
+    scheduler
+        .schedule_event(
+            Duration::from_secs(2),
+            MotorAssembly::pulse_rate,
+            10.0,
+            &assembly_addr,
+        )
+        .unwrap();
 
     // Advance simulation time to two next events.
     simu.step();

@@ -440,6 +440,7 @@ mod tests {
 
     use crate::channel::Receiver;
     use crate::model::Context;
+    use crate::simulation::{Address, LocalScheduler, Scheduler};
     use crate::time::{MonotonicTime, TearableAtomicTime};
     use crate::util::priority_queue::PriorityQueue;
     use crate::util::sync_cell::SyncCell;
@@ -499,9 +500,10 @@ mod tests {
                             SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH)).reader();
                         let dummy_context = Context::new(
                             String::new(),
-                            dummy_address,
-                            dummy_priority_queue,
-                            dummy_time,
+                            LocalScheduler::new(
+                                Scheduler::new(dummy_priority_queue, dummy_time),
+                                Address(dummy_address),
+                            ),
                         );
                         block_on(mailbox.recv(&mut counter, &dummy_context)).unwrap();
                     }
@@ -554,9 +556,10 @@ mod tests {
                             SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH)).reader();
                         let dummy_context = Context::new(
                             String::new(),
-                            dummy_address,
-                            dummy_priority_queue,
-                            dummy_time,
+                            LocalScheduler::new(
+                                Scheduler::new(dummy_priority_queue, dummy_time),
+                                Address(dummy_address),
+                            ),
                         );
                         block_on(mailbox.recv(&mut counter, &dummy_context)).unwrap();
                         thread::sleep(std::time::Duration::from_millis(100));
