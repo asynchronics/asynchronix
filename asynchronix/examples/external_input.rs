@@ -79,7 +79,7 @@ impl Listener {
     }
 
     /// Periodically scheduled function that processes external events.
-    pub async fn process(&mut self) {
+    async fn process(&mut self) {
         loop {
             if let Ok(message) = self.rx.try_recv() {
                 self.message.send(message).await;
