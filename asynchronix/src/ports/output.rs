@@ -11,7 +11,10 @@ use crate::util::cached_rw_lock::CachedRwLock;
 
 use broadcaster::{EventBroadcaster, QueryBroadcaster};
 
-use self::sender::{EventSinkSender, InputSender, ReplierSender};
+use self::sender::{
+    EventSinkSender, InputSender, MapEventSinkSender, MapInputSender, MapReplierSender,
+    ReplierSender,
+};
 
 /// An output port.
 ///
@@ -54,6 +57,48 @@ impl<T: Clone + Send + 'static> Output<T> {
     /// [`EventBuffer`](crate::ports::EventBuffer).
     pub fn connect_sink<S: EventSink<T>>(&mut self, sink: &S) -> LineId {
         let sender = Box::new(EventSinkSender::new(sink.writer()));
+        self.broadcaster.write().unwrap().add(sender)
+    }
+
+    /// Adds an auto-converting connection to an input port of the model
+    /// specified by the address.
+    ///
+    /// Events are mapped to the type expected by the input, using the closure
+    /// provided in argument.
+    ///
+    /// The input port must be an asynchronous method of a model of type `M`
+    /// taking as argument a value of the type returned by the mapping
+    /// closure plus, optionally, a scheduler reference.
+    pub fn map_connect<M, C, F, U, S>(
+        &mut self,
+        map: C,
+        input: F,
+        address: impl Into<Address<M>>,
+    ) -> LineId
+    where
+        M: Model,
+        C: Fn(T) -> U + Send + Sync + 'static,
+        F: for<'a> InputFn<'a, M, U, S> + Clone,
+        U: Send + 'static,
+        S: Send + 'static,
+    {
+        let sender = Box::new(MapInputSender::new(map, input, address.into().0));
+        self.broadcaster.write().unwrap().add(sender)
+    }
+
+    /// Adds an auto-converting connection to an event sink such as an
+    /// [`EventSlot`](crate::ports::EventSlot) or
+    /// [`EventBuffer`](crate::ports::EventBuffer).
+    ///
+    /// Events are mapped to the type expected by the sink, using the closure
+    /// provided in argument.
+    pub fn map_connect_sink<C, U, S>(&mut self, map: C, sink: &S) -> LineId
+    where
+        C: Fn(T) -> U + Send + Sync + 'static,
+        U: Send + 'static,
+        S: EventSink<U>,
+    {
+        let sender = Box::new(MapEventSinkSender::new(map, sink.writer()));
         self.broadcaster.write().unwrap().add(sender)
     }
 
@@ -133,6 +178,41 @@ impl<T: Clone + Send + 'static, R: Send + 'static> Requestor<T, R> {
         S: Send + 'static,
     {
         let sender = Box::new(ReplierSender::new(replier, address.into().0));
+        self.broadcaster.write().unwrap().add(sender)
+    }
+
+    /// Adds an auto-converting connection to a replier port of the model
+    /// specified by the address.
+    ///
+    /// Queries and replies are mapped to the types expected by the replier port,
+    /// using the closures provided in argument.
+    ///
+    /// The replier port must be an asynchronous method of a model of type `M`
+    /// returning a value of the type returned by the second mapping closure and
+    /// taking as argument a value of the type returned by the first mapping
+    /// closure plus, optionally, a scheduler reference.
+    pub fn map_connect<M, C, D, F, U, Q, S>(
+        &mut self,
+        query_map: C,
+        reply_map: D,
+        replier: F,
+        address: impl Into<Address<M>>,
+    ) -> LineId
+    where
+        M: Model,
+        C: Fn(T) -> U + Send + Sync + 'static,
+        D: Fn(Q) -> R + Send + Sync + 'static,
+        F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
+        U: Send + 'static,
+        Q: Send + 'static,
+        S: Send + 'static,
+    {
+        let sender = Box::new(MapReplierSender::new(
+            query_map,
+            reply_map,
+            replier,
+            address.into().0,
+        ));
         self.broadcaster.write().unwrap().add(sender)
     }
 
