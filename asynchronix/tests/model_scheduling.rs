@@ -16,7 +16,12 @@ fn model_schedule_event() {
     impl TestModel {
         fn trigger(&mut self, _: (), context: &Context<Self>) {
             context
-                .schedule_event(context.time() + Duration::from_secs(2), Self::action, ())
+                .scheduler
+                .schedule_event(
+                    context.scheduler.time() + Duration::from_secs(2),
+                    Self::action,
+                    (),
+                )
                 .unwrap();
         }
         async fn action(&mut self) {
@@ -53,10 +58,20 @@ fn model_cancel_future_keyed_event() {
     impl TestModel {
         fn trigger(&mut self, _: (), context: &Context<Self>) {
             context
-                .schedule_event(context.time() + Duration::from_secs(1), Self::action1, ())
+                .scheduler
+                .schedule_event(
+                    context.scheduler.time() + Duration::from_secs(1),
+                    Self::action1,
+                    (),
+                )
                 .unwrap();
             self.key = context
-                .schedule_keyed_event(context.time() + Duration::from_secs(2), Self::action2, ())
+                .scheduler
+                .schedule_keyed_event(
+                    context.scheduler.time() + Duration::from_secs(2),
+                    Self::action2,
+                    (),
+                )
                 .ok();
         }
         async fn action1(&mut self) {
@@ -99,10 +114,20 @@ fn model_cancel_same_time_keyed_event() {
     impl TestModel {
         fn trigger(&mut self, _: (), context: &Context<Self>) {
             context
-                .schedule_event(context.time() + Duration::from_secs(2), Self::action1, ())
+                .scheduler
+                .schedule_event(
+                    context.scheduler.time() + Duration::from_secs(2),
+                    Self::action1,
+                    (),
+                )
                 .unwrap();
             self.key = context
-                .schedule_keyed_event(context.time() + Duration::from_secs(2), Self::action2, ())
+                .scheduler
+                .schedule_keyed_event(
+                    context.scheduler.time() + Duration::from_secs(2),
+                    Self::action2,
+                    (),
+                )
                 .ok();
         }
         async fn action1(&mut self) {
@@ -144,8 +169,9 @@ fn model_schedule_periodic_event() {
     impl TestModel {
         fn trigger(&mut self, _: (), context: &Context<Self>) {
             context
+                .scheduler
                 .schedule_periodic_event(
-                    context.time() + Duration::from_secs(2),
+                    context.scheduler.time() + Duration::from_secs(2),
                     Duration::from_secs(3),
                     Self::action,
                     42,
@@ -192,8 +218,9 @@ fn model_cancel_periodic_event() {
     impl TestModel {
         fn trigger(&mut self, _: (), context: &Context<Self>) {
             self.key = context
+                .scheduler
                 .schedule_keyed_periodic_event(
-                    context.time() + Duration::from_secs(2),
+                    context.scheduler.time() + Duration::from_secs(2),
                     Duration::from_secs(3),
                     Self::action,
                     (),

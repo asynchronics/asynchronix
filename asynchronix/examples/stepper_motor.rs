@@ -58,7 +58,7 @@ impl Motor {
         println!(
             "Model instance {} at time {}: setting currents: {:.2} and {:.2}",
             context.name(),
-            context.time(),
+            context.scheduler.time(),
             current.0,
             current.1
         );
@@ -91,7 +91,7 @@ impl Motor {
         println!(
             "Model instance {} at time {}: setting load: {:.2}",
             context.name(),
-            context.time(),
+            context.scheduler.time(),
             torque
         );
 
@@ -141,7 +141,7 @@ impl Driver {
         println!(
             "Model instance {} at time {}: setting pps: {:.2}",
             context.name(),
-            context.time(),
+            context.scheduler.time(),
             pps
         );
 
@@ -172,7 +172,7 @@ impl Driver {
         println!(
             "Model instance {} at time {}: sending pulse",
             context.name(),
-            context.time()
+            context.scheduler.time()
         );
 
         async move {
@@ -195,6 +195,7 @@ impl Driver {
 
             // Schedule the next pulse.
             context
+                .scheduler
                 .schedule_event(pulse_duration, Self::send_pulse, ())
                 .unwrap();
         }
@@ -236,6 +237,8 @@ fn main() {
         .add_model(motor, motor_mbox, "motor")
         .init(t0);
 
+    let scheduler = simu.scheduler();
+
     // ----------
     // Simulation.
     // ----------
@@ -247,13 +250,14 @@ fn main() {
     assert!(position.next().is_none());
 
     // Start the motor in 2s with a PPS of 10Hz.
-    simu.schedule_event(
-        Duration::from_secs(2),
-        Driver::pulse_rate,
-        10.0,
-        &driver_addr,
-    )
-    .unwrap();
+    scheduler
+        .schedule_event(
+            Duration::from_secs(2),
+            Driver::pulse_rate,
+            10.0,
+            &driver_addr,
+        )
+        .unwrap();
 
     // Advance simulation time to two next events.
     simu.step();
