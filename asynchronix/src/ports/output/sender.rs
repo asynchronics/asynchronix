@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fmt;
-use std::future::Future;
+use std::future::{ready, Future};
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::pin::Pin;
@@ -176,6 +176,283 @@ where
             _phantom_map: PhantomData,
             _phantom_closure: PhantomData,
             _phantom_closure_marker: PhantomData,
+        }
+    }
+}
+
+/// An object that can filter and send mapped events to an input port.
+pub(super) struct FilterMapInputSender<M: 'static, C, F, T, U, S>
+where
+    M: Model,
+    C: Fn(T) -> Option<U>,
+    F: for<'a> InputFn<'a, M, U, S>,
+    T: Send + 'static,
+    U: Send + 'static,
+{
+    filter_map: Arc<C>,
+    func: F,
+    sender: channel::Sender<M>,
+    fut_storage: Option<RecycleBox<()>>,
+    _phantom_map: PhantomData<fn(T) -> U>,
+    _phantom_closure: PhantomData<fn(&mut M, U)>,
+    _phantom_closure_marker: PhantomData<S>,
+}
+
+impl<M: Send, C, F, T, U, S> FilterMapInputSender<M, C, F, T, U, S>
+where
+    M: Model,
+    C: Fn(T) -> Option<U>,
+    F: for<'a> InputFn<'a, M, U, S>,
+    T: Send + 'static,
+    U: Send + 'static,
+{
+    pub(super) fn new(filter_map: C, func: F, sender: channel::Sender<M>) -> Self {
+        Self {
+            filter_map: Arc::new(filter_map),
+            func,
+            sender,
+            fut_storage: None,
+            _phantom_map: PhantomData,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
+        }
+    }
+}
+
+impl<M: Send, C, F, T, U, S> Sender<T, ()> for FilterMapInputSender<M, C, F, T, U, S>
+where
+    M: Model,
+    C: Fn(T) -> Option<U> + Send + Sync,
+    F: for<'a> InputFn<'a, M, U, S> + Clone,
+    T: Send + 'static,
+    U: Send + 'static,
+    S: Send + 'static,
+{
+    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
+        let func = self.func.clone();
+
+        match (self.filter_map)(arg) {
+            Some(arg) => {
+                let fut = self.sender.send(move |model, scheduler, recycle_box| {
+                    let fut = func.call(model, arg, scheduler);
+
+                    coerce_box!(RecycleBox::recycle(recycle_box, fut))
+                });
+
+                RecycledFuture::new(&mut self.fut_storage, async move {
+                    fut.await.map_err(|_| SendError {})
+                })
+            }
+            None => RecycledFuture::new(&mut self.fut_storage, ready(Ok(()))),
+        }
+    }
+}
+
+impl<M: Send, C, F, T, U, S> Clone for FilterMapInputSender<M, C, F, T, U, S>
+where
+    M: Model,
+    C: Fn(T) -> Option<U>,
+    F: for<'a> InputFn<'a, M, U, S> + Clone,
+    T: Send + 'static,
+    U: Send + 'static,
+    S: Send + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            filter_map: self.filter_map.clone(),
+            func: self.func.clone(),
+            sender: self.sender.clone(),
+            fut_storage: None,
+            _phantom_map: PhantomData,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
+        }
+    }
+}
+
+/// An object that can send an event to an event sink.
+pub(super) struct EventSinkSender<T: Send + 'static, W: EventSinkWriter<T>>
+where
+    T: Send + 'static,
+    W: EventSinkWriter<T>,
+{
+    writer: W,
+    fut_storage: Option<RecycleBox<()>>,
+    _phantom_event: PhantomData<T>,
+}
+
+impl<T: Send + 'static, W: EventSinkWriter<T>> EventSinkSender<T, W> {
+    pub(super) fn new(writer: W) -> Self {
+        Self {
+            writer,
+            fut_storage: None,
+            _phantom_event: PhantomData,
+        }
+    }
+}
+
+impl<T, W> Sender<T, ()> for EventSinkSender<T, W>
+where
+    T: Send + 'static,
+    W: EventSinkWriter<T>,
+{
+    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
+        let writer = &mut self.writer;
+
+        RecycledFuture::new(&mut self.fut_storage, async move {
+            writer.write(arg);
+
+            Ok(())
+        })
+    }
+}
+
+impl<T, W> Clone for EventSinkSender<T, W>
+where
+    T: Send + 'static,
+    W: EventSinkWriter<T>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            writer: self.writer.clone(),
+            fut_storage: None,
+            _phantom_event: PhantomData,
+        }
+    }
+}
+
+/// An object that can send mapped events to an event sink.
+pub(super) struct MapEventSinkSender<T, U, W, C>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+    C: Fn(T) -> U,
+    W: EventSinkWriter<U>,
+{
+    writer: W,
+    map: Arc<C>,
+    fut_storage: Option<RecycleBox<()>>,
+    _phantom_event: PhantomData<T>,
+}
+
+impl<T, U, W, C> MapEventSinkSender<T, U, W, C>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+    C: Fn(T) -> U,
+    W: EventSinkWriter<U>,
+{
+    pub(super) fn new(map: C, writer: W) -> Self {
+        Self {
+            writer,
+            map: Arc::new(map),
+            fut_storage: None,
+            _phantom_event: PhantomData,
+        }
+    }
+}
+
+impl<T, U, W, C> Sender<T, ()> for MapEventSinkSender<T, U, W, C>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+    C: Fn(T) -> U + Send + Sync,
+    W: EventSinkWriter<U>,
+{
+    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
+        let writer = &mut self.writer;
+        let arg = (self.map)(arg);
+
+        RecycledFuture::new(&mut self.fut_storage, async move {
+            writer.write(arg);
+
+            Ok(())
+        })
+    }
+}
+
+impl<T, U, W, C> Clone for MapEventSinkSender<T, U, W, C>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+    C: Fn(T) -> U + Send + Sync,
+    W: EventSinkWriter<U>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            writer: self.writer.clone(),
+            map: self.map.clone(),
+            fut_storage: None,
+            _phantom_event: PhantomData,
+        }
+    }
+}
+
+/// An object that can filter and send mapped events to an event sink.
+pub(super) struct FilterMapEventSinkSender<T, U, W, C>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+    C: Fn(T) -> Option<U>,
+    W: EventSinkWriter<U>,
+{
+    writer: W,
+    filter_map: Arc<C>,
+    fut_storage: Option<RecycleBox<()>>,
+    _phantom_event: PhantomData<T>,
+}
+
+impl<T, U, W, C> FilterMapEventSinkSender<T, U, W, C>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+    C: Fn(T) -> Option<U>,
+    W: EventSinkWriter<U>,
+{
+    pub(super) fn new(filter_map: C, writer: W) -> Self {
+        Self {
+            writer,
+            filter_map: Arc::new(filter_map),
+            fut_storage: None,
+            _phantom_event: PhantomData,
+        }
+    }
+}
+
+impl<T, U, W, C> Sender<T, ()> for FilterMapEventSinkSender<T, U, W, C>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+    C: Fn(T) -> Option<U> + Send + Sync,
+    W: EventSinkWriter<U>,
+{
+    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
+        let writer = &mut self.writer;
+
+        match (self.filter_map)(arg) {
+            Some(arg) => RecycledFuture::new(&mut self.fut_storage, async move {
+                writer.write(arg);
+
+                Ok(())
+            }),
+            None => RecycledFuture::new(&mut self.fut_storage, ready(Ok(()))),
+        }
+    }
+}
+
+impl<T, U, W, C> Clone for FilterMapEventSinkSender<T, U, W, C>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+    C: Fn(T) -> Option<U> + Send + Sync,
+    W: EventSinkWriter<U>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            writer: self.writer.clone(),
+            filter_map: self.filter_map.clone(),
+            fut_storage: None,
+            _phantom_event: PhantomData,
         }
     }
 }
@@ -382,124 +659,6 @@ where
             _phantom_reply_map: PhantomData,
             _phantom_closure: PhantomData,
             _phantom_closure_marker: PhantomData,
-        }
-    }
-}
-
-/// An object that can send an event to an event sink.
-pub(super) struct EventSinkSender<T: Send + 'static, W: EventSinkWriter<T>>
-where
-    T: Send + 'static,
-    W: EventSinkWriter<T>,
-{
-    writer: W,
-    fut_storage: Option<RecycleBox<()>>,
-    _phantom_event: PhantomData<T>,
-}
-
-impl<T: Send + 'static, W: EventSinkWriter<T>> EventSinkSender<T, W> {
-    pub(super) fn new(writer: W) -> Self {
-        Self {
-            writer,
-            fut_storage: None,
-            _phantom_event: PhantomData,
-        }
-    }
-}
-
-impl<T, W> Sender<T, ()> for EventSinkSender<T, W>
-where
-    T: Send + 'static,
-    W: EventSinkWriter<T>,
-{
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
-        let writer = &mut self.writer;
-
-        RecycledFuture::new(&mut self.fut_storage, async move {
-            writer.write(arg);
-
-            Ok(())
-        })
-    }
-}
-
-impl<T, W> Clone for EventSinkSender<T, W>
-where
-    T: Send + 'static,
-    W: EventSinkWriter<T>,
-{
-    fn clone(&self) -> Self {
-        Self {
-            writer: self.writer.clone(),
-            fut_storage: None,
-            _phantom_event: PhantomData,
-        }
-    }
-}
-
-/// An object that can send mapped events to an event sink.
-pub(super) struct MapEventSinkSender<T, U, W, C>
-where
-    T: Send + 'static,
-    U: Send + 'static,
-    C: Fn(T) -> U,
-    W: EventSinkWriter<U>,
-{
-    writer: W,
-    map: Arc<C>,
-    fut_storage: Option<RecycleBox<()>>,
-    _phantom_event: PhantomData<T>,
-}
-
-impl<T, U, W, C> MapEventSinkSender<T, U, W, C>
-where
-    T: Send + 'static,
-    U: Send + 'static,
-    C: Fn(T) -> U,
-    W: EventSinkWriter<U>,
-{
-    pub(super) fn new(map: C, writer: W) -> Self {
-        Self {
-            writer,
-            map: Arc::new(map),
-            fut_storage: None,
-            _phantom_event: PhantomData,
-        }
-    }
-}
-
-impl<T, U, W, C> Sender<T, ()> for MapEventSinkSender<T, U, W, C>
-where
-    T: Send + 'static,
-    U: Send + 'static,
-    C: Fn(T) -> U + Send + Sync,
-    W: EventSinkWriter<U>,
-{
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
-        let writer = &mut self.writer;
-        let arg = (self.map)(arg);
-
-        RecycledFuture::new(&mut self.fut_storage, async move {
-            writer.write(arg);
-
-            Ok(())
-        })
-    }
-}
-
-impl<T, U, W, C> Clone for MapEventSinkSender<T, U, W, C>
-where
-    T: Send + 'static,
-    U: Send + 'static,
-    C: Fn(T) -> U + Send + Sync,
-    W: EventSinkWriter<U>,
-{
-    fn clone(&self) -> Self {
-        Self {
-            writer: self.writer.clone(),
-            map: self.map.clone(),
-            fut_storage: None,
-            _phantom_event: PhantomData,
         }
     }
 }
