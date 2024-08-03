@@ -24,11 +24,9 @@ pub(super) trait Sender<T, R>: DynClone + Send {
 dyn_clone::clone_trait_object!(<T, R> Sender<T, R>);
 
 /// An object that can send events to an input port.
-pub(super) struct InputSender<M: 'static, F, T, S>
+pub(super) struct InputSender<M, F, T, S>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S>,
-    T: Send + 'static,
+    M: 'static,
 {
     func: F,
     sender: channel::Sender<M>,
@@ -37,11 +35,9 @@ where
     _phantom_closure_marker: PhantomData<S>,
 }
 
-impl<M: Send, F, T, S> InputSender<M, F, T, S>
+impl<M, F, T, S> InputSender<M, F, T, S>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S>,
-    T: Send + 'static,
+    M: 'static,
 {
     pub(super) fn new(func: F, sender: channel::Sender<M>) -> Self {
         Self {
@@ -54,12 +50,12 @@ where
     }
 }
 
-impl<M: Send, F, T, S> Sender<T, ()> for InputSender<M, F, T, S>
+impl<M, F, T, S> Sender<T, ()> for InputSender<M, F, T, S>
 where
     M: Model,
     F: for<'a> InputFn<'a, M, T, S> + Clone,
     T: Send + 'static,
-    S: Send + 'static,
+    S: Send,
 {
     fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
         let func = self.func.clone();
@@ -76,12 +72,10 @@ where
     }
 }
 
-impl<M: Send, F, T, S> Clone for InputSender<M, F, T, S>
+impl<M, F, T, S> Clone for InputSender<M, F, T, S>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S> + Clone,
-    T: Send + 'static,
-    S: Send + 'static,
+    M: 'static,
+    F: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -95,13 +89,9 @@ where
 }
 
 /// An object that can send mapped events to an input port.
-pub(super) struct MapInputSender<M: 'static, C, F, T, U, S>
+pub(super) struct MapInputSender<M, C, F, T, U, S>
 where
-    M: Model,
-    C: Fn(T) -> U,
-    F: for<'a> InputFn<'a, M, U, S>,
-    T: Send + 'static,
-    U: Send + 'static,
+    M: 'static,
 {
     map: Arc<C>,
     func: F,
@@ -112,13 +102,9 @@ where
     _phantom_closure_marker: PhantomData<S>,
 }
 
-impl<M: Send, C, F, T, U, S> MapInputSender<M, C, F, T, U, S>
+impl<M, C, F, T, U, S> MapInputSender<M, C, F, T, U, S>
 where
-    M: Model,
-    C: Fn(T) -> U,
-    F: for<'a> InputFn<'a, M, U, S>,
-    T: Send + 'static,
-    U: Send + 'static,
+    M: 'static,
 {
     pub(super) fn new(map: C, func: F, sender: channel::Sender<M>) -> Self {
         Self {
@@ -133,14 +119,14 @@ where
     }
 }
 
-impl<M: Send, C, F, T, U, S> Sender<T, ()> for MapInputSender<M, C, F, T, U, S>
+impl<M, C, F, T, U, S> Sender<T, ()> for MapInputSender<M, C, F, T, U, S>
 where
     M: Model,
     C: Fn(T) -> U + Send + Sync,
     F: for<'a> InputFn<'a, M, U, S> + Clone,
     T: Send + 'static,
     U: Send + 'static,
-    S: Send + 'static,
+    S: Send,
 {
     fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
         let func = self.func.clone();
@@ -158,14 +144,10 @@ where
     }
 }
 
-impl<M: Send, C, F, T, U, S> Clone for MapInputSender<M, C, F, T, U, S>
+impl<M, C, F, T, U, S> Clone for MapInputSender<M, C, F, T, U, S>
 where
-    M: Model,
-    C: Fn(T) -> U,
-    F: for<'a> InputFn<'a, M, U, S> + Clone,
-    T: Send + 'static,
-    U: Send + 'static,
-    S: Send + 'static,
+    M: 'static,
+    F: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -181,30 +163,22 @@ where
 }
 
 /// An object that can filter and send mapped events to an input port.
-pub(super) struct FilterMapInputSender<M: 'static, C, F, T, U, S>
+pub(super) struct FilterMapInputSender<M, C, F, T, U, S>
 where
-    M: Model,
-    C: Fn(T) -> Option<U>,
-    F: for<'a> InputFn<'a, M, U, S>,
-    T: Send + 'static,
-    U: Send + 'static,
+    M: 'static,
 {
     filter_map: Arc<C>,
     func: F,
     sender: channel::Sender<M>,
     fut_storage: Option<RecycleBox<()>>,
-    _phantom_map: PhantomData<fn(T) -> U>,
+    _phantom_filter_map: PhantomData<fn(T) -> Option<U>>,
     _phantom_closure: PhantomData<fn(&mut M, U)>,
     _phantom_closure_marker: PhantomData<S>,
 }
 
-impl<M: Send, C, F, T, U, S> FilterMapInputSender<M, C, F, T, U, S>
+impl<M, C, F, T, U, S> FilterMapInputSender<M, C, F, T, U, S>
 where
-    M: Model,
-    C: Fn(T) -> Option<U>,
-    F: for<'a> InputFn<'a, M, U, S>,
-    T: Send + 'static,
-    U: Send + 'static,
+    M: 'static,
 {
     pub(super) fn new(filter_map: C, func: F, sender: channel::Sender<M>) -> Self {
         Self {
@@ -212,21 +186,21 @@ where
             func,
             sender,
             fut_storage: None,
-            _phantom_map: PhantomData,
+            _phantom_filter_map: PhantomData,
             _phantom_closure: PhantomData,
             _phantom_closure_marker: PhantomData,
         }
     }
 }
 
-impl<M: Send, C, F, T, U, S> Sender<T, ()> for FilterMapInputSender<M, C, F, T, U, S>
+impl<M, C, F, T, U, S> Sender<T, ()> for FilterMapInputSender<M, C, F, T, U, S>
 where
     M: Model,
     C: Fn(T) -> Option<U> + Send + Sync,
     F: for<'a> InputFn<'a, M, U, S> + Clone,
     T: Send + 'static,
     U: Send + 'static,
-    S: Send + 'static,
+    S: Send,
 {
     fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
         let func = self.func.clone();
@@ -248,14 +222,10 @@ where
     }
 }
 
-impl<M: Send, C, F, T, U, S> Clone for FilterMapInputSender<M, C, F, T, U, S>
+impl<M, C, F, T, U, S> Clone for FilterMapInputSender<M, C, F, T, U, S>
 where
-    M: Model,
-    C: Fn(T) -> Option<U>,
-    F: for<'a> InputFn<'a, M, U, S> + Clone,
-    T: Send + 'static,
-    U: Send + 'static,
-    S: Send + 'static,
+    M: 'static,
+    F: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -263,7 +233,7 @@ where
             func: self.func.clone(),
             sender: self.sender.clone(),
             fut_storage: None,
-            _phantom_map: PhantomData,
+            _phantom_filter_map: PhantomData,
             _phantom_closure: PhantomData,
             _phantom_closure_marker: PhantomData,
         }
@@ -271,17 +241,13 @@ where
 }
 
 /// An object that can send an event to an event sink.
-pub(super) struct EventSinkSender<T: Send + 'static, W: EventSinkWriter<T>>
-where
-    T: Send + 'static,
-    W: EventSinkWriter<T>,
-{
+pub(super) struct EventSinkSender<T, W> {
     writer: W,
     fut_storage: Option<RecycleBox<()>>,
     _phantom_event: PhantomData<T>,
 }
 
-impl<T: Send + 'static, W: EventSinkWriter<T>> EventSinkSender<T, W> {
+impl<T, W> EventSinkSender<T, W> {
     pub(super) fn new(writer: W) -> Self {
         Self {
             writer,
@@ -307,11 +273,7 @@ where
     }
 }
 
-impl<T, W> Clone for EventSinkSender<T, W>
-where
-    T: Send + 'static,
-    W: EventSinkWriter<T>,
-{
+impl<T, W: Clone> Clone for EventSinkSender<T, W> {
     fn clone(&self) -> Self {
         Self {
             writer: self.writer.clone(),
@@ -324,10 +286,7 @@ where
 /// An object that can send mapped events to an event sink.
 pub(super) struct MapEventSinkSender<T, U, W, C>
 where
-    T: Send + 'static,
-    U: Send + 'static,
     C: Fn(T) -> U,
-    W: EventSinkWriter<U>,
 {
     writer: W,
     map: Arc<C>,
@@ -337,10 +296,7 @@ where
 
 impl<T, U, W, C> MapEventSinkSender<T, U, W, C>
 where
-    T: Send + 'static,
-    U: Send + 'static,
     C: Fn(T) -> U,
-    W: EventSinkWriter<U>,
 {
     pub(super) fn new(map: C, writer: W) -> Self {
         Self {
@@ -373,10 +329,8 @@ where
 
 impl<T, U, W, C> Clone for MapEventSinkSender<T, U, W, C>
 where
-    T: Send + 'static,
-    U: Send + 'static,
-    C: Fn(T) -> U + Send + Sync,
-    W: EventSinkWriter<U>,
+    C: Fn(T) -> U,
+    W: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -391,10 +345,7 @@ where
 /// An object that can filter and send mapped events to an event sink.
 pub(super) struct FilterMapEventSinkSender<T, U, W, C>
 where
-    T: Send + 'static,
-    U: Send + 'static,
     C: Fn(T) -> Option<U>,
-    W: EventSinkWriter<U>,
 {
     writer: W,
     filter_map: Arc<C>,
@@ -404,10 +355,7 @@ where
 
 impl<T, U, W, C> FilterMapEventSinkSender<T, U, W, C>
 where
-    T: Send + 'static,
-    U: Send + 'static,
     C: Fn(T) -> Option<U>,
-    W: EventSinkWriter<U>,
 {
     pub(super) fn new(filter_map: C, writer: W) -> Self {
         Self {
@@ -442,10 +390,8 @@ where
 
 impl<T, U, W, C> Clone for FilterMapEventSinkSender<T, U, W, C>
 where
-    T: Send + 'static,
-    U: Send + 'static,
-    C: Fn(T) -> Option<U> + Send + Sync,
-    W: EventSinkWriter<U>,
+    C: Fn(T) -> Option<U>,
+    W: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -458,7 +404,10 @@ where
 }
 
 /// An object that can send requests to a replier port and retrieve responses.
-pub(super) struct ReplierSender<M: 'static, F, T, R, S> {
+pub(super) struct ReplierSender<M, F, T, R, S>
+where
+    M: Model,
+{
     func: F,
     sender: channel::Sender<M>,
     receiver: multishot::Receiver<R>,
@@ -470,9 +419,6 @@ pub(super) struct ReplierSender<M: 'static, F, T, R, S> {
 impl<M, F, T, R, S> ReplierSender<M, F, T, R, S>
 where
     M: Model,
-    F: for<'a> ReplierFn<'a, M, T, R, S>,
-    T: Send + 'static,
-    R: Send + 'static,
 {
     pub(super) fn new(func: F, sender: channel::Sender<M>) -> Self {
         Self {
@@ -528,10 +474,7 @@ where
 impl<M, F, T, R, S> Clone for ReplierSender<M, F, T, R, S>
 where
     M: Model,
-    F: for<'a> ReplierFn<'a, M, T, R, S> + Clone,
-    T: Send + 'static,
-    R: Send + 'static,
-    S: Send,
+    F: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -547,7 +490,10 @@ where
 
 /// An object that can send mapped requests to a replier port and retrieve
 /// mapped responses.
-pub(super) struct MapReplierSender<M: 'static, C, D, F, T, R, U, Q, S> {
+pub(super) struct MapReplierSender<M, C, D, F, T, R, U, Q, S>
+where
+    M: Model,
+{
     query_map: Arc<C>,
     reply_map: Arc<D>,
     func: F,
@@ -563,13 +509,6 @@ pub(super) struct MapReplierSender<M: 'static, C, D, F, T, R, U, Q, S> {
 impl<M, C, D, F, T, R, U, Q, S> MapReplierSender<M, C, D, F, T, R, U, Q, S>
 where
     M: Model,
-    C: Fn(T) -> U,
-    D: Fn(Q) -> R,
-    F: for<'a> ReplierFn<'a, M, U, Q, S>,
-    T: Send + 'static,
-    R: Send + 'static,
-    U: Send + 'static,
-    Q: Send + 'static,
 {
     pub(super) fn new(query_map: C, reply_map: D, func: F, sender: channel::Sender<M>) -> Self {
         Self {
@@ -639,13 +578,7 @@ where
 impl<M, C, D, F, T, R, U, Q, S> Clone for MapReplierSender<M, C, D, F, T, R, U, Q, S>
 where
     M: Model,
-    C: Fn(T) -> U,
-    D: Fn(Q) -> R,
-    F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
-    T: Send + 'static,
-    R: Send + 'static,
-    U: Send + 'static,
-    Q: Send + 'static,
+    F: Clone,
 {
     fn clone(&self) -> Self {
         Self {

@@ -68,7 +68,7 @@ impl<T: Clone + Send + 'static> Output<T> {
     ///
     /// The input port must be an asynchronous method of a model of type `M`
     /// taking as argument a value of the type returned by the mapping
-    /// closure plus, optionally, a scheduler reference.
+    /// closure plus, optionally, a context reference.
     pub fn map_connect<M, C, F, U, S>(
         &mut self,
         map: C,
@@ -110,7 +110,7 @@ impl<T: Clone + Send + 'static> Output<T> {
     ///
     /// The input port must be an asynchronous method of a model of type `M`
     /// taking as argument a value of the type returned by the mapping
-    /// closure plus, optionally, a scheduler reference.
+    /// closure plus, optionally, a context reference.
     pub fn filter_map_connect<M, C, F, U, S>(
         &mut self,
         filter_map: C,
@@ -216,7 +216,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> Requestor<T, R> {
     ///
     /// The replier port must be an asynchronous method of a model of type `M`
     /// returning a value of type `R` and taking as argument a value of type `T`
-    /// plus, optionally, a scheduler reference.
+    /// plus, optionally, a context reference.
     pub fn connect<M, F, S>(&mut self, replier: F, address: impl Into<Address<M>>) -> LineId
     where
         M: Model,
@@ -234,9 +234,9 @@ impl<T: Clone + Send + 'static, R: Send + 'static> Requestor<T, R> {
     /// provided in argument.
     ///
     /// The replier port must be an asynchronous method of a model of type `M`
-    /// returning a value of the type returned by the second mapping closure and
-    /// taking as argument a value of the type returned by the first mapping
-    /// closure plus, optionally, a scheduler reference.
+    /// returning a value of the type returned by the reply mapping closure and
+    /// taking as argument a value of the type returned by the query mapping
+    /// closure plus, optionally, a context reference.
     pub fn map_connect<M, C, D, F, U, Q, S>(
         &mut self,
         query_map: C,
