@@ -13,9 +13,11 @@ use crate::simulation::{
 };
 use crate::util::slot;
 
-use broadcaster::ReplyIterator;
-use broadcaster::{EventBroadcaster, QueryBroadcaster};
-use sender::{InputSender, ReplierSender};
+use broadcaster::{EventBroadcaster, QueryBroadcaster, ReplyIterator};
+use sender::{
+    FilterMapInputSender, FilterMapReplierSender, InputSender, MapInputSender, MapReplierSender,
+    ReplierSender,
+};
 
 use super::ReplierFn;
 
@@ -48,6 +50,58 @@ impl<T: Clone + Send + 'static> EventSource<T> {
         S: Send + 'static,
     {
         let sender = Box::new(InputSender::new(input, address.into().0));
+        self.broadcaster.lock().unwrap().add(sender)
+    }
+
+    /// Adds an auto-converting connection to an input port of the model
+    /// specified by the address.
+    ///
+    /// Events are mapped to another type using the closure provided in
+    /// argument.
+    ///
+    /// The input port must be an asynchronous method of a model of type `M`
+    /// taking as argument a value of the type returned by the mapping closure
+    /// plus, optionally, a context reference.
+    pub fn map_connect<M, C, F, U, S>(
+        &mut self,
+        map: C,
+        input: F,
+        address: impl Into<Address<M>>,
+    ) -> LineId
+    where
+        M: Model,
+        C: Fn(T) -> U + Send + 'static,
+        F: for<'a> InputFn<'a, M, U, S> + Clone,
+        U: Send + 'static,
+        S: Send + 'static,
+    {
+        let sender = Box::new(MapInputSender::new(map, input, address.into().0));
+        self.broadcaster.lock().unwrap().add(sender)
+    }
+
+    /// Adds an auto-converting, filtered connection to an input port of the
+    /// model specified by the address.
+    ///
+    /// Events are mapped to another type using the closure provided in
+    /// argument, or ignored if the closure returns `None`.
+    ///
+    /// The input port must be an asynchronous method of a model of type `M`
+    /// taking as argument a value of the type returned by the mapping closure
+    /// plus, optionally, a context reference.
+    pub fn filter_map_connect<M, C, F, U, S>(
+        &mut self,
+        map: C,
+        input: F,
+        address: impl Into<Address<M>>,
+    ) -> LineId
+    where
+        M: Model,
+        C: Fn(T) -> Option<U> + Send + 'static,
+        F: for<'a> InputFn<'a, M, U, S> + Clone,
+        U: Send + 'static,
+        S: Send + 'static,
+    {
+        let sender = Box::new(FilterMapInputSender::new(map, input, address.into().0));
         self.broadcaster.lock().unwrap().add(sender)
     }
 
@@ -193,7 +247,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> QuerySource<T, R> {
     ///
     /// The replier port must be an asynchronous method of a model of type `M`
     /// returning a value of type `R` and taking as argument a value of type `T`
-    /// plus, optionally, a scheduler reference.
+    /// plus, optionally, a context reference.
     pub fn connect<M, F, S>(&mut self, replier: F, address: impl Into<Address<M>>) -> LineId
     where
         M: Model,
@@ -201,6 +255,76 @@ impl<T: Clone + Send + 'static, R: Send + 'static> QuerySource<T, R> {
         S: Send + 'static,
     {
         let sender = Box::new(ReplierSender::new(replier, address.into().0));
+        self.broadcaster.lock().unwrap().add(sender)
+    }
+
+    /// Adds an auto-converting connection to a replier port of the model
+    /// specified by the address.
+    ///
+    /// Queries and replies are mapped to other types using the closures
+    /// provided in argument.
+    ///
+    /// The replier port must be an asynchronous method of a model of type `M`
+    /// returning a value of the type returned by the reply mapping closure and
+    /// taking as argument a value of the type returned by the query mapping
+    /// closure plus, optionally, a context reference.
+    pub fn map_connect<M, C, D, F, U, Q, S>(
+        &mut self,
+        query_map: C,
+        reply_map: D,
+        replier: F,
+        address: impl Into<Address<M>>,
+    ) -> LineId
+    where
+        M: Model,
+        C: Fn(T) -> U + Send + 'static,
+        D: Fn(Q) -> R + Send + Sync + 'static,
+        F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
+        U: Send + 'static,
+        Q: Send + 'static,
+        S: Send + 'static,
+    {
+        let sender = Box::new(MapReplierSender::new(
+            query_map,
+            reply_map,
+            replier,
+            address.into().0,
+        ));
+        self.broadcaster.lock().unwrap().add(sender)
+    }
+
+    /// Adds an auto-converting, filtered connection to a replier port of the
+    /// model specified by the address.
+    ///
+    /// Queries and replies are mapped to other types using the closures
+    /// provided in argument, or ignored if the query closure returns `None`.
+    ///
+    /// The replier port must be an asynchronous method of a model of type `M`
+    /// returning a value of the type returned by the reply mapping closure and
+    /// taking as argument a value of the type returned by the query mapping
+    /// closure plus, optionally, a context reference.
+    pub fn filter_map_connect<M, C, D, F, U, Q, S>(
+        &mut self,
+        query_filter_map: C,
+        reply_map: D,
+        replier: F,
+        address: impl Into<Address<M>>,
+    ) -> LineId
+    where
+        M: Model,
+        C: Fn(T) -> Option<U> + Send + 'static,
+        D: Fn(Q) -> R + Send + Sync + 'static,
+        F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
+        U: Send + 'static,
+        Q: Send + 'static,
+        S: Send + 'static,
+    {
+        let sender = Box::new(FilterMapReplierSender::new(
+            query_filter_map,
+            reply_map,
+            replier,
+            address.into().0,
+        ));
         self.broadcaster.lock().unwrap().add(sender)
     }
 

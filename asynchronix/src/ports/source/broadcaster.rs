@@ -71,26 +71,26 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
         self.senders.len()
     }
 
-    /// Efficiently broadcasts a message or a query to multiple addresses.
-    ///
-    /// This method does not collect the responses from queries.
-    fn broadcast(&mut self, arg: T) -> BroadcastFuture<R> {
-        let mut future_states = Vec::with_capacity(self.senders.len());
+    /// Return a list of futures broadcasting an event or query to multiple addresses.
+    fn futures(&mut self, arg: T) -> Vec<SenderFutureState<R>> {
+        let mut future_states = Vec::new();
 
         // Broadcast the message and collect all futures.
         let mut iter = self.senders.iter_mut();
         while let Some(sender) = iter.next() {
             // Move the argument rather than clone it for the last future.
             if iter.len() == 0 {
-                future_states.push(SenderFutureState::Pending(sender.1.send(arg)));
+                if let Some(fut) = sender.1.send(arg) {
+                    future_states.push(SenderFutureState::Pending(fut));
+                }
                 break;
             }
-
-            future_states.push(SenderFutureState::Pending(sender.1.send(arg.clone())));
+            if let Some(fut) = sender.1.send(arg.clone()) {
+                future_states.push(SenderFutureState::Pending(fut));
+            }
         }
 
-        // Generate the global future.
-        BroadcastFuture::new(future_states)
+        future_states
     }
 }
 
@@ -157,17 +157,27 @@ impl<T: Clone + Send> EventBroadcaster<T> {
         let fut = match self.inner.senders.as_mut_slice() {
             // No sender.
             [] => Fut::Empty,
-            // One sender.
+            // One sender at most.
             [sender] => Fut::Single(sender.1.send(arg)),
-            // Multiple senders.
-            _ => Fut::Multiple(self.inner.broadcast(arg)),
+            // Possibly multiple senders.
+            _ => Fut::Multiple(self.inner.futures(arg)),
         };
 
         async {
             match fut {
-                Fut::Empty => Ok(()),
-                Fut::Single(fut) => fut.await.map_err(|_| BroadcastError {}),
-                Fut::Multiple(fut) => fut.await.map(|_| ()),
+                // No sender.
+                Fut::Empty | Fut::Single(None) => Ok(()),
+
+                Fut::Single(Some(fut)) => fut.await.map_err(|_| BroadcastError {}),
+
+                Fut::Multiple(mut futures) => match futures.as_mut_slice() {
+                    // No sender.
+                    [] => Ok(()),
+                    // One sender.
+                    [SenderFutureState::Pending(fut)] => fut.await.map_err(|_| BroadcastError {}),
+                    // Multiple senders.
+                    _ => BroadcastFuture::new(futures).await.map(|_| ()),
+                },
             }
         }
     }
@@ -235,20 +245,39 @@ impl<T: Clone + Send, R: Send> QueryBroadcaster<T, R> {
         let fut = match self.inner.senders.as_mut_slice() {
             // No sender.
             [] => Fut::Empty,
-            // One sender.
+            // One sender at most.
             [sender] => Fut::Single(sender.1.send(arg)),
-            // Multiple senders.
-            _ => Fut::Multiple(self.inner.broadcast(arg)),
+            // Possibly multiple senders.
+            _ => Fut::Multiple(self.inner.futures(arg)),
         };
 
         async {
             match fut {
-                Fut::Empty => Ok(ReplyIterator(Vec::new().into_iter())),
-                Fut::Single(fut) => fut
+                // No sender.
+                Fut::Empty | Fut::Single(None) => Ok(ReplyIterator(Vec::new().into_iter())),
+
+                Fut::Single(Some(fut)) => fut
                     .await
                     .map(|reply| ReplyIterator(vec![SenderFutureState::Ready(reply)].into_iter()))
                     .map_err(|_| BroadcastError {}),
-                Fut::Multiple(fut) => fut.await.map_err(|_| BroadcastError {}),
+
+                Fut::Multiple(mut futures) => match futures.as_mut_slice() {
+                    // No sender.
+                    [] => Ok(ReplyIterator(Vec::new().into_iter())),
+
+                    // One sender.
+                    [SenderFutureState::Pending(fut)] => fut
+                        .await
+                        .map(|reply| {
+                            ReplyIterator(vec![SenderFutureState::Ready(reply)].into_iter())
+                        })
+                        .map_err(|_| BroadcastError {}),
+
+                    // Multiple senders.
+                    _ => BroadcastFuture::new(futures)
+                        .await
+                        .map_err(|_| BroadcastError {}),
+                },
             }
         }
     }
@@ -598,14 +627,17 @@ mod tests {
         receiver: Option<mpsc::UnboundedReceiver<Option<R>>>,
     }
     impl<R: Send + 'static> Sender<(), R> for TestEvent<R> {
-        fn send(&mut self, _arg: ()) -> Pin<Box<dyn Future<Output = Result<R, SendError>> + Send>> {
+        fn send(
+            &mut self,
+            _arg: (),
+        ) -> Option<Pin<Box<dyn Future<Output = Result<R, SendError>> + Send>>> {
             let receiver = self.receiver.take().unwrap();
 
-            Box::pin(async move {
+            Some(Box::pin(async move {
                 let mut stream = Box::pin(receiver.filter_map(|item| async { item }));
 
                 Ok(stream.next().await.unwrap())
-            })
+            }))
         }
     }
 
@@ -634,8 +666,16 @@ mod tests {
         )
     }
 
+    // This tests fails with "Concurrent load and mut accesses" even though the
+    // `task_list` implementation which triggers it does not use any unsafe.
+    // This is most certainly related to this Loom bug:
+    //
+    // https://github.com/tokio-rs/loom/issues/260
+    //
+    // Disabling until the bug is fixed.
+    #[ignore]
     #[test]
-    fn loom_broadcast_basic() {
+    fn loom_broadcast_query_basic() {
         const DEFAULT_PREEMPTION_BOUND: usize = 3;
 
         let mut builder = Builder::new();
@@ -707,8 +747,16 @@ mod tests {
         });
     }
 
+    // This tests fails with "Concurrent load and mut accesses" even though the
+    // `task_list` implementation which triggers it does not use any unsafe.
+    // This is most certainly related to this Loom bug:
+    //
+    // https://github.com/tokio-rs/loom/issues/260
+    //
+    // Disabling until the bug is fixed.
+    #[ignore]
     #[test]
-    fn loom_broadcast_spurious() {
+    fn loom_broadcast_query_spurious() {
         const DEFAULT_PREEMPTION_BOUND: usize = 3;
 
         let mut builder = Builder::new();
