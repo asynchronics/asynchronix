@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fmt;
-use std::future::{ready, Future};
+use std::future::Future;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::pin::Pin;
@@ -18,7 +18,7 @@ use crate::ports::{EventSinkWriter, InputFn, ReplierFn};
 /// replier method.
 pub(super) trait Sender<T, R>: DynClone + Send {
     /// Asynchronously send the event or request.
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<R, SendError>>;
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>>;
 }
 
 dyn_clone::clone_trait_object!(<T, R> Sender<T, R>);
@@ -57,7 +57,7 @@ where
     T: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
         let func = self.func.clone();
 
         let fut = self.sender.send(move |model, scheduler, recycle_box| {
@@ -66,9 +66,9 @@ where
             coerce_box!(RecycleBox::recycle(recycle_box, fut))
         });
 
-        RecycledFuture::new(&mut self.fut_storage, async move {
+        Some(RecycledFuture::new(&mut self.fut_storage, async move {
             fut.await.map_err(|_| SendError {})
-        })
+        }))
     }
 }
 
@@ -128,7 +128,7 @@ where
     U: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
         let func = self.func.clone();
         let arg = (self.map)(arg);
 
@@ -138,9 +138,9 @@ where
             coerce_box!(RecycleBox::recycle(recycle_box, fut))
         });
 
-        RecycledFuture::new(&mut self.fut_storage, async move {
+        Some(RecycledFuture::new(&mut self.fut_storage, async move {
             fut.await.map_err(|_| SendError {})
-        })
+        }))
     }
 }
 
@@ -202,23 +202,20 @@ where
     U: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
-        let func = self.func.clone();
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+        (self.filter_map)(arg).map(|arg| {
+            let func = self.func.clone();
 
-        match (self.filter_map)(arg) {
-            Some(arg) => {
-                let fut = self.sender.send(move |model, scheduler, recycle_box| {
-                    let fut = func.call(model, arg, scheduler);
+            let fut = self.sender.send(move |model, scheduler, recycle_box| {
+                let fut = func.call(model, arg, scheduler);
 
-                    coerce_box!(RecycleBox::recycle(recycle_box, fut))
-                });
+                coerce_box!(RecycleBox::recycle(recycle_box, fut))
+            });
 
-                RecycledFuture::new(&mut self.fut_storage, async move {
-                    fut.await.map_err(|_| SendError {})
-                })
-            }
-            None => RecycledFuture::new(&mut self.fut_storage, ready(Ok(()))),
-        }
+            RecycledFuture::new(&mut self.fut_storage, async move {
+                fut.await.map_err(|_| SendError {})
+            })
+        })
     }
 }
 
@@ -262,14 +259,14 @@ where
     T: Send + 'static,
     W: EventSinkWriter<T>,
 {
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
         let writer = &mut self.writer;
 
-        RecycledFuture::new(&mut self.fut_storage, async move {
+        Some(RecycledFuture::new(&mut self.fut_storage, async move {
             writer.write(arg);
 
             Ok(())
-        })
+        }))
     }
 }
 
@@ -315,15 +312,15 @@ where
     C: Fn(T) -> U + Send + Sync,
     W: EventSinkWriter<U>,
 {
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
         let writer = &mut self.writer;
         let arg = (self.map)(arg);
 
-        RecycledFuture::new(&mut self.fut_storage, async move {
+        Some(RecycledFuture::new(&mut self.fut_storage, async move {
             writer.write(arg);
 
             Ok(())
-        })
+        }))
     }
 }
 
@@ -374,17 +371,16 @@ where
     C: Fn(T) -> Option<U> + Send + Sync,
     W: EventSinkWriter<U>,
 {
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
         let writer = &mut self.writer;
 
-        match (self.filter_map)(arg) {
-            Some(arg) => RecycledFuture::new(&mut self.fut_storage, async move {
+        (self.filter_map)(arg).map(|arg| {
+            RecycledFuture::new(&mut self.fut_storage, async move {
                 writer.write(arg);
 
                 Ok(())
-            }),
-            None => RecycledFuture::new(&mut self.fut_storage, ready(Ok(()))),
-        }
+            })
+        })
     }
 }
 
@@ -440,7 +436,7 @@ where
     R: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<R, SendError>> {
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
         let func = self.func.clone();
         let sender = &mut self.sender;
         let reply_receiver = &mut self.receiver;
@@ -459,7 +455,7 @@ where
             coerce_box!(RecycleBox::recycle(recycle_box, fut))
         });
 
-        RecycledFuture::new(fut_storage, async move {
+        Some(RecycledFuture::new(fut_storage, async move {
             // Send the message.
             send_fut.await.map_err(|_| SendError {})?;
 
@@ -467,7 +463,7 @@ where
             // If an error is received, it most likely means the mailbox was
             // dropped before the message was processed.
             reply_receiver.recv().await.map_err(|_| SendError {})
-        })
+        }))
     }
 }
 
@@ -538,7 +534,7 @@ where
     Q: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<R, SendError>> {
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
         let func = self.func.clone();
         let arg = (self.query_map)(arg);
         let sender = &mut self.sender;
@@ -559,7 +555,7 @@ where
             coerce_box!(RecycleBox::recycle(recycle_box, fut))
         });
 
-        RecycledFuture::new(fut_storage, async move {
+        Some(RecycledFuture::new(fut_storage, async move {
             // Send the message.
             send_fut.await.map_err(|_| SendError {})?;
 
@@ -571,7 +567,7 @@ where
                 .await
                 .map_err(|_| SendError {})
                 .map(reply_map)
-        })
+        }))
     }
 }
 
@@ -583,6 +579,120 @@ where
     fn clone(&self) -> Self {
         Self {
             query_map: self.query_map.clone(),
+            reply_map: self.reply_map.clone(),
+            func: self.func.clone(),
+            sender: self.sender.clone(),
+            receiver: multishot::Receiver::new(),
+            fut_storage: None,
+            _phantom_query_map: PhantomData,
+            _phantom_reply_map: PhantomData,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
+        }
+    }
+}
+
+/// An object that can filter and send mapped requests to a replier port and
+/// retrieve mapped responses.
+pub(super) struct FilterMapReplierSender<M, C, D, F, T, R, U, Q, S>
+where
+    M: Model,
+{
+    query_filter_map: Arc<C>,
+    reply_map: Arc<D>,
+    func: F,
+    sender: channel::Sender<M>,
+    receiver: multishot::Receiver<Q>,
+    fut_storage: Option<RecycleBox<()>>,
+    _phantom_query_map: PhantomData<fn(T) -> U>,
+    _phantom_reply_map: PhantomData<fn(Q) -> R>,
+    _phantom_closure: PhantomData<fn(&mut M, U) -> Q>,
+    _phantom_closure_marker: PhantomData<S>,
+}
+
+impl<M, C, D, F, T, R, U, Q, S> FilterMapReplierSender<M, C, D, F, T, R, U, Q, S>
+where
+    M: Model,
+{
+    pub(super) fn new(
+        query_filter_map: C,
+        reply_map: D,
+        func: F,
+        sender: channel::Sender<M>,
+    ) -> Self {
+        Self {
+            query_filter_map: Arc::new(query_filter_map),
+            reply_map: Arc::new(reply_map),
+            func,
+            sender,
+            receiver: multishot::Receiver::new(),
+            fut_storage: None,
+            _phantom_query_map: PhantomData,
+            _phantom_reply_map: PhantomData,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
+        }
+    }
+}
+
+impl<M, C, D, F, T, R, U, Q, S> Sender<T, R> for FilterMapReplierSender<M, C, D, F, T, R, U, Q, S>
+where
+    M: Model,
+    C: Fn(T) -> Option<U> + Send + Sync,
+    D: Fn(Q) -> R + Send + Sync,
+    F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
+    T: Send + 'static,
+    R: Send + 'static,
+    U: Send + 'static,
+    Q: Send + 'static,
+    S: Send,
+{
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
+        (self.query_filter_map)(arg).map(|arg| {
+            let func = self.func.clone();
+            let sender = &mut self.sender;
+            let reply_receiver = &mut self.receiver;
+            let fut_storage = &mut self.fut_storage;
+            let reply_map = &*self.reply_map;
+
+            // The previous future generated by this method should have been polled
+            // to completion so a new sender should be readily available.
+            let reply_sender = reply_receiver.sender().unwrap();
+
+            let send_fut = sender.send(move |model, scheduler, recycle_box| {
+                let fut = async move {
+                    let reply = func.call(model, arg, scheduler).await;
+                    reply_sender.send(reply);
+                };
+
+                coerce_box!(RecycleBox::recycle(recycle_box, fut))
+            });
+
+            RecycledFuture::new(fut_storage, async move {
+                // Send the message.
+                send_fut.await.map_err(|_| SendError {})?;
+
+                // Wait until the message is processed and the reply is sent back.
+                // If an error is received, it most likely means the mailbox was
+                // dropped before the message was processed.
+                reply_receiver
+                    .recv()
+                    .await
+                    .map_err(|_| SendError {})
+                    .map(reply_map)
+            })
+        })
+    }
+}
+
+impl<M, C, D, F, T, R, U, Q, S> Clone for FilterMapReplierSender<M, C, D, F, T, R, U, Q, S>
+where
+    M: Model,
+    F: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            query_filter_map: self.query_filter_map.clone(),
             reply_map: self.reply_map.clone(),
             func: self.func.clone(),
             sender: self.sender.clone(),

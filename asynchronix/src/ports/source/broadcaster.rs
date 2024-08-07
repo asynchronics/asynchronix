@@ -71,7 +71,8 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
         self.senders.len()
     }
 
-    /// Return a list of futures broadcasting an event or query to multiple addresses.
+    /// Return a list of futures broadcasting an event or query to multiple
+    /// addresses.
     fn futures(&mut self, arg: T) -> Vec<SenderFutureState<R>> {
         let mut future_states = Vec::new();
 

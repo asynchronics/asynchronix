@@ -46,13 +46,11 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
 
         self.senders.push((line_id, sender));
         self.shared.outputs.push(None);
-        self.shared.task_set.resize(self.senders.len());
 
         // The storage is alway an empty vector so we just book some capacity.
-        self.shared
-            .storage
-            .as_mut()
-            .map(|s| s.try_reserve(self.senders.len()).unwrap());
+        self.shared.storage.as_mut().map(|s| {
+            let _ = s.try_reserve(self.senders.len());
+        });
 
         line_id
     }
@@ -65,7 +63,6 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
         if let Some(pos) = self.senders.iter().position(|s| s.0 == id) {
             self.senders.swap_remove(pos);
             self.shared.outputs.truncate(self.senders.len());
-            self.shared.task_set.resize(self.senders.len());
 
             return true;
         }
@@ -77,7 +74,6 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
     pub(super) fn clear(&mut self) {
         self.senders.clear();
         self.shared.outputs.clear();
-        self.shared.task_set.resize(0);
     }
 
     /// Returns the number of connected senders.
@@ -85,10 +81,15 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
         self.senders.len()
     }
 
-    /// Efficiently broadcasts a message or a query to multiple addresses.
-    ///
-    /// This method does not collect the responses from queries.
-    fn broadcast(&mut self, arg: T) -> BroadcastFuture<'_, R> {
+    /// Return a list of futures broadcasting an event or query to multiple
+    /// addresses.
+    fn futures(
+        &mut self,
+        arg: T,
+    ) -> (
+        &'_ mut Shared<R>,
+        Vec<RecycledFuture<'_, Result<R, SendError>>>,
+    ) {
         let mut futures = recycle_vec(self.shared.storage.take().unwrap_or_default());
 
         // Broadcast the message and collect all futures.
@@ -96,15 +97,18 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
         while let Some(sender) = iter.next() {
             // Move the argument rather than clone it for the last future.
             if iter.len() == 0 {
-                futures.push(sender.1.send(arg));
+                if let Some(fut) = sender.1.send(arg) {
+                    futures.push(fut);
+                }
                 break;
             }
 
-            futures.push(sender.1.send(arg.clone()));
+            if let Some(fut) = sender.1.send(arg.clone()) {
+                futures.push(fut);
+            }
         }
 
-        // Generate the global future.
-        BroadcastFuture::new(&mut self.shared, futures)
+        (&mut self.shared, futures)
     }
 }
 
@@ -183,10 +187,22 @@ impl<T: Clone> EventBroadcaster<T> {
         match self.inner.senders.as_mut_slice() {
             // No sender.
             [] => Ok(()),
-            // One sender.
-            [sender] => sender.1.send(arg).await.map_err(|_| BroadcastError {}),
-            // Multiple senders.
-            _ => self.inner.broadcast(arg).await,
+
+            // One sender at most.
+            [sender] => match sender.1.send(arg) {
+                None => Ok(()),
+                Some(fut) => fut.await.map_err(|_| BroadcastError {}),
+            },
+
+            // Possibly multiple senders.
+            _ => {
+                let (shared, mut futures) = self.inner.futures(arg);
+                match futures.as_mut_slice() {
+                    [] => Ok(()),
+                    [fut] => fut.await.map_err(|_| BroadcastError {}),
+                    _ => BroadcastFuture::new(shared, futures).await,
+                }
+            }
         }
     }
 }
@@ -244,25 +260,49 @@ impl<T: Clone, R> QueryBroadcaster<T, R> {
         &mut self,
         arg: T,
     ) -> Result<impl Iterator<Item = R> + '_, BroadcastError> {
-        match self.inner.senders.as_mut_slice() {
+        let output_count = match self.inner.senders.as_mut_slice() {
             // No sender.
-            [] => {}
-            // One sender.
+            [] => 0,
+
+            // One sender at most.
             [sender] => {
-                let output = sender.1.send(arg).await.map_err(|_| BroadcastError {})?;
-                self.inner.shared.outputs[0] = Some(output);
+                if let Some(fut) = sender.1.send(arg) {
+                    let output = fut.await.map_err(|_| BroadcastError {})?;
+                    self.inner.shared.outputs[0] = Some(output);
+
+                    1
+                } else {
+                    0
+                }
             }
-            // Multiple senders.
-            _ => self.inner.broadcast(arg).await?,
+
+            // Possibly multiple senders.
+            _ => {
+                let (shared, mut futures) = self.inner.futures(arg);
+                let output_count = futures.len();
+
+                match futures.as_mut_slice() {
+                    [] => {}
+                    [fut] => {
+                        let output = fut.await.map_err(|_| BroadcastError {})?;
+                        shared.outputs[0] = Some(output);
+                    }
+                    _ => {
+                        BroadcastFuture::new(shared, futures).await?;
+                    }
+                }
+
+                output_count
+            }
         };
 
-        // At this point all outputs should be available so `unwrap` can be
-        // called on the output of each future.
+        // At this point all outputs should be available.
         let outputs = self
             .inner
             .shared
             .outputs
             .iter_mut()
+            .take(output_count)
             .map(|t| t.take().unwrap());
 
         Ok(outputs)
@@ -311,7 +351,7 @@ impl<R> Clone for Shared<R> {
 
         Self {
             wake_sink,
-            task_set: TaskSet::with_len(wake_src, self.task_set.len()),
+            task_set: TaskSet::new(wake_src),
             outputs,
             storage: None,
         }
@@ -345,11 +385,11 @@ impl<'a, R> BroadcastFuture<'a, R> {
         futures: Vec<RecycledFuture<'a, Result<R, SendError>>>,
     ) -> Self {
         let pending_futures_count = futures.len();
+        shared.task_set.resize(pending_futures_count);
 
-        assert!(shared.outputs.len() == pending_futures_count);
-
-        for output in shared.outputs.iter_mut() {
-            // Drop the previous output if necessary.
+        for output in shared.outputs.iter_mut().take(pending_futures_count) {
+            // Empty the output slots to be used. This is necessary in case the
+            // previous broadcast future was cancelled.
             output.take();
         }
 
@@ -379,7 +419,11 @@ impl<'a, R> Future for BroadcastFuture<'a, R> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = &mut *self;
 
-        assert_ne!(this.state, FutureState::Completed);
+        assert_ne!(
+            this.state,
+            FutureState::Completed,
+            "broadcast future polled after completion"
+        );
 
         // Poll all sender futures once if this is the first time the broadcast
         // future is polled.
@@ -681,15 +725,15 @@ mod tests {
         fut_storage: Option<RecycleBox<()>>,
     }
     impl<R: Send> Sender<(), R> for TestEvent<R> {
-        fn send(&mut self, _arg: ()) -> RecycledFuture<'_, Result<R, SendError>> {
+        fn send(&mut self, _arg: ()) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
             let fut_storage = &mut self.fut_storage;
             let receiver = &mut self.receiver;
 
-            RecycledFuture::new(fut_storage, async {
+            Some(RecycledFuture::new(fut_storage, async {
                 let mut stream = Box::pin(receiver.filter_map(|item| async { item }));
 
                 Ok(stream.next().await.unwrap())
-            })
+            }))
         }
     }
 

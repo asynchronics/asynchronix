@@ -10,6 +10,7 @@ use crate::simulation::Address;
 use crate::util::cached_rw_lock::CachedRwLock;
 
 use broadcaster::{EventBroadcaster, QueryBroadcaster};
+use sender::FilterMapReplierSender;
 
 use self::sender::{
     EventSinkSender, FilterMapEventSinkSender, FilterMapInputSender, InputSender,
@@ -255,6 +256,41 @@ impl<T: Clone + Send + 'static, R: Send + 'static> Requestor<T, R> {
     {
         let sender = Box::new(MapReplierSender::new(
             query_map,
+            reply_map,
+            replier,
+            address.into().0,
+        ));
+        self.broadcaster.write().unwrap().add(sender)
+    }
+
+    /// Adds an auto-converting, filtered connection to a replier port of the
+    /// model specified by the address.
+    ///
+    /// Queries and replies are mapped to other types using the closures
+    /// provided in argument, or ignored if the query closure returns `None`.
+    ///
+    /// The replier port must be an asynchronous method of a model of type `M`
+    /// returning a value of the type returned by the reply mapping closure and
+    /// taking as argument a value of the type returned by the query mapping
+    /// closure plus, optionally, a context reference.
+    pub fn filter_map_connect<M, C, D, F, U, Q, S>(
+        &mut self,
+        query_filer_map: C,
+        reply_map: D,
+        replier: F,
+        address: impl Into<Address<M>>,
+    ) -> LineId
+    where
+        M: Model,
+        C: Fn(T) -> Option<U> + Send + Sync + 'static,
+        D: Fn(Q) -> R + Send + Sync + 'static,
+        F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
+        U: Send + 'static,
+        Q: Send + 'static,
+        S: Send + 'static,
+    {
+        let sender = Box::new(FilterMapReplierSender::new(
+            query_filer_map,
             reply_map,
             replier,
             address.into().0,
