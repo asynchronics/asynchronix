@@ -48,9 +48,9 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
         self.shared.outputs.push(None);
 
         // The storage is alway an empty vector so we just book some capacity.
-        self.shared.storage.as_mut().map(|s| {
-            let _ = s.try_reserve(self.senders.len());
-        });
+        if let Some(storage) = self.shared.storage.as_mut() {
+            let _ = storage.try_reserve(self.senders.len());
+        };
 
         line_id
     }
@@ -83,6 +83,7 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
 
     /// Return a list of futures broadcasting an event or query to multiple
     /// addresses.
+    #[allow(clippy::type_complexity)]
     fn futures(
         &mut self,
         arg: T,
