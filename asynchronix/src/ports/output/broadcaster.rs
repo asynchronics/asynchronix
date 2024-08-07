@@ -770,6 +770,14 @@ mod tests {
         )
     }
 
+    // This tests fails with "Concurrent load and mut accesses" even though the
+    // `task_list` implementation which triggers it does not use any unsafe.
+    // This is most certainly related to this Loom bug:
+    //
+    // https://github.com/tokio-rs/loom/issues/260
+    //
+    // Disabling until the bug is fixed.
+    #[ignore]
     #[test]
     fn loom_broadcast_basic() {
         const DEFAULT_PREEMPTION_BOUND: usize = 3;
@@ -843,6 +851,14 @@ mod tests {
         });
     }
 
+    // This tests fails with "Concurrent load and mut accesses" even though the
+    // `task_list` implementation which triggers it does not use any unsafe.
+    // This is most certainly related to this Loom bug:
+    //
+    // https://github.com/tokio-rs/loom/issues/260
+    //
+    // Disabling until the bug is fixed.
+    #[ignore]
     #[test]
     fn loom_broadcast_spurious() {
         const DEFAULT_PREEMPTION_BOUND: usize = 3;
