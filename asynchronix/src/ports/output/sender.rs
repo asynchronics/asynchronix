@@ -4,6 +4,7 @@ use std::future::Future;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use dyn_clone::DynClone;
@@ -17,17 +18,15 @@ use crate::ports::{EventSinkWriter, InputFn, ReplierFn};
 /// replier method.
 pub(super) trait Sender<T, R>: DynClone + Send {
     /// Asynchronously send the event or request.
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<R, SendError>>;
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>>;
 }
 
 dyn_clone::clone_trait_object!(<T, R> Sender<T, R>);
 
 /// An object that can send events to an input port.
-pub(super) struct InputSender<M: 'static, F, T, S>
+pub(super) struct InputSender<M, F, T, S>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S>,
-    T: Send + 'static,
+    M: 'static,
 {
     func: F,
     sender: channel::Sender<M>,
@@ -36,11 +35,9 @@ where
     _phantom_closure_marker: PhantomData<S>,
 }
 
-impl<M: Send, F, T, S> InputSender<M, F, T, S>
+impl<M, F, T, S> InputSender<M, F, T, S>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S>,
-    T: Send + 'static,
+    M: 'static,
 {
     pub(super) fn new(func: F, sender: channel::Sender<M>) -> Self {
         Self {
@@ -53,14 +50,14 @@ where
     }
 }
 
-impl<M: Send, F, T, S> Sender<T, ()> for InputSender<M, F, T, S>
+impl<M, F, T, S> Sender<T, ()> for InputSender<M, F, T, S>
 where
     M: Model,
     F: for<'a> InputFn<'a, M, T, S> + Clone,
     T: Send + 'static,
-    S: Send + 'static,
+    S: Send,
 {
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
         let func = self.func.clone();
 
         let fut = self.sender.send(move |model, scheduler, recycle_box| {
@@ -69,18 +66,16 @@ where
             coerce_box!(RecycleBox::recycle(recycle_box, fut))
         });
 
-        RecycledFuture::new(&mut self.fut_storage, async move {
+        Some(RecycledFuture::new(&mut self.fut_storage, async move {
             fut.await.map_err(|_| SendError {})
-        })
+        }))
     }
 }
 
-impl<M: Send, F, T, S> Clone for InputSender<M, F, T, S>
+impl<M, F, T, S> Clone for InputSender<M, F, T, S>
 where
-    M: Model,
-    F: for<'a> InputFn<'a, M, T, S> + Clone,
-    T: Send + 'static,
-    S: Send + 'static,
+    M: 'static,
+    F: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -93,8 +88,322 @@ where
     }
 }
 
-/// An object that can send a request to a replier port and retrieve a response.
-pub(super) struct ReplierSender<M: 'static, F, T, R, S> {
+/// An object that can send mapped events to an input port.
+pub(super) struct MapInputSender<M, C, F, T, U, S>
+where
+    M: 'static,
+{
+    map: Arc<C>,
+    func: F,
+    sender: channel::Sender<M>,
+    fut_storage: Option<RecycleBox<()>>,
+    _phantom_map: PhantomData<fn(T) -> U>,
+    _phantom_closure: PhantomData<fn(&mut M, U)>,
+    _phantom_closure_marker: PhantomData<S>,
+}
+
+impl<M, C, F, T, U, S> MapInputSender<M, C, F, T, U, S>
+where
+    M: 'static,
+{
+    pub(super) fn new(map: C, func: F, sender: channel::Sender<M>) -> Self {
+        Self {
+            map: Arc::new(map),
+            func,
+            sender,
+            fut_storage: None,
+            _phantom_map: PhantomData,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
+        }
+    }
+}
+
+impl<M, C, F, T, U, S> Sender<T, ()> for MapInputSender<M, C, F, T, U, S>
+where
+    M: Model,
+    C: Fn(T) -> U + Send + Sync,
+    F: for<'a> InputFn<'a, M, U, S> + Clone,
+    T: Send + 'static,
+    U: Send + 'static,
+    S: Send,
+{
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+        let func = self.func.clone();
+        let arg = (self.map)(arg);
+
+        let fut = self.sender.send(move |model, scheduler, recycle_box| {
+            let fut = func.call(model, arg, scheduler);
+
+            coerce_box!(RecycleBox::recycle(recycle_box, fut))
+        });
+
+        Some(RecycledFuture::new(&mut self.fut_storage, async move {
+            fut.await.map_err(|_| SendError {})
+        }))
+    }
+}
+
+impl<M, C, F, T, U, S> Clone for MapInputSender<M, C, F, T, U, S>
+where
+    M: 'static,
+    F: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            map: self.map.clone(),
+            func: self.func.clone(),
+            sender: self.sender.clone(),
+            fut_storage: None,
+            _phantom_map: PhantomData,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
+        }
+    }
+}
+
+/// An object that can filter and send mapped events to an input port.
+pub(super) struct FilterMapInputSender<M, C, F, T, U, S>
+where
+    M: 'static,
+{
+    filter_map: Arc<C>,
+    func: F,
+    sender: channel::Sender<M>,
+    fut_storage: Option<RecycleBox<()>>,
+    _phantom_filter_map: PhantomData<fn(T) -> Option<U>>,
+    _phantom_closure: PhantomData<fn(&mut M, U)>,
+    _phantom_closure_marker: PhantomData<S>,
+}
+
+impl<M, C, F, T, U, S> FilterMapInputSender<M, C, F, T, U, S>
+where
+    M: 'static,
+{
+    pub(super) fn new(filter_map: C, func: F, sender: channel::Sender<M>) -> Self {
+        Self {
+            filter_map: Arc::new(filter_map),
+            func,
+            sender,
+            fut_storage: None,
+            _phantom_filter_map: PhantomData,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
+        }
+    }
+}
+
+impl<M, C, F, T, U, S> Sender<T, ()> for FilterMapInputSender<M, C, F, T, U, S>
+where
+    M: Model,
+    C: Fn(T) -> Option<U> + Send + Sync,
+    F: for<'a> InputFn<'a, M, U, S> + Clone,
+    T: Send + 'static,
+    U: Send + 'static,
+    S: Send,
+{
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+        (self.filter_map)(arg).map(|arg| {
+            let func = self.func.clone();
+
+            let fut = self.sender.send(move |model, scheduler, recycle_box| {
+                let fut = func.call(model, arg, scheduler);
+
+                coerce_box!(RecycleBox::recycle(recycle_box, fut))
+            });
+
+            RecycledFuture::new(&mut self.fut_storage, async move {
+                fut.await.map_err(|_| SendError {})
+            })
+        })
+    }
+}
+
+impl<M, C, F, T, U, S> Clone for FilterMapInputSender<M, C, F, T, U, S>
+where
+    M: 'static,
+    F: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            filter_map: self.filter_map.clone(),
+            func: self.func.clone(),
+            sender: self.sender.clone(),
+            fut_storage: None,
+            _phantom_filter_map: PhantomData,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
+        }
+    }
+}
+
+/// An object that can send an event to an event sink.
+pub(super) struct EventSinkSender<T, W> {
+    writer: W,
+    fut_storage: Option<RecycleBox<()>>,
+    _phantom_event: PhantomData<T>,
+}
+
+impl<T, W> EventSinkSender<T, W> {
+    pub(super) fn new(writer: W) -> Self {
+        Self {
+            writer,
+            fut_storage: None,
+            _phantom_event: PhantomData,
+        }
+    }
+}
+
+impl<T, W> Sender<T, ()> for EventSinkSender<T, W>
+where
+    T: Send + 'static,
+    W: EventSinkWriter<T>,
+{
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+        let writer = &mut self.writer;
+
+        Some(RecycledFuture::new(&mut self.fut_storage, async move {
+            writer.write(arg);
+
+            Ok(())
+        }))
+    }
+}
+
+impl<T, W: Clone> Clone for EventSinkSender<T, W> {
+    fn clone(&self) -> Self {
+        Self {
+            writer: self.writer.clone(),
+            fut_storage: None,
+            _phantom_event: PhantomData,
+        }
+    }
+}
+
+/// An object that can send mapped events to an event sink.
+pub(super) struct MapEventSinkSender<T, U, W, C>
+where
+    C: Fn(T) -> U,
+{
+    writer: W,
+    map: Arc<C>,
+    fut_storage: Option<RecycleBox<()>>,
+    _phantom_event: PhantomData<T>,
+}
+
+impl<T, U, W, C> MapEventSinkSender<T, U, W, C>
+where
+    C: Fn(T) -> U,
+{
+    pub(super) fn new(map: C, writer: W) -> Self {
+        Self {
+            writer,
+            map: Arc::new(map),
+            fut_storage: None,
+            _phantom_event: PhantomData,
+        }
+    }
+}
+
+impl<T, U, W, C> Sender<T, ()> for MapEventSinkSender<T, U, W, C>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+    C: Fn(T) -> U + Send + Sync,
+    W: EventSinkWriter<U>,
+{
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+        let writer = &mut self.writer;
+        let arg = (self.map)(arg);
+
+        Some(RecycledFuture::new(&mut self.fut_storage, async move {
+            writer.write(arg);
+
+            Ok(())
+        }))
+    }
+}
+
+impl<T, U, W, C> Clone for MapEventSinkSender<T, U, W, C>
+where
+    C: Fn(T) -> U,
+    W: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            writer: self.writer.clone(),
+            map: self.map.clone(),
+            fut_storage: None,
+            _phantom_event: PhantomData,
+        }
+    }
+}
+
+/// An object that can filter and send mapped events to an event sink.
+pub(super) struct FilterMapEventSinkSender<T, U, W, C>
+where
+    C: Fn(T) -> Option<U>,
+{
+    writer: W,
+    filter_map: Arc<C>,
+    fut_storage: Option<RecycleBox<()>>,
+    _phantom_event: PhantomData<T>,
+}
+
+impl<T, U, W, C> FilterMapEventSinkSender<T, U, W, C>
+where
+    C: Fn(T) -> Option<U>,
+{
+    pub(super) fn new(filter_map: C, writer: W) -> Self {
+        Self {
+            writer,
+            filter_map: Arc::new(filter_map),
+            fut_storage: None,
+            _phantom_event: PhantomData,
+        }
+    }
+}
+
+impl<T, U, W, C> Sender<T, ()> for FilterMapEventSinkSender<T, U, W, C>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+    C: Fn(T) -> Option<U> + Send + Sync,
+    W: EventSinkWriter<U>,
+{
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+        let writer = &mut self.writer;
+
+        (self.filter_map)(arg).map(|arg| {
+            RecycledFuture::new(&mut self.fut_storage, async move {
+                writer.write(arg);
+
+                Ok(())
+            })
+        })
+    }
+}
+
+impl<T, U, W, C> Clone for FilterMapEventSinkSender<T, U, W, C>
+where
+    C: Fn(T) -> Option<U>,
+    W: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            writer: self.writer.clone(),
+            filter_map: self.filter_map.clone(),
+            fut_storage: None,
+            _phantom_event: PhantomData,
+        }
+    }
+}
+
+/// An object that can send requests to a replier port and retrieve responses.
+pub(super) struct ReplierSender<M, F, T, R, S>
+where
+    M: Model,
+{
     func: F,
     sender: channel::Sender<M>,
     receiver: multishot::Receiver<R>,
@@ -106,9 +415,6 @@ pub(super) struct ReplierSender<M: 'static, F, T, R, S> {
 impl<M, F, T, R, S> ReplierSender<M, F, T, R, S>
 where
     M: Model,
-    F: for<'a> ReplierFn<'a, M, T, R, S>,
-    T: Send + 'static,
-    R: Send + 'static,
 {
     pub(super) fn new(func: F, sender: channel::Sender<M>) -> Self {
         Self {
@@ -130,7 +436,7 @@ where
     R: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<R, SendError>> {
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
         let func = self.func.clone();
         let sender = &mut self.sender;
         let reply_receiver = &mut self.receiver;
@@ -149,7 +455,7 @@ where
             coerce_box!(RecycleBox::recycle(recycle_box, fut))
         });
 
-        RecycledFuture::new(fut_storage, async move {
+        Some(RecycledFuture::new(fut_storage, async move {
             // Send the message.
             send_fut.await.map_err(|_| SendError {})?;
 
@@ -157,17 +463,14 @@ where
             // If an error is received, it most likely means the mailbox was
             // dropped before the message was processed.
             reply_receiver.recv().await.map_err(|_| SendError {})
-        })
+        }))
     }
 }
 
 impl<M, F, T, R, S> Clone for ReplierSender<M, F, T, R, S>
 where
     M: Model,
-    F: for<'a> ReplierFn<'a, M, T, R, S> + Clone,
-    T: Send + 'static,
-    R: Send + 'static,
-    S: Send,
+    F: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -181,49 +484,224 @@ where
     }
 }
 
-/// An object that can send a payload to an event sink.
-pub(super) struct EventSinkSender<T: Send + 'static, W: EventSinkWriter<T>> {
-    writer: W,
+/// An object that can send mapped requests to a replier port and retrieve
+/// mapped responses.
+pub(super) struct MapReplierSender<M, C, D, F, T, R, U, Q, S>
+where
+    M: Model,
+{
+    query_map: Arc<C>,
+    reply_map: Arc<D>,
+    func: F,
+    sender: channel::Sender<M>,
+    receiver: multishot::Receiver<Q>,
     fut_storage: Option<RecycleBox<()>>,
-    _phantom_event: PhantomData<T>,
+    _phantom_query_map: PhantomData<fn(T) -> U>,
+    _phantom_reply_map: PhantomData<fn(Q) -> R>,
+    _phantom_closure: PhantomData<fn(&mut M, U) -> Q>,
+    _phantom_closure_marker: PhantomData<S>,
 }
 
-impl<T: Send + 'static, W: EventSinkWriter<T>> EventSinkSender<T, W> {
-    pub(super) fn new(writer: W) -> Self {
+impl<M, C, D, F, T, R, U, Q, S> MapReplierSender<M, C, D, F, T, R, U, Q, S>
+where
+    M: Model,
+{
+    pub(super) fn new(query_map: C, reply_map: D, func: F, sender: channel::Sender<M>) -> Self {
         Self {
-            writer,
+            query_map: Arc::new(query_map),
+            reply_map: Arc::new(reply_map),
+            func,
+            sender,
+            receiver: multishot::Receiver::new(),
             fut_storage: None,
-            _phantom_event: PhantomData,
+            _phantom_query_map: PhantomData,
+            _phantom_reply_map: PhantomData,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
         }
     }
 }
 
-impl<T, W> Sender<T, ()> for EventSinkSender<T, W>
+impl<M, C, D, F, T, R, U, Q, S> Sender<T, R> for MapReplierSender<M, C, D, F, T, R, U, Q, S>
 where
+    M: Model,
+    C: Fn(T) -> U + Send + Sync,
+    D: Fn(Q) -> R + Send + Sync,
+    F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
     T: Send + 'static,
-    W: EventSinkWriter<T>,
+    R: Send + 'static,
+    U: Send + 'static,
+    Q: Send + 'static,
+    S: Send,
 {
-    fn send(&mut self, arg: T) -> RecycledFuture<'_, Result<(), SendError>> {
-        let writer = &mut self.writer;
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
+        let func = self.func.clone();
+        let arg = (self.query_map)(arg);
+        let sender = &mut self.sender;
+        let reply_receiver = &mut self.receiver;
+        let fut_storage = &mut self.fut_storage;
+        let reply_map = &*self.reply_map;
 
-        RecycledFuture::new(&mut self.fut_storage, async move {
-            writer.write(arg);
+        // The previous future generated by this method should have been polled
+        // to completion so a new sender should be readily available.
+        let reply_sender = reply_receiver.sender().unwrap();
 
-            Ok(())
+        let send_fut = sender.send(move |model, scheduler, recycle_box| {
+            let fut = async move {
+                let reply = func.call(model, arg, scheduler).await;
+                reply_sender.send(reply);
+            };
+
+            coerce_box!(RecycleBox::recycle(recycle_box, fut))
+        });
+
+        Some(RecycledFuture::new(fut_storage, async move {
+            // Send the message.
+            send_fut.await.map_err(|_| SendError {})?;
+
+            // Wait until the message is processed and the reply is sent back.
+            // If an error is received, it most likely means the mailbox was
+            // dropped before the message was processed.
+            reply_receiver
+                .recv()
+                .await
+                .map_err(|_| SendError {})
+                .map(reply_map)
+        }))
+    }
+}
+
+impl<M, C, D, F, T, R, U, Q, S> Clone for MapReplierSender<M, C, D, F, T, R, U, Q, S>
+where
+    M: Model,
+    F: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            query_map: self.query_map.clone(),
+            reply_map: self.reply_map.clone(),
+            func: self.func.clone(),
+            sender: self.sender.clone(),
+            receiver: multishot::Receiver::new(),
+            fut_storage: None,
+            _phantom_query_map: PhantomData,
+            _phantom_reply_map: PhantomData,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
+        }
+    }
+}
+
+/// An object that can filter and send mapped requests to a replier port and
+/// retrieve mapped responses.
+pub(super) struct FilterMapReplierSender<M, C, D, F, T, R, U, Q, S>
+where
+    M: Model,
+{
+    query_filter_map: Arc<C>,
+    reply_map: Arc<D>,
+    func: F,
+    sender: channel::Sender<M>,
+    receiver: multishot::Receiver<Q>,
+    fut_storage: Option<RecycleBox<()>>,
+    _phantom_query_map: PhantomData<fn(T) -> U>,
+    _phantom_reply_map: PhantomData<fn(Q) -> R>,
+    _phantom_closure: PhantomData<fn(&mut M, U) -> Q>,
+    _phantom_closure_marker: PhantomData<S>,
+}
+
+impl<M, C, D, F, T, R, U, Q, S> FilterMapReplierSender<M, C, D, F, T, R, U, Q, S>
+where
+    M: Model,
+{
+    pub(super) fn new(
+        query_filter_map: C,
+        reply_map: D,
+        func: F,
+        sender: channel::Sender<M>,
+    ) -> Self {
+        Self {
+            query_filter_map: Arc::new(query_filter_map),
+            reply_map: Arc::new(reply_map),
+            func,
+            sender,
+            receiver: multishot::Receiver::new(),
+            fut_storage: None,
+            _phantom_query_map: PhantomData,
+            _phantom_reply_map: PhantomData,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
+        }
+    }
+}
+
+impl<M, C, D, F, T, R, U, Q, S> Sender<T, R> for FilterMapReplierSender<M, C, D, F, T, R, U, Q, S>
+where
+    M: Model,
+    C: Fn(T) -> Option<U> + Send + Sync,
+    D: Fn(Q) -> R + Send + Sync,
+    F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
+    T: Send + 'static,
+    R: Send + 'static,
+    U: Send + 'static,
+    Q: Send + 'static,
+    S: Send,
+{
+    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
+        (self.query_filter_map)(arg).map(|arg| {
+            let func = self.func.clone();
+            let sender = &mut self.sender;
+            let reply_receiver = &mut self.receiver;
+            let fut_storage = &mut self.fut_storage;
+            let reply_map = &*self.reply_map;
+
+            // The previous future generated by this method should have been polled
+            // to completion so a new sender should be readily available.
+            let reply_sender = reply_receiver.sender().unwrap();
+
+            let send_fut = sender.send(move |model, scheduler, recycle_box| {
+                let fut = async move {
+                    let reply = func.call(model, arg, scheduler).await;
+                    reply_sender.send(reply);
+                };
+
+                coerce_box!(RecycleBox::recycle(recycle_box, fut))
+            });
+
+            RecycledFuture::new(fut_storage, async move {
+                // Send the message.
+                send_fut.await.map_err(|_| SendError {})?;
+
+                // Wait until the message is processed and the reply is sent back.
+                // If an error is received, it most likely means the mailbox was
+                // dropped before the message was processed.
+                reply_receiver
+                    .recv()
+                    .await
+                    .map_err(|_| SendError {})
+                    .map(reply_map)
+            })
         })
     }
 }
 
-impl<T, W> Clone for EventSinkSender<T, W>
+impl<M, C, D, F, T, R, U, Q, S> Clone for FilterMapReplierSender<M, C, D, F, T, R, U, Q, S>
 where
-    T: Send + 'static,
-    W: EventSinkWriter<T>,
+    M: Model,
+    F: Clone,
 {
     fn clone(&self) -> Self {
         Self {
-            writer: self.writer.clone(),
+            query_filter_map: self.query_filter_map.clone(),
+            reply_map: self.reply_map.clone(),
+            func: self.func.clone(),
+            sender: self.sender.clone(),
+            receiver: multishot::Receiver::new(),
             fut_storage: None,
-            _phantom_event: PhantomData,
+            _phantom_query_map: PhantomData,
+            _phantom_reply_map: PhantomData,
+            _phantom_closure: PhantomData,
+            _phantom_closure_marker: PhantomData,
         }
     }
 }
