@@ -70,7 +70,7 @@ impl<T: Clone + Send + 'static> EventSource<T> {
     ) -> LineId
     where
         M: Model,
-        C: Fn(T) -> U + Send + 'static,
+        C: for<'a> Fn(&'a T) -> U + Send + 'static,
         F: for<'a> InputFn<'a, M, U, S> + Clone,
         U: Send + 'static,
         S: Send + 'static,
@@ -96,7 +96,7 @@ impl<T: Clone + Send + 'static> EventSource<T> {
     ) -> LineId
     where
         M: Model,
-        C: Fn(T) -> Option<U> + Send + 'static,
+        C: for<'a> Fn(&'a T) -> Option<U> + Send + 'static,
         F: for<'a> InputFn<'a, M, U, S> + Clone,
         U: Send + 'static,
         S: Send + 'static,
@@ -277,7 +277,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> QuerySource<T, R> {
     ) -> LineId
     where
         M: Model,
-        C: Fn(T) -> U + Send + 'static,
+        C: for<'a> Fn(&'a T) -> U + Send + 'static,
         D: Fn(Q) -> R + Send + Sync + 'static,
         F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
         U: Send + 'static,
@@ -312,7 +312,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> QuerySource<T, R> {
     ) -> LineId
     where
         M: Model,
-        C: Fn(T) -> Option<U> + Send + 'static,
+        C: for<'a> Fn(&'a T) -> Option<U> + Send + 'static,
         D: Fn(Q) -> R + Send + Sync + 'static,
         F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
         U: Send + 'static,

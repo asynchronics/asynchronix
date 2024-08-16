@@ -16,8 +16,13 @@ pub(super) type SenderFuture<R> = Pin<Box<dyn Future<Output = Result<R, SendErro
 
 /// An event or query sender abstracting over the target model and input method.
 pub(super) trait Sender<T, R>: Send {
-    /// Asynchronously send the event or request.
-    fn send(&mut self, arg: T) -> Option<SenderFuture<R>>;
+    /// Asynchronously sends a message using a reference to the message.
+    fn send(&mut self, arg: &T) -> Option<SenderFuture<R>>;
+
+    /// Asynchronously sends an owned message.
+    fn send_owned(&mut self, arg: T) -> Option<SenderFuture<R>> {
+        self.send(&arg)
+    }
 }
 
 /// An object that can send events to an input port.
@@ -49,10 +54,14 @@ impl<M, F, T, S> Sender<T, ()> for InputSender<M, F, T, S>
 where
     M: Model,
     F: for<'a> InputFn<'a, M, T, S> + Clone,
-    T: Send + 'static,
+    T: Clone + Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> Option<SenderFuture<()>> {
+    fn send(&mut self, arg: &T) -> Option<SenderFuture<()>> {
+        self.send_owned(arg.clone())
+    }
+
+    fn send_owned(&mut self, arg: T) -> Option<SenderFuture<()>> {
         let func = self.func.clone();
         let sender = self.sender.clone();
 
@@ -101,13 +110,13 @@ where
 impl<M, C, F, T, U, S> Sender<T, ()> for MapInputSender<M, C, F, T, U, S>
 where
     M: Model,
-    C: Fn(T) -> U + Send,
+    C: Fn(&T) -> U + Send,
     F: for<'a> InputFn<'a, M, U, S> + Clone,
     T: Send + 'static,
     U: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> Option<SenderFuture<()>> {
+    fn send(&mut self, arg: &T) -> Option<SenderFuture<()>> {
         let func = self.func.clone();
         let arg = (self.map)(arg);
         let sender = self.sender.clone();
@@ -157,13 +166,13 @@ where
 impl<M, C, F, T, U, S> Sender<T, ()> for FilterMapInputSender<M, C, F, T, U, S>
 where
     M: Model,
-    C: Fn(T) -> Option<U> + Send,
+    C: Fn(&T) -> Option<U> + Send,
     F: for<'a> InputFn<'a, M, U, S> + Clone,
     T: Send + 'static,
     U: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> Option<SenderFuture<()>> {
+    fn send(&mut self, arg: &T) -> Option<SenderFuture<()>> {
         (self.filter_map)(arg).map(|arg| {
             let func = self.func.clone();
             let sender = self.sender.clone();
@@ -211,11 +220,15 @@ impl<M, F, T, R, S> Sender<T, R> for ReplierSender<M, F, T, R, S>
 where
     M: Model,
     F: for<'a> ReplierFn<'a, M, T, R, S> + Clone,
-    T: Send + 'static,
+    T: Clone + Send + 'static,
     R: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> Option<SenderFuture<R>> {
+    fn send(&mut self, arg: &T) -> Option<SenderFuture<R>> {
+        self.send_owned(arg.clone())
+    }
+
+    fn send_owned(&mut self, arg: T) -> Option<SenderFuture<R>> {
         let func = self.func.clone();
         let sender = self.sender.clone();
         let (reply_sender, reply_receiver) = oneshot::channel();
@@ -275,7 +288,7 @@ where
 impl<M, C, D, F, T, R, U, Q, S> Sender<T, R> for MapReplierSender<M, C, D, F, T, R, U, Q, S>
 where
     M: Model,
-    C: Fn(T) -> U + Send,
+    C: Fn(&T) -> U + Send,
     D: Fn(Q) -> R + Send + Sync + 'static,
     F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
     T: Send + 'static,
@@ -284,7 +297,7 @@ where
     Q: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> Option<SenderFuture<R>> {
+    fn send(&mut self, arg: &T) -> Option<SenderFuture<R>> {
         let func = self.func.clone();
         let arg = (self.query_map)(arg);
         let sender = self.sender.clone();
@@ -354,7 +367,7 @@ where
 impl<M, C, D, F, T, R, U, Q, S> Sender<T, R> for FilterMapReplierSender<M, C, D, F, T, R, U, Q, S>
 where
     M: Model,
-    C: Fn(T) -> Option<U> + Send,
+    C: Fn(&T) -> Option<U> + Send,
     D: Fn(Q) -> R + Send + Sync + 'static,
     F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
     T: Send + 'static,
@@ -363,7 +376,7 @@ where
     Q: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> Option<SenderFuture<R>> {
+    fn send(&mut self, arg: &T) -> Option<SenderFuture<R>> {
         (self.query_filter_map)(arg).map(|arg| {
             let func = self.func.clone();
             let sender = self.sender.clone();

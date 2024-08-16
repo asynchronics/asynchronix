@@ -79,14 +79,14 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
         // Broadcast the message and collect all futures.
         let mut iter = self.senders.iter_mut();
         while let Some(sender) = iter.next() {
-            // Move the argument rather than clone it for the last future.
+            // Move the argument for the last future to avoid undue cloning.
             if iter.len() == 0 {
-                if let Some(fut) = sender.1.send(arg) {
+                if let Some(fut) = sender.1.send_owned(arg) {
                     future_states.push(SenderFutureState::Pending(fut));
                 }
                 break;
             }
-            if let Some(fut) = sender.1.send(arg.clone()) {
+            if let Some(fut) = sender.1.send(&arg) {
                 future_states.push(SenderFutureState::Pending(fut));
             }
         }
@@ -159,7 +159,7 @@ impl<T: Clone + Send> EventBroadcaster<T> {
             // No sender.
             [] => Fut::Empty,
             // One sender at most.
-            [sender] => Fut::Single(sender.1.send(arg)),
+            [sender] => Fut::Single(sender.1.send_owned(arg)),
             // Possibly multiple senders.
             _ => Fut::Multiple(self.inner.futures(arg)),
         };
@@ -247,7 +247,7 @@ impl<T: Clone + Send, R: Send> QueryBroadcaster<T, R> {
             // No sender.
             [] => Fut::Empty,
             // One sender at most.
-            [sender] => Fut::Single(sender.1.send(arg)),
+            [sender] => Fut::Single(sender.1.send_owned(arg)),
             // Possibly multiple senders.
             _ => Fut::Multiple(self.inner.futures(arg)),
         };
@@ -569,7 +569,7 @@ mod tests {
             let mailbox = Receiver::new(10);
             let address = mailbox.sender();
             let id_filter_sender = Box::new(FilterMapInputSender::new(
-                move |x| (x == id || x == BROADCAST_ALL).then_some(x),
+                move |x: &usize| (*x == id || *x == BROADCAST_ALL).then_some(*x),
                 SumModel::increment,
                 address,
             ));
@@ -704,7 +704,7 @@ mod tests {
             let mailbox = Receiver::new(10);
             let address = mailbox.sender();
             let sender = Box::new(FilterMapReplierSender::new(
-                move |x| (x == id || x == BROADCAST_ALL).then_some(x),
+                move |x: &usize| (*x == id || *x == BROADCAST_ALL).then_some(*x),
                 |x| 3 * x,
                 DoubleModel::double,
                 address,
@@ -821,7 +821,7 @@ mod tests {
     impl<R: Send + 'static> Sender<(), R> for TestEvent<R> {
         fn send(
             &mut self,
-            _arg: (),
+            _arg: &(),
         ) -> Option<Pin<Box<dyn Future<Output = Result<R, SendError>> + Send>>> {
             let receiver = self.receiver.take().unwrap();
 

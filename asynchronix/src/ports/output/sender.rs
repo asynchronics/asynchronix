@@ -17,8 +17,13 @@ use crate::ports::{EventSinkWriter, InputFn, ReplierFn};
 /// An event or query sender abstracting over the target model and input or
 /// replier method.
 pub(super) trait Sender<T, R>: DynClone + Send {
-    /// Asynchronously send the event or request.
-    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>>;
+    /// Asynchronously sends a message using a reference to the message.
+    fn send(&mut self, arg: &T) -> Option<RecycledFuture<'_, Result<R, SendError>>>;
+
+    /// Asynchronously sends an owned message.
+    fn send_owned(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
+        self.send(&arg)
+    }
 }
 
 dyn_clone::clone_trait_object!(<T, R> Sender<T, R>);
@@ -54,10 +59,14 @@ impl<M, F, T, S> Sender<T, ()> for InputSender<M, F, T, S>
 where
     M: Model,
     F: for<'a> InputFn<'a, M, T, S> + Clone,
-    T: Send + 'static,
+    T: Clone + Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+    fn send(&mut self, arg: &T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+        self.send_owned(arg.clone())
+    }
+
+    fn send_owned(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
         let func = self.func.clone();
 
         let fut = self.sender.send(move |model, scheduler, recycle_box| {
@@ -122,13 +131,13 @@ where
 impl<M, C, F, T, U, S> Sender<T, ()> for MapInputSender<M, C, F, T, U, S>
 where
     M: Model,
-    C: Fn(T) -> U + Send + Sync,
+    C: Fn(&T) -> U + Send + Sync,
     F: for<'a> InputFn<'a, M, U, S> + Clone,
     T: Send + 'static,
     U: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+    fn send(&mut self, arg: &T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
         let func = self.func.clone();
         let arg = (self.map)(arg);
 
@@ -196,13 +205,13 @@ where
 impl<M, C, F, T, U, S> Sender<T, ()> for FilterMapInputSender<M, C, F, T, U, S>
 where
     M: Model,
-    C: Fn(T) -> Option<U> + Send + Sync,
+    C: Fn(&T) -> Option<U> + Send + Sync,
     F: for<'a> InputFn<'a, M, U, S> + Clone,
     T: Send + 'static,
     U: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+    fn send(&mut self, arg: &T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
         (self.filter_map)(arg).map(|arg| {
             let func = self.func.clone();
 
@@ -256,10 +265,14 @@ impl<T, W> EventSinkSender<T, W> {
 
 impl<T, W> Sender<T, ()> for EventSinkSender<T, W>
 where
-    T: Send + 'static,
+    T: Clone + Send + 'static,
     W: EventSinkWriter<T>,
 {
-    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+    fn send(&mut self, arg: &T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+        self.send_owned(arg.clone())
+    }
+
+    fn send_owned(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
         let writer = &mut self.writer;
 
         Some(RecycledFuture::new(&mut self.fut_storage, async move {
@@ -283,7 +296,7 @@ impl<T, W: Clone> Clone for EventSinkSender<T, W> {
 /// An object that can send mapped events to an event sink.
 pub(super) struct MapEventSinkSender<T, U, W, C>
 where
-    C: Fn(T) -> U,
+    C: Fn(&T) -> U,
 {
     writer: W,
     map: Arc<C>,
@@ -293,7 +306,7 @@ where
 
 impl<T, U, W, C> MapEventSinkSender<T, U, W, C>
 where
-    C: Fn(T) -> U,
+    C: Fn(&T) -> U,
 {
     pub(super) fn new(map: C, writer: W) -> Self {
         Self {
@@ -309,10 +322,10 @@ impl<T, U, W, C> Sender<T, ()> for MapEventSinkSender<T, U, W, C>
 where
     T: Send + 'static,
     U: Send + 'static,
-    C: Fn(T) -> U + Send + Sync,
+    C: Fn(&T) -> U + Send + Sync,
     W: EventSinkWriter<U>,
 {
-    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+    fn send(&mut self, arg: &T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
         let writer = &mut self.writer;
         let arg = (self.map)(arg);
 
@@ -326,7 +339,7 @@ where
 
 impl<T, U, W, C> Clone for MapEventSinkSender<T, U, W, C>
 where
-    C: Fn(T) -> U,
+    C: Fn(&T) -> U,
     W: Clone,
 {
     fn clone(&self) -> Self {
@@ -342,7 +355,7 @@ where
 /// An object that can filter and send mapped events to an event sink.
 pub(super) struct FilterMapEventSinkSender<T, U, W, C>
 where
-    C: Fn(T) -> Option<U>,
+    C: Fn(&T) -> Option<U>,
 {
     writer: W,
     filter_map: Arc<C>,
@@ -352,7 +365,7 @@ where
 
 impl<T, U, W, C> FilterMapEventSinkSender<T, U, W, C>
 where
-    C: Fn(T) -> Option<U>,
+    C: Fn(&T) -> Option<U>,
 {
     pub(super) fn new(filter_map: C, writer: W) -> Self {
         Self {
@@ -368,10 +381,10 @@ impl<T, U, W, C> Sender<T, ()> for FilterMapEventSinkSender<T, U, W, C>
 where
     T: Send + 'static,
     U: Send + 'static,
-    C: Fn(T) -> Option<U> + Send + Sync,
+    C: Fn(&T) -> Option<U> + Send + Sync,
     W: EventSinkWriter<U>,
 {
-    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
+    fn send(&mut self, arg: &T) -> Option<RecycledFuture<'_, Result<(), SendError>>> {
         let writer = &mut self.writer;
 
         (self.filter_map)(arg).map(|arg| {
@@ -386,7 +399,7 @@ where
 
 impl<T, U, W, C> Clone for FilterMapEventSinkSender<T, U, W, C>
 where
-    C: Fn(T) -> Option<U>,
+    C: Fn(&T) -> Option<U>,
     W: Clone,
 {
     fn clone(&self) -> Self {
@@ -432,11 +445,15 @@ impl<M, F, T, R, S> Sender<T, R> for ReplierSender<M, F, T, R, S>
 where
     M: Model,
     F: for<'a> ReplierFn<'a, M, T, R, S> + Clone,
-    T: Send + 'static,
+    T: Clone + Send + 'static,
     R: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
+    fn send(&mut self, arg: &T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
+        self.send_owned(arg.clone())
+    }
+
+    fn send_owned(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
         let func = self.func.clone();
         let sender = &mut self.sender;
         let reply_receiver = &mut self.receiver;
@@ -525,7 +542,7 @@ where
 impl<M, C, D, F, T, R, U, Q, S> Sender<T, R> for MapReplierSender<M, C, D, F, T, R, U, Q, S>
 where
     M: Model,
-    C: Fn(T) -> U + Send + Sync,
+    C: Fn(&T) -> U + Send + Sync,
     D: Fn(Q) -> R + Send + Sync,
     F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
     T: Send + 'static,
@@ -534,7 +551,7 @@ where
     Q: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
+    fn send(&mut self, arg: &T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
         let func = self.func.clone();
         let arg = (self.query_map)(arg);
         let sender = &mut self.sender;
@@ -638,7 +655,7 @@ where
 impl<M, C, D, F, T, R, U, Q, S> Sender<T, R> for FilterMapReplierSender<M, C, D, F, T, R, U, Q, S>
 where
     M: Model,
-    C: Fn(T) -> Option<U> + Send + Sync,
+    C: Fn(&T) -> Option<U> + Send + Sync,
     D: Fn(Q) -> R + Send + Sync,
     F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
     T: Send + 'static,
@@ -647,7 +664,7 @@ where
     Q: Send + 'static,
     S: Send,
 {
-    fn send(&mut self, arg: T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
+    fn send(&mut self, arg: &T) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
         (self.query_filter_map)(arg).map(|arg| {
             let func = self.func.clone();
             let sender = &mut self.sender;
