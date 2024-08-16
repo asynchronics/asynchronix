@@ -78,7 +78,7 @@ impl<T: Clone + Send + 'static> Output<T> {
     ) -> LineId
     where
         M: Model,
-        C: Fn(T) -> U + Send + Sync + 'static,
+        C: Fn(&T) -> U + Send + Sync + 'static,
         F: for<'a> InputFn<'a, M, U, S> + Clone,
         U: Send + 'static,
         S: Send + 'static,
@@ -95,7 +95,7 @@ impl<T: Clone + Send + 'static> Output<T> {
     /// argument.
     pub fn map_connect_sink<C, U, S>(&mut self, map: C, sink: &S) -> LineId
     where
-        C: Fn(T) -> U + Send + Sync + 'static,
+        C: Fn(&T) -> U + Send + Sync + 'static,
         U: Send + 'static,
         S: EventSink<U>,
     {
@@ -120,7 +120,7 @@ impl<T: Clone + Send + 'static> Output<T> {
     ) -> LineId
     where
         M: Model,
-        C: Fn(T) -> Option<U> + Send + Sync + 'static,
+        C: Fn(&T) -> Option<U> + Send + Sync + 'static,
         F: for<'a> InputFn<'a, M, U, S> + Clone,
         U: Send + 'static,
         S: Send + 'static,
@@ -141,7 +141,7 @@ impl<T: Clone + Send + 'static> Output<T> {
     /// argument.
     pub fn filter_map_connect_sink<C, U, S>(&mut self, filter_map: C, sink: &S) -> LineId
     where
-        C: Fn(T) -> Option<U> + Send + Sync + 'static,
+        C: Fn(&T) -> Option<U> + Send + Sync + 'static,
         U: Send + 'static,
         S: EventSink<U>,
     {
@@ -247,7 +247,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> Requestor<T, R> {
     ) -> LineId
     where
         M: Model,
-        C: Fn(T) -> U + Send + Sync + 'static,
+        C: Fn(&T) -> U + Send + Sync + 'static,
         D: Fn(Q) -> R + Send + Sync + 'static,
         F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
         U: Send + 'static,
@@ -282,7 +282,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> Requestor<T, R> {
     ) -> LineId
     where
         M: Model,
-        C: Fn(T) -> Option<U> + Send + Sync + 'static,
+        C: Fn(&T) -> Option<U> + Send + Sync + 'static,
         D: Fn(Q) -> R + Send + Sync + 'static,
         F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
         U: Send + 'static,

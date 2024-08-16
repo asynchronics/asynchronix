@@ -98,13 +98,13 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
         while let Some(sender) = iter.next() {
             // Move the argument rather than clone it for the last future.
             if iter.len() == 0 {
-                if let Some(fut) = sender.1.send(arg) {
+                if let Some(fut) = sender.1.send_owned(arg) {
                     futures.push(fut);
                 }
                 break;
             }
 
-            if let Some(fut) = sender.1.send(arg.clone()) {
+            if let Some(fut) = sender.1.send(&arg) {
                 futures.push(fut);
             }
         }
@@ -190,7 +190,7 @@ impl<T: Clone> EventBroadcaster<T> {
             [] => Ok(()),
 
             // One sender at most.
-            [sender] => match sender.1.send(arg) {
+            [sender] => match sender.1.send_owned(arg) {
                 None => Ok(()),
                 Some(fut) => fut.await.map_err(|_| BroadcastError {}),
             },
@@ -267,7 +267,7 @@ impl<T: Clone, R> QueryBroadcaster<T, R> {
 
             // One sender at most.
             [sender] => {
-                if let Some(fut) = sender.1.send(arg) {
+                if let Some(fut) = sender.1.send_owned(arg) {
                     let output = fut.await.map_err(|_| BroadcastError {})?;
                     self.inner.shared.outputs[0] = Some(output);
 
@@ -667,7 +667,7 @@ mod tests {
             let mailbox = Receiver::new(10);
             let address = mailbox.sender();
             let id_filter_sender = Box::new(FilterMapInputSender::new(
-                move |x| (x == id || x == BROADCAST_ALL).then_some(x),
+                move |x: &usize| (*x == id || *x == BROADCAST_ALL).then_some(*x),
                 SumModel::increment,
                 address,
             ));
@@ -802,7 +802,7 @@ mod tests {
             let mailbox = Receiver::new(10);
             let address = mailbox.sender();
             let sender = Box::new(FilterMapReplierSender::new(
-                move |x| (x == id || x == BROADCAST_ALL).then_some(x),
+                move |x: &usize| (*x == id || *x == BROADCAST_ALL).then_some(*x),
                 |x| 3 * x,
                 DoubleModel::double,
                 address,
@@ -917,7 +917,7 @@ mod tests {
         fut_storage: Option<RecycleBox<()>>,
     }
     impl<R: Send> Sender<(), R> for TestEvent<R> {
-        fn send(&mut self, _arg: ()) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
+        fn send(&mut self, _arg: &()) -> Option<RecycledFuture<'_, Result<R, SendError>>> {
             let fut_storage = &mut self.fut_storage;
             let receiver = &mut self.receiver;
 
