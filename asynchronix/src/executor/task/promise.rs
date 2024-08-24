@@ -20,7 +20,7 @@ struct VTable<U: Send + 'static> {
 }
 
 /// Retrieves the output of the task if ready.
-unsafe fn poll<F: Future, S, T>(ptr: *const ()) -> Stage<F::Output>
+unsafe fn poll<F, S, T>(ptr: *const ()) -> Stage<F::Output>
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
@@ -62,7 +62,7 @@ where
 }
 
 /// Drops the promise.
-unsafe fn drop<F: Future, S, T>(ptr: *const ())
+unsafe fn drop<F, S, T>(ptr: *const ())
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,

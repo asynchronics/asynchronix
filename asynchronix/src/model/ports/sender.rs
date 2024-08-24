@@ -157,7 +157,9 @@ where
         let producer = &mut self.producer;
 
         RecycledFuture::new(&mut self.fut_storage, async move {
-            producer.push(arg).map_err(|_| SendError {})
+            let _ = producer.push(arg);
+
+            Ok(())
         })
     }
 }
