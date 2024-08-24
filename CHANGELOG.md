@@ -1,3 +1,13 @@
+# 0.2.3 (2024-08-24)
+
+- Force the waker VTable to be uniquely instantiated to re-enable the
+  `will_wake` optimisation after its implementation was changed in `std` ([#38])
+- Ignore broadcast error when sending to a closed `EventStream` ([#37])
+
+[#37]: https://github.com/asynchronics/asynchronix/pull/37
+[#38]: https://github.com/asynchronics/asynchronix/pull/38
+
+
 # 0.2.2 (2024-04-04)
 
 - Add `serde` feature and serialization support for `MonotonicTime` ([#19]).
