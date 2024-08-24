@@ -136,6 +136,28 @@ impl<F: Future> Drop for MonitoredFuture<F> {
     }
 }
 
+// A future that checks whether the waker cloned from the first call to `poll`
+// tests equal with `Waker::will_wake` on the second call to `poll`.
+struct WillWakeFuture {
+    waker: Arc<Mutex<Option<std::task::Waker>>>,
+}
+impl Future for WillWakeFuture {
+    type Output = bool;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let waker = &mut self.waker.lock().unwrap();
+
+        match waker.as_ref() {
+            None => {
+                **waker = Some(cx.waker().clone());
+
+                Poll::Pending
+            }
+            Some(waker) => Poll::Ready(waker.will_wake(cx.waker())),
+        }
+    }
+}
+
 #[test]
 fn task_schedule() {
     test_prelude!();
@@ -622,4 +644,25 @@ fn task_drop_cycle() {
     while run_scheduled_runnable() {}
 
     assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 3);
+}
+
+#[test]
+fn task_will_wake() {
+    test_prelude!();
+
+    let waker = Arc::new(Mutex::new(None));
+    let future = WillWakeFuture {
+        waker: waker.clone(),
+    };
+
+    let (promise, runnable, _cancel_token) = spawn(future, schedule_runnable, ());
+    runnable.run();
+
+    assert!(promise.poll().is_pending());
+
+    // Wake the future so it is scheduled another time.
+    waker.lock().unwrap().as_ref().unwrap().wake_by_ref();
+    assert!(run_scheduled_runnable());
+
+    assert_eq!(promise.poll(), Stage::Ready(true));
 }

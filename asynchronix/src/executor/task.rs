@@ -125,13 +125,6 @@ where
     S: Fn(Runnable, T) + Send + Sync + 'static,
     T: Clone + Send + Sync + 'static,
 {
-    const RAW_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
-        Self::clone_waker,
-        Self::wake_by_val,
-        Self::wake_by_ref,
-        Self::drop_waker,
-    );
-
     /// Clones a waker.
     unsafe fn clone_waker(ptr: *const ()) -> RawWaker {
         let this = &*(ptr as *const Self);
@@ -141,7 +134,7 @@ where
             panic!("Attack of the clones: the waker was cloned too many times");
         }
 
-        RawWaker::new(ptr, &Self::RAW_WAKER_VTABLE)
+        RawWaker::new(ptr, raw_waker_vtable::<F, S, T>())
     }
 
     /// Wakes the task by value.
@@ -285,6 +278,37 @@ where
             // so the future was already dropped.
         }
     }
+}
+
+/// Returns a reference to the waker's virtual table.
+///
+/// Unfortunately, Rust will sometimes create multiple memory instances of the
+/// virtual table for the same generic parameters, which defeats
+/// `Waker::will_wake` as the latter tests the pointers to the virtual tables
+/// for equality.
+///
+/// Forcing the function to be inlined appears to solve this problem, but we may
+/// want to investigate more robust methods. Tokio has [switched][1] to a single
+/// non-generic virtual table declared as `static`, which then delegates each
+/// call with another virtual call. This does ensure that `Waker::will_wake`
+/// will always work, but the double indirection is a bit unfortunate and its
+/// cost would need to be evaluated.
+///
+/// [1]: https://github.com/tokio-rs/tokio/pull/5213
+#[inline(never)]
+fn raw_waker_vtable<F, S, T>() -> &'static RawWakerVTable
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+    S: Fn(Runnable, T) + Send + Sync + 'static,
+    T: Clone + Send + Sync + 'static,
+{
+    &RawWakerVTable::new(
+        Task::<F, S, T>::clone_waker,
+        Task::<F, S, T>::wake_by_val,
+        Task::<F, S, T>::wake_by_ref,
+        Task::<F, S, T>::drop_waker,
+    )
 }
 
 /// Spawns a task.

@@ -11,7 +11,7 @@ use crate::loom_exports::debug_or_loom_assert;
 use crate::loom_exports::sync::atomic::{self, AtomicU64, Ordering};
 
 use super::util::RunOnDrop;
-use super::Task;
+use super::{raw_waker_vtable, Task};
 use super::{CLOSED, POLLING, REF_MASK, WAKE_MASK};
 
 /// Virtual table for a `Runnable`.
@@ -77,7 +77,7 @@ where
         }
 
         // Poll the task.
-        let raw_waker = RawWaker::new(ptr, &Task::<F, S, T>::RAW_WAKER_VTABLE);
+        let raw_waker = RawWaker::new(ptr, raw_waker_vtable::<F, S, T>());
         let waker = ManuallyDrop::new(Waker::from_raw(raw_waker));
 
         let cx = &mut Context::from_waker(&waker);
