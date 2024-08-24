@@ -57,3 +57,6 @@ futures-executor = "0.3"
 [[test]]
 name = "integration"
 path = "tests/tests.rs"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(asynchronix_loom)'] }
