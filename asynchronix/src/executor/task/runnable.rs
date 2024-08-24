@@ -22,7 +22,7 @@ struct VTable {
 }
 
 /// Polls the inner future.
-unsafe fn run<F: Future, S, T>(ptr: *const ())
+unsafe fn run<F, S, T>(ptr: *const ())
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
