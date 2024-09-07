@@ -67,20 +67,21 @@ tonic = { version = "0.11", default-features = false, features=["codegen", "pros
 # WASM service dependencies.
 wasm-bindgen = { version = "0.2", optional = true }
 
-[target.'cfg(asynchronix_loom)'.dependencies]
-loom = "0.5"
-waker-fn = "1.1"
-
-
 [dev-dependencies]
 atomic-wait = "1.1"
 futures-util = "0.3"
 futures-executor = "0.3"
 mio = { version = "1.0", features = ["os-poll", "net"] }
 
+[target.'cfg(asynchronix_loom)'.dev-dependencies]
+loom = "0.5"
+waker-fn = "1.1"
+
 [build-dependencies]
 tonic-build = { version = "0.11", optional = true }
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(asynchronix_loom)'] }
 
 [[test]]
 name = "integration"

@@ -1,7 +1,4 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Prevent warnings when checking for flag `asynchronix_loom`.
-    println!("cargo::rustc-check-cfg=cfg(asynchronix_loom)");
-
     #[cfg(feature = "rpc-codegen")]
     let builder = tonic_build::configure()
         .build_client(false)

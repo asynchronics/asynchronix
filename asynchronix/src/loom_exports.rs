@@ -1,4 +1,4 @@
-#[cfg(asynchronix_loom)]
+#[cfg(all(test, asynchronix_loom))]
 #[allow(unused_imports)]
 pub(crate) mod sync {
     pub(crate) use loom::sync::{Arc, LockResult, Mutex, MutexGuard};
@@ -10,7 +10,7 @@ pub(crate) mod sync {
         };
     }
 }
-#[cfg(not(asynchronix_loom))]
+#[cfg(not(all(test, asynchronix_loom)))]
 #[allow(unused_imports)]
 pub(crate) mod sync {
     pub(crate) use std::sync::{Arc, LockResult, Mutex, MutexGuard, PoisonError};
@@ -22,11 +22,11 @@ pub(crate) mod sync {
     }
 }
 
-#[cfg(asynchronix_loom)]
+#[cfg(all(test, asynchronix_loom))]
 pub(crate) mod cell {
     pub(crate) use loom::cell::UnsafeCell;
 }
-#[cfg(not(asynchronix_loom))]
+#[cfg(not(all(test, asynchronix_loom)))]
 pub(crate) mod cell {
     #[derive(Debug)]
     pub(crate) struct UnsafeCell<T>(std::cell::UnsafeCell<T>);
