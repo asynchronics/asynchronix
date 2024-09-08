@@ -28,7 +28,7 @@ jobs:
           toolchain: ${{ matrix.rust }}
 
       - name: Run cargo check
-        run: cargo check --features="grpc-service"
+        run: cargo check --all-features
 
   build-wasm:
     name: Build wasm32
@@ -43,7 +43,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Run cargo build (wasm)
-        run: cargo build --target wasm32-unknown-unknown --features="wasm-service"
+        run: cargo build --target wasm32-unknown-unknown
 
   test:
     name: Test suite
@@ -56,7 +56,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run cargo test
-        run: cargo test --features="grpc-service"
+        run: cargo test --all-features
 
   loom-dry-run:
     name: Loom dry run
@@ -69,7 +69,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Dry-run cargo test (Loom)
-        run: cargo test --no-run --tests --features="grpc-service"
+        run: cargo test --no-run --tests --all-features
         env:
           RUSTFLAGS: --cfg asynchronix_loom
 
@@ -86,12 +86,12 @@ jobs:
           components: miri
 
       - name: Run cargo miri tests (single-threaded executor)
-        run: cargo miri test --tests --lib --features="grpc-service"
+        run: cargo miri test --tests --lib --all-features
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=1
 
       - name: Run cargo miri tests (multi-threaded executor)
-        run: cargo miri test --tests --lib --features="grpc-service"
+        run: cargo miri test --tests --lib --all-features
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=4
 
@@ -149,7 +149,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run cargo clippy
-        run: cargo clippy --features="grpc-service"
+        run: cargo clippy --all-features
 
   docs:
     name: Docs
@@ -162,4 +162,4 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run cargo doc
-        run: cargo doc --no-deps --features="grpc-service" --document-private-items
+        run: cargo doc --no-deps --all-features --document-private-items

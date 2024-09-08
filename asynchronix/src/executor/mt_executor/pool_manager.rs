@@ -26,9 +26,6 @@ pub(super) struct PoolManager {
     terminate_signal: AtomicBool,
     /// Panic caught in a worker thread.
     worker_panic: Mutex<Option<Box<dyn Any + Send + 'static>>>,
-    #[cfg(feature = "dev-logs")]
-    /// Thread wake-up statistics.
-    record: Record,
 }
 
 impl PoolManager {
@@ -61,8 +58,6 @@ impl PoolManager {
             searching_workers: AtomicUsize::new(0),
             terminate_signal: AtomicBool::new(false),
             worker_panic: Mutex::new(None),
-            #[cfg(feature = "dev-logs")]
-            record: Record::new(pool_size),
         }
     }
 
@@ -85,8 +80,6 @@ impl PoolManager {
                 .active_workers
                 .fetch_or(1 << first_idle_worker, Ordering::Relaxed);
             if active_workers & (1 << first_idle_worker) == 0 {
-                #[cfg(feature = "dev-logs")]
-                self.record.increment(first_idle_worker);
                 self.begin_worker_search();
                 self.worker_unparkers[first_idle_worker].unpark();
                 return;
@@ -117,8 +110,6 @@ impl PoolManager {
                     .active_workers
                     .fetch_or(1 << first_idle_worker, Ordering::Relaxed);
                 if active_workers & (1 << first_idle_worker) == 0 {
-                    #[cfg(feature = "dev-logs")]
-                    self.record.increment(first_idle_worker);
                     self.begin_worker_search();
                     self.worker_unparkers[first_idle_worker].unpark();
                     return;
@@ -273,13 +264,6 @@ impl PoolManager {
     }
 }
 
-#[cfg(feature = "dev-logs")]
-impl Drop for PoolManager {
-    fn drop(&mut self) {
-        println!("Thread launch count: {:?}", self.record.get());
-    }
-}
-
 /// An iterator over active workers that yields their associated stealer,
 /// starting from a randomly selected active worker.
 pub(super) struct ShuffledStealers<'a> {
@@ -344,29 +328,5 @@ impl<'a> Iterator for ShuffledStealers<'a> {
         }
 
         Some(&self.stealers[current_candidate])
-    }
-}
-
-#[cfg(feature = "dev-logs")]
-#[derive(Debug)]
-struct Record {
-    stats: Vec<AtomicUsize>,
-}
-
-#[cfg(feature = "dev-logs")]
-impl Record {
-    fn new(worker_count: usize) -> Self {
-        let mut stats = Vec::new();
-        stats.resize_with(worker_count, Default::default);
-        Self { stats }
-    }
-    fn increment(&self, worker_id: usize) {
-        self.stats[worker_id].fetch_add(1, Ordering::Relaxed);
-    }
-    fn get(&self) -> Vec<usize> {
-        self.stats
-            .iter()
-            .map(|s| s.load(Ordering::Relaxed))
-            .collect()
     }
 }

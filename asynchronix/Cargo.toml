@@ -20,21 +20,12 @@ categories = ["simulation", "aerospace", "science"]
 keywords = ["simulation", "discrete-event", "systems", "cyberphysical", "real-time"]
 autotests = false
 
-
 [features]
-# Remote procedure call API.
-rpc = ["dep:ciborium", "dep:serde", "dep:tonic", "dep:prost", "dep:prost-types", "dep:bytes"]
-# This feature forces protobuf/gRPC code (re-)generation.
-rpc-codegen = ["dep:tonic-build"]
 # gRPC service.
-grpc-service = ["rpc", "dep:tokio" , "tonic/transport"]
-# wasm service.
-wasm-service = ["rpc", "dep:wasm-bindgen"]
-# API-unstable public exports meant for external test/benchmarking; development only.
-dev-hooks = []
-# Logging of performance-related statistics; development only.
-dev-logs = []
+grpc = ["dep:bytes", "dep:ciborium", "dep:prost", "dep:prost-types", "dep:serde", "dep:tonic", "dep:tokio", "dep:tonic"]
 
+# DEVELOPMENT ONLY: API-unstable public exports meant for external test/benchmarking.
+dev-hooks = []
 
 [dependencies]
 # Mandatory dependencies.
@@ -53,19 +44,14 @@ spin_sleep = "1"
 st3 = "0.4"
 tai-time = "0.3"
 
-# Common RPC dependencies.
+# gRPC service dependencies.
 bytes = { version = "1", default-features = false, optional = true }
-prost = { version = "0.12", optional = true }
-prost-types = { version = "0.12", optional = true }
+prost = { version = "0.13", optional = true }
+prost-types = { version = "0.13", optional = true }
 ciborium = { version = "0.2.2", optional = true }
 serde = { version = "1", optional = true }
-
-# gRPC service dependencies.
 tokio = { version = "1.0", features=["net", "rt-multi-thread"], optional = true }
-tonic = { version = "0.11", default-features = false, features=["codegen", "prost"], optional = true }
-
-# WASM service dependencies.
-wasm-bindgen = { version = "0.2", optional = true }
+tonic = { version = "0.12", default-features = false, features=["codegen", "prost", "server"], optional = true }
 
 [dev-dependencies]
 atomic-wait = "1.1"
@@ -77,11 +63,13 @@ mio = { version = "1.0", features = ["os-poll", "net"] }
 loom = "0.5"
 waker-fn = "1.1"
 
-[build-dependencies]
-tonic-build = { version = "0.11", optional = true }
+[target.'cfg(asynchronix_grpc_codegen)'.build-dependencies]
+tonic-build = { version = "0.12" }
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(asynchronix_loom)'] }
+# `asynchronix_loom` flag: run loom-based tests.
+# `asynchronix_grpc_codegen` flag: regenerate gRPC code from .proto definitions. 
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(asynchronix_loom)', 'cfg(asynchronix_grpc_codegen)'] }
 
 [[test]]
 name = "integration"
