@@ -75,7 +75,7 @@
 //! ```text
 //!                ┌────────────┐
 //!                │            │
-//! Input ●───────▶│ Multiplier ├───────▶ Output
+//! Input ●───────►│ Multiplier ├───────► Output
 //!          f64   │            │  f64
 //!                └────────────┘
 //! ```
@@ -156,13 +156,13 @@
 //! ```text
 //!                                ┌────────────┐
 //!                                │            │
-//!                            ┌──▶│   Delay    ├──┐
+//!                            ┌──►│   Delay    ├──┐
 //!           ┌────────────┐   │   │            │  │   ┌────────────┐
 //!           │            │   │   └────────────┘  │   │            │
-//! Input ●──▶│ Multiplier ├───┤                   ├──▶│   Delay    ├──▶ Output
+//! Input ●──►│ Multiplier ├───┤                   ├──►│   Delay    ├──► Output
 //!           │            │   │   ┌────────────┐  │   │            │
 //!           └────────────┘   │   │            │  │   └────────────┘
-//!                            └──▶│ Multiplier ├──┘
+//!                            └──►│ Multiplier ├──┘
 //!                                │            │
 //!                                └────────────┘
 //! ```
@@ -406,6 +406,8 @@
 //! * the [`time`] module discusses in particular the monotonic timestamp format
 //!   used for simulations ([`time::MonotonicTime`]).
 #![warn(missing_docs, missing_debug_implementations, unreachable_pub)]
+#![cfg_attr(docsrs, feature(doc_auto_cfg, doc_cfg_hide))]
+#![cfg_attr(docsrs, doc(cfg_hide(feature = "dev-hooks")))]
 
 pub(crate) mod channel;
 pub(crate) mod executor;

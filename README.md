@@ -72,7 +72,7 @@ asynchronix = "0.2.2"
 //
 //              ┌──────────────┐      ┌──────────────┐
 //              │              │      │              │
-// Input ●─────▶│ multiplier 1 ├─────▶│ multiplier 2 ├─────▶ Output
+// Input ●─────►│ multiplier 1 ├─────►│ multiplier 2 ├─────► Output
 //              │              │      │              │
 //              └──────────────┘      └──────────────┘
 use asynchronix::model::{Model, Output};

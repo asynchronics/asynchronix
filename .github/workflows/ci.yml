@@ -163,3 +163,5 @@ jobs:
 
       - name: Run cargo doc
         run: cargo doc --no-deps --all-features --document-private-items
+        env:
+            RUSTDOCFLAGS: --cfg docsrs -Dwarnings
