@@ -2,8 +2,8 @@ use std::fmt;
 
 use prost_types::Timestamp;
 
+use crate::grpc::key_registry::{KeyRegistry, KeyRegistryId};
 use crate::registry::{EventSourceRegistry, QuerySourceRegistry};
-use crate::rpc::key_registry::{KeyRegistry, KeyRegistryId};
 use crate::simulation::Simulation;
 
 use super::super::codegen::simulation::*;
@@ -53,7 +53,7 @@ impl ControllerService {
     }
 
     /// Advances simulation time to that of the next scheduled event, processing
-    /// that event as well as all other event scheduled for the same time.
+    /// that event as well as all other events scheduled for the same time.
     ///
     /// Processing is gated by a (possibly blocking) call to
     /// [`Clock::synchronize()`](crate::time::Clock::synchronize) on the

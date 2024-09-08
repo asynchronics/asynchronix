@@ -409,14 +409,14 @@
 
 pub(crate) mod channel;
 pub(crate) mod executor;
+#[cfg(feature = "grpc")]
+pub mod grpc;
 mod loom_exports;
 pub(crate) mod macros;
 pub mod model;
 pub mod ports;
-#[cfg(feature = "rpc")]
+#[cfg(feature = "grpc")]
 pub mod registry;
-#[cfg(feature = "rpc")]
-pub mod rpc;
 pub mod simulation;
 pub mod time;
 pub(crate) mod util;
