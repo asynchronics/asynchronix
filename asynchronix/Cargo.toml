@@ -29,9 +29,9 @@ dev-hooks = []
 
 [dependencies]
 # Mandatory dependencies.
-async-event = "0.1"
+async-event = "0.2.1"
 crossbeam-utils = "0.8"
-diatomic-waker = "0.1"
+diatomic-waker = "0.2.3"
 dyn-clone = "1.0"
 futures-channel = "0.3"
 futures-task = "0.3"
@@ -42,7 +42,7 @@ recycle-box = "0.2"
 slab = "0.4"
 spin_sleep = "1"
 st3 = "0.4"
-tai-time = "0.3"
+tai-time = "0.3.3"
 
 # gRPC service dependencies.
 bytes = { version = "1", default-features = false, optional = true }
