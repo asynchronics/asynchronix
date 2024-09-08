@@ -71,6 +71,10 @@ tonic-build = { version = "0.12" }
 # `asynchronix_grpc_codegen` flag: regenerate gRPC code from .proto definitions. 
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(asynchronix_loom)', 'cfg(asynchronix_grpc_codegen)'] }
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [[test]]
 name = "integration"
 path = "tests/tests.rs"
