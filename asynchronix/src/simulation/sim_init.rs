@@ -16,6 +16,8 @@ pub struct SimInit {
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
     time: SyncCell<TearableAtomicTime>,
     clock: Box<dyn Clock + 'static>,
+    #[cfg(feature = "tracing")]
+    log_level: tracing::Level,
 }
 
 impl SimInit {
@@ -44,6 +46,8 @@ impl SimInit {
             scheduler_queue: Arc::new(Mutex::new(PriorityQueue::new())),
             time: SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH)),
             clock: Box::new(NoClock::new()),
+            #[cfg(feature = "tracing")]
+            log_level: tracing::Level::INFO,
         }
     }
 
@@ -70,6 +74,16 @@ impl SimInit {
     /// resulting in the simulation running as fast as possible.
     pub fn set_clock(mut self, clock: impl Clock + 'static) -> Self {
         self.clock = Box::new(clock);
+
+        self
+    }
+
+    /// Set the level of verbosity for model spans.
+    ///
+    /// By default, model spans use [`Level::INFO`](tracing::Level::INFO).
+    #[cfg(feature = "tracing")]
+    pub fn with_log_level(mut self, level: tracing::Level) -> Self {
+        self.log_level = level;
 
         self
     }

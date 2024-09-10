@@ -257,7 +257,7 @@ impl Simulation {
         Ok(())
     }
 
-    /// Returns scheduler.
+    /// Returns a scheduler handle.
     pub fn scheduler(&self) -> Scheduler {
         Scheduler::new(self.scheduler_queue.clone(), self.time.reader())
     }
@@ -488,14 +488,22 @@ pub(crate) fn add_model<M: Model>(
     scheduler: Scheduler,
     executor: &Executor,
 ) {
+    #[cfg(feature = "tracing")]
+    let span = tracing::span!(target: env!("CARGO_PKG_NAME"), tracing::Level::INFO, "model", name);
+
     let context = Context::new(name, LocalScheduler::new(scheduler, mailbox.address()));
     let setup_context = SetupContext::new(&mailbox, &context, executor);
 
     model.setup(&setup_context);
 
     let mut receiver = mailbox.0;
-    executor.spawn_and_forget(async move {
+    let fut = async move {
         let mut model = model.init(&context).await.0;
         while receiver.recv(&mut model, &context).await.is_ok() {}
-    });
+    };
+
+    #[cfg(feature = "tracing")]
+    let fut = tracing::Instrument::instrument(fut, span);
+
+    executor.spawn_and_forget(fut);
 }
