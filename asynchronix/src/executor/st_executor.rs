@@ -8,6 +8,7 @@ use slab::Slab;
 use super::task::{self, CancelToken, Promise, Runnable};
 use super::NEXT_EXECUTOR_ID;
 
+use crate::executor::{SimulationContext, SIMULATION_CONTEXT};
 use crate::macros::scoped_thread_local::scoped_thread_local;
 
 const QUEUE_MIN_CAPACITY: usize = 32;
@@ -21,11 +22,13 @@ pub(crate) struct Executor {
     context: ExecutorContext,
     /// List of tasks that have not completed yet.
     active_tasks: RefCell<Slab<CancelToken>>,
+    /// Read-only handle to the simulation time.
+    simulation_context: SimulationContext,
 }
 
 impl Executor {
     /// Creates an executor that runs futures on the current thread.
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(simulation_context: SimulationContext) -> Self {
         // Each executor instance has a unique ID inherited by tasks to ensure
         // that tasks are scheduled on their parent executor.
         let executor_id = NEXT_EXECUTOR_ID.fetch_add(1, Ordering::Relaxed);
@@ -40,6 +43,7 @@ impl Executor {
         Self {
             context,
             active_tasks,
+            simulation_context,
         }
     }
 
@@ -102,14 +106,16 @@ impl Executor {
     /// Execute spawned tasks, blocking until all futures have completed or
     /// until the executor reaches a deadlock.
     pub(crate) fn run(&mut self) {
-        ACTIVE_TASKS.set(&self.active_tasks, || {
-            EXECUTOR_CONTEXT.set(&self.context, || loop {
-                let task = match self.context.queue.borrow_mut().pop() {
-                    Some(task) => task,
-                    None => break,
-                };
+        SIMULATION_CONTEXT.set(&self.simulation_context, || {
+            ACTIVE_TASKS.set(&self.active_tasks, || {
+                EXECUTOR_CONTEXT.set(&self.context, || loop {
+                    let task = match self.context.queue.borrow_mut().pop() {
+                        Some(task) => task,
+                        None => break,
+                    };
 
-                task.run();
+                    task.run();
+                })
             })
         });
     }
@@ -225,9 +231,9 @@ impl<T: Future> Drop for CancellableFuture<T> {
 ///
 /// # Panics
 ///
-/// This function will panic if called from called outside from the executor
-/// work thread or from another executor instance than the one the task for this
-/// `Runnable` was spawned on.
+/// This function will panic if called from outside the executor worker thread
+/// or from another executor instance than the one the task for this `Runnable`
+/// was spawned on.
 fn schedule_task(task: Runnable, executor_id: usize) {
     EXECUTOR_CONTEXT
         .map(|context| {

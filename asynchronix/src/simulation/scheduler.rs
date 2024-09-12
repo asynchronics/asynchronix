@@ -18,22 +18,18 @@ use crate::executor::Executor;
 use crate::model::Model;
 use crate::ports::InputFn;
 use crate::simulation::Address;
-use crate::time::{MonotonicTime, TearableAtomicTime};
+use crate::time::{AtomicTimeReader, MonotonicTime};
 use crate::util::priority_queue::PriorityQueue;
-use crate::util::sync_cell::SyncCellReader;
 
 /// Scheduler.
 #[derive(Clone)]
 pub struct Scheduler {
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
-    time: SyncCellReader<TearableAtomicTime>,
+    time: AtomicTimeReader,
 }
 
 impl Scheduler {
-    pub(crate) fn new(
-        scheduler_queue: Arc<Mutex<SchedulerQueue>>,
-        time: SyncCellReader<TearableAtomicTime>,
-    ) -> Self {
+    pub(crate) fn new(scheduler_queue: Arc<Mutex<SchedulerQueue>>, time: AtomicTimeReader) -> Self {
         Self {
             scheduler_queue,
             time,

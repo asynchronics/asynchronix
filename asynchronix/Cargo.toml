@@ -24,7 +24,7 @@ autotests = false
 [features]
 # gRPC service.
 grpc = ["dep:bytes", "dep:ciborium", "dep:prost", "dep:prost-types", "dep:serde", "dep:tonic", "dep:tokio", "dep:tonic"]
-tracing = ["dep:tracing"]
+tracing = ["dep:tracing", "dep:tracing-subscriber"]
 
 # DEVELOPMENT ONLY: API-unstable public exports meant for external test/benchmarking.
 dev-hooks = []
@@ -55,14 +55,14 @@ serde = { version = "1", optional = true }
 tokio = { version = "1.0", features=["net", "rt-multi-thread"], optional = true }
 tonic = { version = "0.12", default-features = false, features=["codegen", "prost", "server"], optional = true }
 tracing = { version= "0.1.40", default-features = false, features=["std"], optional = true }
+tracing-subscriber = { version= "0.3.18", optional = true }
 
 [dev-dependencies]
 atomic-wait = "1.1"
 futures-util = "0.3"
 futures-executor = "0.3"
 mio = { version = "1.0", features = ["os-poll", "net"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version= "0.3.18", features=["env-filter"] }
 
 [target.'cfg(asynchronix_loom)'.dev-dependencies]
 loom = "0.5"

@@ -146,10 +146,9 @@ use recycle_box::{coerce_box, RecycleBox};
 use crate::executor::Executor;
 use crate::model::{Context, Model, SetupContext};
 use crate::ports::{InputFn, ReplierFn};
-use crate::time::{Clock, MonotonicTime, TearableAtomicTime};
+use crate::time::{AtomicTime, Clock, MonotonicTime};
 use crate::util::seq_futures::SeqFuture;
 use crate::util::slot;
-use crate::util::sync_cell::SyncCell;
 
 /// Simulation environment.
 ///
@@ -192,7 +191,7 @@ use crate::util::sync_cell::SyncCell;
 pub struct Simulation {
     executor: Executor,
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
-    time: SyncCell<TearableAtomicTime>,
+    time: AtomicTime,
     clock: Box<dyn Clock>,
 }
 
@@ -201,7 +200,7 @@ impl Simulation {
     pub(crate) fn new(
         executor: Executor,
         scheduler_queue: Arc<Mutex<SchedulerQueue>>,
-        time: SyncCell<TearableAtomicTime>,
+        time: AtomicTime,
         clock: Box<dyn Clock + 'static>,
     ) -> Self {
         Self {

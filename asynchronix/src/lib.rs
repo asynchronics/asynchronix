@@ -392,46 +392,7 @@
 //! asynchronix = { version = "0.3", features = ["tracing"] }
 //! ```
 //!
-//! Each tracing event or span emitted by a model is then wrapped in a span
-//! named `model` with a target `asynchronix` and an attribute `name`. The value
-//! of the attribute is the name provided to
-//! [`SimInit::add_model`](simulation::SimInit::add_model).
-//!
-//! Note that model spans are always emitted at
-//! [`Level::INFO`](tracing::Level::INFO) .
-//!
-//! ### Tracing examples
-//!
-//! The examples below assume that the `tracing` feature flag is activated, the
-//! `tracing_subscriber` crate is used with the `env-filter` feature flag
-//! activated and the default subscriber is set up, e.g. with:
-//!
-//! ```ignore
-//! tracing_subscriber::fmt::init();
-//! ```
-//!
-//! In order to let only warnings and errors pass through but still see model
-//! span information (which is emitted as info), you may run the bench with:
-//!
-//! ```{.bash}
-//! $ RUST_LOG="warn,[model]=info" cargo run --release my_bench
-//! 2024-09-09T21:05:47.891984Z  WARN model{name="kettle"}: my_bench: water is boiling
-//! 2024-09-09T21:08:13.284753Z  WARN model{name="timer"}: my_bench: ring ring
-//! 2024-09-09T21:08:13.284753Z  WARN model{name="kettle"}: my_bench: water is hot
-//! ```
-//!
-//! In order to see warnings or errors for the `kettle` model only, you may
-//! instead run the bench with:
-//!
-//! ```{.bash}
-//! $ RUST_LOG="[model{name=kettle}]=warn" cargo run --release my_bench
-//! 2024-09-09T21:05:47.891984Z  WARN model{name="kettle"}: my_bench: water is boiling
-//! 2024-09-09T21:08:13.284753Z  WARN model{name="kettle"}: my_bench: water is hot
-//! ```
-//!
-//! If the `model` span name collides with that of spans defined outside
-//! `asynchronix`, the above filters can be made more specific using
-//! `asynchronix[model]` instead of just `[model]`.
+//! See the [`tracing`] module for more information.
 //!
 //!
 //! # Other resources
@@ -466,17 +427,21 @@
 
 pub(crate) mod channel;
 pub(crate) mod executor;
-#[cfg(feature = "grpc")]
-pub mod grpc;
 mod loom_exports;
 pub(crate) mod macros;
 pub mod model;
 pub mod ports;
-#[cfg(feature = "grpc")]
-pub mod registry;
 pub mod simulation;
 pub mod time;
 pub(crate) mod util;
+
+#[cfg(feature = "grpc")]
+pub mod grpc;
+#[cfg(feature = "grpc")]
+pub mod registry;
+
+#[cfg(feature = "tracing")]
+pub mod tracing;
 
 #[cfg(feature = "dev-hooks")]
 pub mod dev_hooks;
