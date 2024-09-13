@@ -56,11 +56,10 @@ use std::time::{Duration, Instant};
 use crossbeam_utils::sync::{Parker, Unparker};
 use slab::Slab;
 
+use super::task::{self, CancelToken, Promise, Runnable};
+use super::{SimulationContext, NEXT_EXECUTOR_ID, SIMULATION_CONTEXT};
 use crate::macros::scoped_thread_local::scoped_thread_local;
 use crate::util::rng::Rng;
-
-use super::task::{self, CancelToken, Promise, Runnable};
-use super::NEXT_EXECUTOR_ID;
 use pool_manager::PoolManager;
 
 const BUCKET_SIZE: usize = 128;
@@ -95,7 +94,7 @@ impl Executor {
     ///
     /// This will panic if the specified number of threads is zero or is more
     /// than `usize::BITS`.
-    pub(crate) fn new(num_threads: usize) -> Self {
+    pub(crate) fn new(num_threads: usize, simulation_context: SimulationContext) -> Self {
         let parker = Parker::new();
         let unparker = parker.unparker().clone();
 
@@ -141,11 +140,15 @@ impl Executor {
                     .spawn({
                         let context = context.clone();
                         let active_tasks = active_tasks.clone();
+                        let simulation_context = simulation_context.clone();
                         move || {
                             let worker = Worker::new(local_queue, context);
-                            ACTIVE_TASKS.set(&active_tasks, || {
-                                LOCAL_WORKER
-                                    .set(&worker, || run_local_worker(&worker, id, worker_parker))
+                            SIMULATION_CONTEXT.set(&simulation_context, || {
+                                ACTIVE_TASKS.set(&active_tasks, || {
+                                    LOCAL_WORKER.set(&worker, || {
+                                        run_local_worker(&worker, id, worker_parker)
+                                    })
+                                })
                             });
                         }
                     })

@@ -379,6 +379,22 @@
 //! [pony]: https://www.ponylang.io/
 //!
 //!
+//! # Feature flags
+//!
+//! ## Tracing support
+//!
+//! The `tracing` feature flag provides support for the
+//! [`tracing`](https://docs.rs/tracing/latest/tracing/) crate and can be
+//! activated in `Cargo.toml` with:
+//!
+//! ```toml
+//! [dependencies]
+//! asynchronix = { version = "0.3", features = ["tracing"] }
+//! ```
+//!
+//! See the [`tracing`] module for more information.
+//!
+//!
 //! # Other resources
 //!
 //! ## Other examples
@@ -411,17 +427,21 @@
 
 pub(crate) mod channel;
 pub(crate) mod executor;
-#[cfg(feature = "grpc")]
-pub mod grpc;
 mod loom_exports;
 pub(crate) mod macros;
 pub mod model;
 pub mod ports;
-#[cfg(feature = "grpc")]
-pub mod registry;
 pub mod simulation;
 pub mod time;
 pub(crate) mod util;
+
+#[cfg(feature = "grpc")]
+pub mod grpc;
+#[cfg(feature = "grpc")]
+pub mod registry;
+
+#[cfg(feature = "tracing")]
+pub mod tracing;
 
 #[cfg(feature = "dev-hooks")]
 pub mod dev_hooks;

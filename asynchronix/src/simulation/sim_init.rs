@@ -1,10 +1,10 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use crate::executor::Executor;
+use crate::executor::{Executor, SimulationContext};
 use crate::model::Model;
+use crate::time::{AtomicTime, MonotonicTime, TearableAtomicTime};
 use crate::time::{Clock, NoClock};
-use crate::time::{MonotonicTime, TearableAtomicTime};
 use crate::util::priority_queue::PriorityQueue;
 use crate::util::sync_cell::SyncCell;
 
@@ -14,7 +14,7 @@ use super::{add_model, Mailbox, Scheduler, SchedulerQueue, Simulation};
 pub struct SimInit {
     executor: Executor,
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
-    time: SyncCell<TearableAtomicTime>,
+    time: AtomicTime,
     clock: Box<dyn Clock + 'static>,
 }
 
@@ -32,17 +32,22 @@ impl SimInit {
     /// be between 1 and `usize::BITS` (inclusive).
     pub fn with_num_threads(num_threads: usize) -> Self {
         let num_threads = num_threads.clamp(1, usize::BITS as usize);
+        let time = SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH));
+        let simulation_context = SimulationContext {
+            #[cfg(feature = "tracing")]
+            time_reader: time.reader(),
+        };
 
         let executor = if num_threads == 1 {
-            Executor::new_single_threaded()
+            Executor::new_single_threaded(simulation_context)
         } else {
-            Executor::new_multi_threaded(num_threads)
+            Executor::new_multi_threaded(num_threads, simulation_context)
         };
 
         Self {
             executor,
             scheduler_queue: Arc::new(Mutex::new(PriorityQueue::new())),
-            time: SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH)),
+            time,
             clock: Box::new(NoClock::new()),
         }
     }

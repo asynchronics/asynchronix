@@ -52,3 +52,6 @@ pub use tai_time::MonotonicTime;
 
 pub use clock::{AutoSystemClock, Clock, NoClock, SyncStatus, SystemClock};
 pub(crate) use monotonic_time::TearableAtomicTime;
+
+pub(crate) type AtomicTime = crate::util::sync_cell::SyncCell<TearableAtomicTime>;
+pub(crate) type AtomicTimeReader = crate::util::sync_cell::SyncCellReader<TearableAtomicTime>;

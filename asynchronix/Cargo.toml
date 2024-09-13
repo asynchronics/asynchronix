@@ -3,6 +3,7 @@ name = "asynchronix"
 # When incrementing version and releasing to crates.io:
 # - Update crate version in this Cargo.toml
 # - Update crate version in README.md
+# - Update crate version in the lib.rs documentation of feature flags
 # - Update CHANGELOG.md
 # - Update if necessary copyright notice in LICENSE-MIT
 # - Create a "vX.Y.Z" git tag
@@ -23,6 +24,7 @@ autotests = false
 [features]
 # gRPC service.
 grpc = ["dep:bytes", "dep:ciborium", "dep:prost", "dep:prost-types", "dep:serde", "dep:tonic", "dep:tokio", "dep:tonic"]
+tracing = ["dep:tracing", "dep:tracing-subscriber"]
 
 # DEVELOPMENT ONLY: API-unstable public exports meant for external test/benchmarking.
 dev-hooks = []
@@ -44,20 +46,23 @@ spin_sleep = "1"
 st3 = "0.4"
 tai-time = "0.3.3"
 
-# gRPC service dependencies.
+# Optional dependencies.
 bytes = { version = "1", default-features = false, optional = true }
+ciborium = { version = "0.2.2", optional = true }
 prost = { version = "0.13", optional = true }
 prost-types = { version = "0.13", optional = true }
-ciborium = { version = "0.2.2", optional = true }
 serde = { version = "1", optional = true }
 tokio = { version = "1.0", features=["net", "rt-multi-thread"], optional = true }
 tonic = { version = "0.12", default-features = false, features=["codegen", "prost", "server"], optional = true }
+tracing = { version= "0.1.40", default-features = false, features=["std"], optional = true }
+tracing-subscriber = { version= "0.3.18", optional = true }
 
 [dev-dependencies]
 atomic-wait = "1.1"
 futures-util = "0.3"
 futures-executor = "0.3"
 mio = { version = "1.0", features = ["os-poll", "net"] }
+tracing-subscriber = { version= "0.3.18", features=["env-filter"] }
 
 [target.'cfg(asynchronix_loom)'.dev-dependencies]
 loom = "0.5"
