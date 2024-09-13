@@ -31,6 +31,23 @@
 //! tracing_subscriber::fmt::init();
 //! ```
 //!
+//! Logging from a model is then a simple matter of using the `tracing` macros,
+//! for instance:
+//!
+//! ```
+//! use tracing::warn;
+//!
+//! pub struct MyModel { /* ... */ }
+//!
+//! impl MyModel {
+//!     pub fn some_input_port(&mut self, _some_parameter: i32) {
+//!         // ...
+//!         warn!("something happened inside the simulation");
+//!         // ...
+//!     }
+//! }
+//! ```
+//!
 //! However, this will stamp events with the system time rather than the
 //! simulation time. To use simulation time instead, a dedicated timer can be
 //! configured:
@@ -44,8 +61,8 @@
 //!     .init();
 //! ```
 //!
-//! Note that this timer will automatically revert to system time stamping for
-//! tracing events generated outside of simulation models, e.g.:
+//! This timer will automatically revert to system time stamping for tracing
+//! events generated outside of simulation models, e.g.:
 //!
 //! ```text
 //! [2001-02-03 04:05:06.789012345]  WARN model{name="my_model"}: my_simulation: something happened inside the simulation
