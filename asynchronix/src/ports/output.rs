@@ -202,6 +202,7 @@ impl<T: Clone + Send + 'static> fmt::Debug for Output<T> {
 /// When a `Requestor` is cloned, the information on connected ports remains
 /// shared and therefore all clones use and modify the same list of connected
 /// ports.
+#[derive(Clone)]
 pub struct Requestor<T: Clone + Send + 'static, R: Send + 'static> {
     broadcaster: CachedRwLock<QueryBroadcaster<T, R>>,
 }
