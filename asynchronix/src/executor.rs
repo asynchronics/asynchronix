@@ -15,6 +15,12 @@ use task::Promise;
 /// Unique identifier for executor instances.
 static NEXT_EXECUTOR_ID: AtomicUsize = AtomicUsize::new(0);
 
+#[derive(PartialEq, Eq, Debug)]
+pub(crate) enum ExecutorError {
+    /// The simulation has deadlocked.
+    Deadlock,
+}
+
 /// Context common to all executor types.
 #[derive(Clone)]
 pub(crate) struct SimulationContext {
@@ -43,8 +49,8 @@ impl Executor {
     ///
     /// # Panics
     ///
-    /// This will panic if the specified number of threads is zero or is more
-    /// than `usize::BITS`.
+    /// This will panic if the specified number of threads is zero or more than
+    /// `usize::BITS`.
     pub(crate) fn new_multi_threaded(
         num_threads: usize,
         simulation_context: SimulationContext,
@@ -85,11 +91,19 @@ impl Executor {
 
     /// Execute spawned tasks, blocking until all futures have completed or
     /// until the executor reaches a deadlock.
-    pub(crate) fn run(&mut self) {
-        match self {
+    pub(crate) fn run(&mut self) -> Result<(), ExecutorError> {
+        let msg_count = match self {
             Self::StExecutor(executor) => executor.run(),
             Self::MtExecutor(executor) => executor.run(),
+        };
+
+        if msg_count != 0 {
+            assert!(msg_count > 0);
+
+            return Err(ExecutorError::Deadlock);
         }
+
+        Ok(())
     }
 }
 
@@ -98,7 +112,7 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
 
-    use futures_channel::{mpsc, oneshot};
+    use futures_channel::mpsc;
     use futures_util::StreamExt;
 
     use super::*;
@@ -129,47 +143,6 @@ mod tests {
         fn drop(&mut self) {
             self.drop_fn.take().map(|f| f());
         }
-    }
-
-    fn executor_deadlock(mut executor: Executor) {
-        let (_sender1, receiver1) = oneshot::channel::<()>();
-        let (_sender2, receiver2) = oneshot::channel::<()>();
-
-        let launch_count = Arc::new(AtomicUsize::new(0));
-        let completion_count = Arc::new(AtomicUsize::new(0));
-
-        executor.spawn_and_forget({
-            let launch_count = launch_count.clone();
-            let completion_count = completion_count.clone();
-
-            async move {
-                launch_count.fetch_add(1, Ordering::Relaxed);
-                let _ = receiver2.await;
-                completion_count.fetch_add(1, Ordering::Relaxed);
-            }
-        });
-        executor.spawn_and_forget({
-            let launch_count = launch_count.clone();
-            let completion_count = completion_count.clone();
-
-            async move {
-                launch_count.fetch_add(1, Ordering::Relaxed);
-                let _ = receiver1.await;
-                completion_count.fetch_add(1, Ordering::Relaxed);
-            }
-        });
-
-        executor.run();
-
-        // Check that the executor returns on deadlock, i.e. none of the task has
-        // completed.
-        assert_eq!(launch_count.load(Ordering::Relaxed), 2);
-        assert_eq!(completion_count.load(Ordering::Relaxed), 0);
-
-        // Drop the executor and thus the receiver tasks before the senders,
-        // failing which the senders may signal that the channel has been
-        // dropped and wake the tasks outside the executor.
-        drop(executor);
     }
 
     fn executor_drop_cycle(mut executor: Executor) {
@@ -223,7 +196,7 @@ mod tests {
             }
         });
 
-        executor.run();
+        executor.run().unwrap();
 
         // Make sure that all tasks are eventually dropped even though each task
         // wakes the others when dropped.
@@ -231,20 +204,6 @@ mod tests {
         assert_eq!(drop_count.load(Ordering::Relaxed), 3);
     }
 
-    #[test]
-    fn executor_deadlock_st() {
-        executor_deadlock(Executor::new_single_threaded(dummy_simulation_context()));
-    }
-
-    #[test]
-    fn executor_deadlock_mt() {
-        executor_deadlock(Executor::new_multi_threaded(3, dummy_simulation_context()));
-    }
-
-    #[test]
-    fn executor_deadlock_mt_one_worker() {
-        executor_deadlock(Executor::new_multi_threaded(1, dummy_simulation_context()));
-    }
     #[test]
     fn executor_drop_cycle_st() {
         executor_drop_cycle(Executor::new_single_threaded(dummy_simulation_context()));

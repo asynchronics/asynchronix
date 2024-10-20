@@ -8,7 +8,7 @@ use crate::time::{Clock, NoClock};
 use crate::util::priority_queue::PriorityQueue;
 use crate::util::sync_cell::SyncCell;
 
-use super::{add_model, Mailbox, Scheduler, SchedulerQueue, Simulation};
+use super::{add_model, ExecutionError, Mailbox, Scheduler, SchedulerQueue, Simulation};
 
 /// Builder for a multi-threaded, discrete-event simulation.
 pub struct SimInit {
@@ -82,12 +82,15 @@ impl SimInit {
     /// Builds a simulation initialized at the specified simulation time,
     /// executing the [`Model::init()`](crate::model::Model::init) method on all
     /// model initializers.
-    pub fn init(mut self, start_time: MonotonicTime) -> Simulation {
+    pub fn init(mut self, start_time: MonotonicTime) -> Result<Simulation, ExecutionError> {
         self.time.write(start_time);
         self.clock.synchronize(start_time);
-        self.executor.run();
 
-        Simulation::new(self.executor, self.scheduler_queue, self.time, self.clock)
+        let mut simulation =
+            Simulation::new(self.executor, self.scheduler_queue, self.time, self.clock);
+        simulation.run()?;
+
+        Ok(simulation)
     }
 }
 

@@ -5,7 +5,7 @@ use crate::registry::EndpointRegistry;
 use crate::simulation::SimInit;
 use crate::simulation::Simulation;
 
-use super::{timestamp_to_monotonic, to_error};
+use super::{map_execution_error, timestamp_to_monotonic, to_error};
 
 use super::super::codegen::simulation::*;
 
@@ -69,7 +69,12 @@ impl InitService {
                     .ok_or_else(|| {
                         to_error(ErrorCode::InvalidTime, "out-of-range nanosecond field")
                     })
-                    .map(|start_time| (sim_init.init(start_time), registry))
+                    .and_then(|start_time| {
+                        sim_init
+                            .init(start_time)
+                            .map_err(|e| map_execution_error(e))
+                            .map(|sim| (sim, registry))
+                    })
             });
 
         let (reply, bench) = match reply {

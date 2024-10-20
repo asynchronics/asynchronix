@@ -8,6 +8,7 @@ use prost_types::Timestamp;
 use tai_time::MonotonicTime;
 
 use super::codegen::simulation::{Error, ErrorCode};
+use crate::simulation::ExecutionError;
 
 pub(crate) use controller_service::ControllerService;
 pub(crate) use init_service::InitService;
@@ -27,6 +28,21 @@ fn simulation_not_started_error() -> Error {
         ErrorCode::SimulationNotStarted,
         "the simulation was not started",
     )
+}
+
+/// Map an `ExecutionError` to a Protobuf error.
+fn map_execution_error(error: ExecutionError) -> Error {
+    let error_code = match error {
+        ExecutionError::Deadlock(_) => ErrorCode::SimulationDeadlock,
+        ExecutionError::ModelError { .. } => ErrorCode::SimulationModelError,
+        ExecutionError::Panic(_) => ErrorCode::SimulationPanic,
+        ExecutionError::BadQuery => ErrorCode::SimulationBadQuery,
+        ExecutionError::Terminated => ErrorCode::SimulationTerminated,
+        ExecutionError::InvalidTargetTime(_) => ErrorCode::InvalidTime,
+    };
+    let error_message = error.to_string();
+
+    to_error(error_code, error_message)
 }
 
 /// Attempts a cast from a `MonotonicTime` to a protobuf `Timestamp`.

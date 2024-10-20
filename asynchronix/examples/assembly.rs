@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use asynchronix::model::{Model, SetupContext};
 use asynchronix::ports::{EventBuffer, Output};
-use asynchronix::simulation::{Mailbox, SimInit};
+use asynchronix::simulation::{Mailbox, SimInit, SimulationError};
 use asynchronix::time::MonotonicTime;
 
 mod stepper_motor;
@@ -84,7 +84,7 @@ impl Model for MotorAssembly {
     }
 }
 
-fn main() {
+fn main() -> Result<(), SimulationError> {
     // ---------------
     // Bench assembly.
     // ---------------
@@ -107,7 +107,7 @@ fn main() {
     // Assembly and initialization.
     let mut simu = SimInit::new()
         .add_model(assembly, assembly_mbox, "assembly")
-        .init(t0);
+        .init(t0)?;
 
     let scheduler = simu.scheduler();
 
@@ -132,10 +132,10 @@ fn main() {
         .unwrap();
 
     // Advance simulation time to two next events.
-    simu.step();
+    simu.step()?;
     t += Duration::new(2, 0);
     assert_eq!(simu.time(), t);
-    simu.step();
+    simu.step()?;
     t += Duration::new(0, 100_000_000);
     assert_eq!(simu.time(), t);
 
@@ -147,7 +147,7 @@ fn main() {
 
     // Advance simulation time by 0.9s, which with a 10Hz PPS should correspond to
     // 9 position increments.
-    simu.step_by(Duration::new(0, 900_000_000));
+    simu.step_by(Duration::new(0, 900_000_000))?;
     t += Duration::new(0, 900_000_000);
     assert_eq!(simu.time(), t);
     for _ in 0..9 {
@@ -155,4 +155,6 @@ fn main() {
         assert_eq!(position.next(), Some(pos));
     }
     assert!(position.next().is_none());
+
+    Ok(())
 }

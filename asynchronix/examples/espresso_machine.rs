@@ -35,7 +35,7 @@ use std::time::Duration;
 
 use asynchronix::model::{Context, InitializedModel, Model};
 use asynchronix::ports::{EventSlot, Output};
-use asynchronix::simulation::{ActionKey, Mailbox, SimInit};
+use asynchronix::simulation::{ActionKey, Mailbox, SimInit, SimulationError};
 use asynchronix::time::MonotonicTime;
 
 /// Water pump.
@@ -332,7 +332,7 @@ pub enum WaterSenseState {
     NotEmpty,
 }
 
-fn main() {
+fn main() -> Result<(), SimulationError> {
     // ---------------
     // Bench assembly.
     // ---------------
@@ -375,7 +375,7 @@ fn main() {
         .add_model(controller, controller_mbox, "controller")
         .add_model(pump, pump_mbox, "pump")
         .add_model(tank, tank_mbox, "tank")
-        .init(t0);
+        .init(t0)?;
 
     let scheduler = simu.scheduler();
 
@@ -388,10 +388,10 @@ fn main() {
     assert_eq!(simu.time(), t);
 
     // Brew one espresso shot with the default brew time.
-    simu.process_event(Controller::brew_cmd, (), &controller_addr);
+    simu.process_event(Controller::brew_cmd, (), &controller_addr)?;
     assert_eq!(flow_rate.next(), Some(pump_flow_rate));
 
-    simu.step();
+    simu.step()?;
     t += Controller::DEFAULT_BREW_TIME;
     assert_eq!(simu.time(), t);
     assert_eq!(flow_rate.next(), Some(0.0));
@@ -400,33 +400,33 @@ fn main() {
     let volume_per_shot = pump_flow_rate * Controller::DEFAULT_BREW_TIME.as_secs_f64();
     let shots_per_tank = (init_tank_volume / volume_per_shot) as u64; // YOLO--who cares about floating-point rounding errors?
     for _ in 0..(shots_per_tank - 1) {
-        simu.process_event(Controller::brew_cmd, (), &controller_addr);
+        simu.process_event(Controller::brew_cmd, (), &controller_addr)?;
         assert_eq!(flow_rate.next(), Some(pump_flow_rate));
-        simu.step();
+        simu.step()?;
         t += Controller::DEFAULT_BREW_TIME;
         assert_eq!(simu.time(), t);
         assert_eq!(flow_rate.next(), Some(0.0));
     }
 
     // Check that the tank becomes empty before the completion of the next shot.
-    simu.process_event(Controller::brew_cmd, (), &controller_addr);
-    simu.step();
+    simu.process_event(Controller::brew_cmd, (), &controller_addr)?;
+    simu.step()?;
     assert!(simu.time() < t + Controller::DEFAULT_BREW_TIME);
     t = simu.time();
     assert_eq!(flow_rate.next(), Some(0.0));
 
     // Try to brew another shot while the tank is still empty.
-    simu.process_event(Controller::brew_cmd, (), &controller_addr);
+    simu.process_event(Controller::brew_cmd, (), &controller_addr)?;
     assert!(flow_rate.next().is_none());
 
     // Change the brew time and fill up the tank.
     let brew_time = Duration::new(30, 0);
-    simu.process_event(Controller::brew_time, brew_time, &controller_addr);
-    simu.process_event(Tank::fill, 1.0e-3, tank_addr);
-    simu.process_event(Controller::brew_cmd, (), &controller_addr);
+    simu.process_event(Controller::brew_time, brew_time, &controller_addr)?;
+    simu.process_event(Tank::fill, 1.0e-3, tank_addr)?;
+    simu.process_event(Controller::brew_cmd, (), &controller_addr)?;
     assert_eq!(flow_rate.next(), Some(pump_flow_rate));
 
-    simu.step();
+    simu.step()?;
     t += brew_time;
     assert_eq!(simu.time(), t);
     assert_eq!(flow_rate.next(), Some(0.0));
@@ -440,11 +440,13 @@ fn main() {
             &controller_addr,
         )
         .unwrap();
-    simu.process_event(Controller::brew_cmd, (), &controller_addr);
+    simu.process_event(Controller::brew_cmd, (), &controller_addr)?;
     assert_eq!(flow_rate.next(), Some(pump_flow_rate));
 
-    simu.step();
+    simu.step()?;
     t += Duration::from_secs(15);
     assert_eq!(simu.time(), t);
     assert_eq!(flow_rate.next(), Some(0.0));
+
+    Ok(())
 }

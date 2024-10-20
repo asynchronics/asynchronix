@@ -8,8 +8,8 @@ use crate::simulation::Simulation;
 
 use super::super::codegen::simulation::*;
 use super::{
-    monotonic_to_timestamp, simulation_not_started_error, timestamp_to_monotonic, to_error,
-    to_positive_duration, to_strictly_positive_duration,
+    map_execution_error, monotonic_to_timestamp, simulation_not_started_error,
+    timestamp_to_monotonic, to_error, to_positive_duration, to_strictly_positive_duration,
 };
 
 /// Protobuf-based simulation manager.
@@ -61,18 +61,19 @@ impl ControllerService {
     /// processed events have completed.
     pub(crate) fn step(&mut self, _request: StepRequest) -> StepReply {
         let reply = match self {
-            Self::Started { simulation, .. } => {
-                simulation.step();
-
-                if let Some(timestamp) = monotonic_to_timestamp(simulation.time()) {
-                    step_reply::Result::Time(timestamp)
-                } else {
-                    step_reply::Result::Error(to_error(
-                        ErrorCode::SimulationTimeOutOfRange,
-                        "the final simulation time is out of range",
-                    ))
+            Self::Started { simulation, .. } => match simulation.step() {
+                Ok(()) => {
+                    if let Some(timestamp) = monotonic_to_timestamp(simulation.time()) {
+                        step_reply::Result::Time(timestamp)
+                    } else {
+                        step_reply::Result::Error(to_error(
+                            ErrorCode::SimulationTimeOutOfRange,
+                            "the final simulation time is out of range",
+                        ))
+                    }
                 }
-            }
+                Err(e) => step_reply::Result::Error(map_execution_error(e)),
+            },
             Self::NotStarted => step_reply::Result::Error(simulation_not_started_error()),
         };
 
@@ -117,7 +118,7 @@ impl ControllerService {
                             "the specified deadline lies in the past",
                         ))?;
 
-                        simulation.step_by(duration);
+                        simulation.step_by(duration).map_err(map_execution_error)?;
                     }
                 };
 
@@ -221,7 +222,7 @@ impl ControllerService {
                     }
                 });
 
-                simulation.process(action);
+                simulation.process(action).map_err(map_execution_error)?;
 
                 Ok(key_id)
             }(),
@@ -315,9 +316,7 @@ impl ControllerService {
                     )
                 })?;
 
-                simulation.process(event);
-
-                Ok(())
+                simulation.process(event).map_err(map_execution_error)
             }(),
             Self::NotStarted => Err(simulation_not_started_error()),
         };
@@ -360,11 +359,11 @@ impl ControllerService {
                     )
                 })?;
 
-                simulation.process(query);
+                simulation.process(query).map_err(map_execution_error)?;
 
                 let replies = promise.take_collect().ok_or(to_error(
-                    ErrorCode::InternalError,
-                    "a reply to the query was expected but none was available".to_string(),
+                    ErrorCode::SimulationBadQuery,
+                    "a reply to the query was expected but none was available; maybe the target model was not added to the simulation?".to_string(),
                 ))?;
 
                 replies.map_err(|e| {

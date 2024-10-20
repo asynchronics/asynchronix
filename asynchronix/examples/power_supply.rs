@@ -28,7 +28,7 @@
 //! ```
 use asynchronix::model::Model;
 use asynchronix::ports::{EventSlot, Output, Requestor};
-use asynchronix::simulation::{Mailbox, SimInit};
+use asynchronix::simulation::{Mailbox, SimInit, SimulationError};
 use asynchronix::time::MonotonicTime;
 
 /// Power supply.
@@ -99,7 +99,7 @@ impl Load {
 
 impl Model for Load {}
 
-fn main() {
+fn main() -> Result<(), SimulationError> {
     // ---------------
     // Bench assembly.
     // ---------------
@@ -144,7 +144,7 @@ fn main() {
         .add_model(load1, load1_mbox, "load1")
         .add_model(load2, load2_mbox, "load2")
         .add_model(load3, load3_mbox, "load3")
-        .init(t0);
+        .init(t0)?;
 
     // ----------
     // Simulation.
@@ -158,7 +158,7 @@ fn main() {
 
     // Vary the supply voltage, check the load and power supply consumptions.
     for voltage in [10.0, 15.0, 20.0] {
-        simu.process_event(PowerSupply::voltage_setting, voltage, &psu_addr);
+        simu.process_event(PowerSupply::voltage_setting, voltage, &psu_addr)?;
 
         let v_square = voltage * voltage;
         assert!(same_power(load1_power.next().unwrap(), v_square / r1));
@@ -169,4 +169,6 @@ fn main() {
             v_square * (1.0 / r1 + 1.0 / r2 + 1.0 / r3)
         ));
     }
+
+    Ok(())
 }

@@ -205,7 +205,7 @@ impl Driver {
 impl Model for Driver {}
 
 #[allow(dead_code)]
-fn main() {
+fn main() -> Result<(), asynchronix::simulation::SimulationError> {
     // ---------------
     // Bench assembly.
     // ---------------
@@ -235,7 +235,7 @@ fn main() {
     let mut simu = SimInit::new()
         .add_model(driver, driver_mbox, "driver")
         .add_model(motor, motor_mbox, "motor")
-        .init(t0);
+        .init(t0)?;
 
     let scheduler = simu.scheduler();
 
@@ -260,10 +260,10 @@ fn main() {
         .unwrap();
 
     // Advance simulation time to two next events.
-    simu.step();
+    simu.step()?;
     t += Duration::new(2, 0);
     assert_eq!(simu.time(), t);
-    simu.step();
+    simu.step()?;
     t += Duration::new(0, 100_000_000);
     assert_eq!(simu.time(), t);
 
@@ -275,7 +275,7 @@ fn main() {
 
     // Advance simulation time by 0.9s, which with a 10Hz PPS should correspond to
     // 9 position increments.
-    simu.step_by(Duration::new(0, 900_000_000));
+    simu.step_by(Duration::new(0, 900_000_000))?;
     t += Duration::new(0, 900_000_000);
     assert_eq!(simu.time(), t);
     for _ in 0..9 {
@@ -285,24 +285,24 @@ fn main() {
     assert!(position.next().is_none());
 
     // Increase the load beyond the torque limit for a 1A driver current.
-    simu.process_event(Motor::load, 2.0, &motor_addr);
+    simu.process_event(Motor::load, 2.0, &motor_addr)?;
 
     // Advance simulation time and check that the motor is blocked.
-    simu.step();
+    simu.step()?;
     t += Duration::new(0, 100_000_000);
     assert_eq!(simu.time(), t);
     assert!(position.next().is_none());
 
     // Do it again.
-    simu.step();
+    simu.step()?;
     t += Duration::new(0, 100_000_000);
     assert_eq!(simu.time(), t);
     assert!(position.next().is_none());
 
     // Decrease the load below the torque limit for a 1A driver current and
     // advance simulation time.
-    simu.process_event(Motor::load, 0.5, &motor_addr);
-    simu.step();
+    simu.process_event(Motor::load, 0.5, &motor_addr)?;
+    simu.step()?;
     t += Duration::new(0, 100_000_000);
 
     // The motor should start moving again, but since the phase was incremented
@@ -314,7 +314,7 @@ fn main() {
 
     // Advance simulation time by 0.7s, which with a 10Hz PPS should correspond to
     // 7 position increments.
-    simu.step_by(Duration::new(0, 700_000_000));
+    simu.step_by(Duration::new(0, 700_000_000))?;
     t += Duration::new(0, 700_000_000);
     assert_eq!(simu.time(), t);
     for _ in 0..7 {
@@ -325,8 +325,8 @@ fn main() {
 
     // Now make the motor rotate in the opposite direction. Note that this
     // driver only accounts for a new PPS at the next pulse.
-    simu.process_event(Driver::pulse_rate, -10.0, &driver_addr);
-    simu.step();
+    simu.process_event(Driver::pulse_rate, -10.0, &driver_addr)?;
+    simu.step()?;
     t += Duration::new(0, 100_000_000);
     assert_eq!(simu.time(), t);
     pos = (pos + 1) % Motor::STEPS_PER_REV;
@@ -334,9 +334,11 @@ fn main() {
 
     // Advance simulation time by 1.9s, which with a -10Hz PPS should correspond
     // to 19 position decrements.
-    simu.step_by(Duration::new(1, 900_000_000));
+    simu.step_by(Duration::new(1, 900_000_000))?;
     t += Duration::new(1, 900_000_000);
     assert_eq!(simu.time(), t);
     pos = (pos + Motor::STEPS_PER_REV - 19) % Motor::STEPS_PER_REV;
     assert_eq!(position.by_ref().last(), Some(pos));
+
+    Ok(())
 }

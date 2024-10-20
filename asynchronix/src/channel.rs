@@ -4,6 +4,7 @@
 
 mod queue;
 
+use std::cell::Cell;
 use std::error;
 use std::fmt;
 use std::future::Future;
@@ -19,6 +20,14 @@ use queue::{PopError, PushError, Queue};
 use recycle_box::coerce_box;
 
 use crate::model::{Context, Model};
+
+// Counts the difference between the number of sent and received messages for
+// this thread.
+//
+// This is used by the executor to make sure that all messages have been
+// received upon completion of a simulation step, i.e. that no deadlock
+// occurred.
+thread_local! { pub(crate) static THREAD_MSG_COUNT: Cell<isize> = const { Cell::new(0) }; }
 
 /// Data shared between the receiver and the senders.
 struct Inner<M> {
@@ -104,6 +113,9 @@ impl<M: Model> Receiver<M> {
 
         match msg {
             Some(mut msg) => {
+                // Decrement the count of in-flight messages.
+                THREAD_MSG_COUNT.set(THREAD_MSG_COUNT.get().wrapping_sub(1));
+
                 // Consume the message to obtain a boxed future.
                 let fut = msg.call_once(model, context, self.future_box.take().unwrap());
 
@@ -218,6 +230,9 @@ impl<M: Model> Sender<M> {
 
         if success {
             self.inner.receiver_signal.notify();
+
+            // Increment the count of in-flight messages.
+            THREAD_MSG_COUNT.set(THREAD_MSG_COUNT.get().wrapping_add(1));
 
             Ok(())
         } else {
