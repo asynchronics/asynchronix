@@ -26,7 +26,7 @@ use super::ReplierFn;
 /// The `EventSource` port is similar to an [`Output`](crate::ports::Output)
 /// port in that it can send events to connected input ports. It is not meant,
 /// however, to be instantiated as a member of a model, but rather as a
-/// simulation monitoring endpoint instantiated during bench assembly.
+/// simulation control endpoint instantiated during bench assembly.
 pub struct EventSource<T: Clone + Send + 'static> {
     broadcaster: Arc<Mutex<EventBroadcaster<T>>>,
 }

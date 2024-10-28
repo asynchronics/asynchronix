@@ -1,6 +1,7 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
+use crate::channel::ChannelObserver;
 use crate::executor::{Executor, SimulationContext};
 use crate::model::Model;
 use crate::time::{AtomicTime, MonotonicTime, TearableAtomicTime};
@@ -16,6 +17,7 @@ pub struct SimInit {
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
     time: AtomicTime,
     clock: Box<dyn Clock + 'static>,
+    observers: Vec<(String, Box<dyn ChannelObserver>)>,
 }
 
 impl SimInit {
@@ -49,6 +51,7 @@ impl SimInit {
             scheduler_queue: Arc::new(Mutex::new(PriorityQueue::new())),
             time,
             clock: Box::new(NoClock::new()),
+            observers: Vec::new(),
         }
     }
 
@@ -58,13 +61,16 @@ impl SimInit {
     /// is used for convenience for the model instance identification (e.g. for
     /// logging purposes).
     pub fn add_model<M: Model>(
-        self,
+        mut self,
         model: M,
         mailbox: Mailbox<M>,
         name: impl Into<String>,
     ) -> Self {
+        let name = name.into();
+        self.observers
+            .push((name.clone(), Box::new(mailbox.0.observer())));
         let scheduler = Scheduler::new(self.scheduler_queue.clone(), self.time.reader());
-        add_model(model, mailbox, name.into(), scheduler, &self.executor);
+        add_model(model, mailbox, name, scheduler, &self.executor);
 
         self
     }
@@ -86,8 +92,13 @@ impl SimInit {
         self.time.write(start_time);
         self.clock.synchronize(start_time);
 
-        let mut simulation =
-            Simulation::new(self.executor, self.scheduler_queue, self.time, self.clock);
+        let mut simulation = Simulation::new(
+            self.executor,
+            self.scheduler_queue,
+            self.time,
+            self.clock,
+            self.observers,
+        );
         simulation.run()?;
 
         Ok(simulation)

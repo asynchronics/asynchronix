@@ -72,7 +72,7 @@ impl InitService {
                     .and_then(|start_time| {
                         sim_init
                             .init(start_time)
-                            .map_err(|e| map_execution_error(e))
+                            .map_err(map_execution_error)
                             .map(|sim| (sim, registry))
                     })
             });

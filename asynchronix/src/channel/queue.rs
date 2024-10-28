@@ -122,7 +122,7 @@ pub(super) struct Queue<T: ?Sized> {
     /// and the producer. The reason it is shared is that the drop handler of
     /// the last `Inner` owner (which may be a producer) needs access to the
     /// dequeue position.
-    dequeue_pos: CachePadded<UnsafeCell<usize>>,
+    dequeue_pos: CachePadded<AtomicUsize>,
 
     /// Buffer holding the closures and their stamps.
     buffer: Box<[Slot<T>]>,
@@ -160,7 +160,7 @@ impl<T: ?Sized> Queue<T> {
 
         Queue {
             enqueue_pos: CachePadded::new(AtomicUsize::new(0)),
-            dequeue_pos: CachePadded::new(UnsafeCell::new(0)),
+            dequeue_pos: CachePadded::new(AtomicUsize::new(0)),
             buffer: buffer.into(),
             right_mask,
             closed_channel_mask,
@@ -241,7 +241,7 @@ impl<T: ?Sized> Queue<T> {
     ///
     /// This method may not be called concurrently from multiple threads.
     pub(super) unsafe fn pop(&self) -> Result<MessageBorrow<'_, T>, PopError> {
-        let dequeue_pos = self.dequeue_pos.with(|p| *p);
+        let dequeue_pos = self.dequeue_pos.load(Ordering::Relaxed);
         let index = dequeue_pos & self.right_mask;
         let slot = &self.buffer[index];
         let stamp = slot.stamp.load(Ordering::Acquire);
@@ -251,10 +251,10 @@ impl<T: ?Sized> Queue<T> {
             // closure can be popped.
             debug_or_loom_assert_eq!(stamp, dequeue_pos + 1);
 
-            // Only this thread can access the dequeue position so there is no
+            // Only this thread can modify the dequeue position so there is no
             // need to increment the position atomically with a `fetch_add`.
             self.dequeue_pos
-                .with_mut(|p| *p = self.next_queue_pos(dequeue_pos));
+                .store(self.next_queue_pos(dequeue_pos), Ordering::Relaxed);
 
             // Extract the closure from the slot and set the stamp to the value of
             // the dequeue position increased by one sequence increment.
@@ -316,6 +316,30 @@ impl<T: ?Sized> Queue<T> {
         // anyway be resilient to the case where the channel closes right after
         // `is_closed` returns `false`.
         self.enqueue_pos.load(Ordering::Relaxed) & self.closed_channel_mask != 0
+    }
+
+    /// Returns the number of items in the queue.
+    ///
+    /// # Warning
+    ///
+    /// While this method is safe by Rust's standard, the returned result is
+    /// only meaningful if it can be established than there are no concurrent
+    /// `push` or `pop` operations. Otherwise, the returned value may neither
+    /// reflect the current state nor the past state of the queue, and may be
+    /// greater than the capacity of the queue.
+    pub(super) fn len(&self) -> usize {
+        let enqueue_pos = self.enqueue_pos.load(Ordering::Relaxed);
+        let dequeue_pos = self.dequeue_pos.load(Ordering::Relaxed);
+        let enqueue_idx = enqueue_pos & (self.right_mask >> 1);
+        let dequeue_idx = dequeue_pos & (self.right_mask >> 1);
+
+        // Establish whether the sequence numbers of the enqueue and dequeue
+        // positions differ. If yes, it means the enqueue position has wrapped
+        // around one more time so the difference between indices must be
+        // increased by the buffer capacity.
+        let carry_flag = (enqueue_pos & !self.right_mask) != (dequeue_pos & !self.right_mask);
+
+        (enqueue_idx + (carry_flag as usize) * self.buffer.len()) - dequeue_idx
     }
 
     /// Increment the queue position, incrementing the sequence count as well if
@@ -422,6 +446,12 @@ impl<T: ?Sized> Consumer<T> {
     /// Closes the queue.
     fn close(&self) {
         self.inner.close();
+    }
+
+    /// Returns the number of items.
+    #[cfg(not(asynchronix_loom))]
+    fn len(&self) -> usize {
+        self.inner.len()
     }
 }
 
@@ -568,6 +598,52 @@ mod tests {
     #[test]
     fn queue_mpsc_capacity_three() {
         queue_mpsc(3);
+    }
+
+    #[test]
+    fn queue_len() {
+        let (p, mut c) = queue(4);
+
+        let _ = p.push(|b| RecycleBox::recycle(b, 0));
+        assert_eq!(c.len(), 1);
+        let _ = p.push(|b| RecycleBox::recycle(b, 1));
+        assert_eq!(c.len(), 2);
+        let _ = c.pop();
+        assert_eq!(c.len(), 1);
+        let _ = p.push(|b| RecycleBox::recycle(b, 2));
+        assert_eq!(c.len(), 2);
+        let _ = p.push(|b| RecycleBox::recycle(b, 3));
+        assert_eq!(c.len(), 3);
+        let _ = c.pop();
+        assert_eq!(c.len(), 2);
+        let _ = p.push(|b| RecycleBox::recycle(b, 4));
+        assert_eq!(c.len(), 3);
+        let _ = c.pop();
+        assert_eq!(c.len(), 2);
+        let _ = p.push(|b| RecycleBox::recycle(b, 5));
+        assert_eq!(c.len(), 3);
+        let _ = p.push(|b| RecycleBox::recycle(b, 6));
+        assert_eq!(c.len(), 4);
+        let _ = c.pop();
+        assert_eq!(c.len(), 3);
+        let _ = p.push(|b| RecycleBox::recycle(b, 7));
+        assert_eq!(c.len(), 4);
+        let _ = c.pop();
+        assert_eq!(c.len(), 3);
+        let _ = p.push(|b| RecycleBox::recycle(b, 8));
+        assert_eq!(c.len(), 4);
+        let _ = c.pop();
+        assert_eq!(c.len(), 3);
+        let _ = p.push(|b| RecycleBox::recycle(b, 9));
+        assert_eq!(c.len(), 4);
+        let _ = c.pop();
+        assert_eq!(c.len(), 3);
+        let _ = c.pop();
+        assert_eq!(c.len(), 2);
+        let _ = c.pop();
+        assert_eq!(c.len(), 1);
+        let _ = c.pop();
+        assert_eq!(c.len(), 0);
     }
 }
 

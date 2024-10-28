@@ -144,6 +144,7 @@ use std::time::Duration;
 
 use recycle_box::{coerce_box, RecycleBox};
 
+use crate::channel::ChannelObserver;
 use crate::executor::{Executor, ExecutorError};
 use crate::model::{Context, Model, SetupContext};
 use crate::ports::{InputFn, ReplierFn};
@@ -194,6 +195,8 @@ pub struct Simulation {
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
     time: AtomicTime,
     clock: Box<dyn Clock>,
+    observers: Vec<(String, Box<dyn ChannelObserver>)>,
+    is_terminated: bool,
 }
 
 impl Simulation {
@@ -203,12 +206,15 @@ impl Simulation {
         scheduler_queue: Arc<Mutex<SchedulerQueue>>,
         time: AtomicTime,
         clock: Box<dyn Clock + 'static>,
+        observers: Vec<(String, Box<dyn ChannelObserver>)>,
     ) -> Self {
         Self {
             executor,
             scheduler_queue,
             time,
             clock,
+            observers,
+            is_terminated: false,
         }
     }
 
@@ -350,9 +356,28 @@ impl Simulation {
             .map_err(|_| ExecutionError::BadQuery)
     }
 
+    /// Runs the executor.
     fn run(&mut self) -> Result<(), ExecutionError> {
+        if self.is_terminated {
+            return Err(ExecutionError::Terminated);
+        }
+
         self.executor.run().map_err(|e| match e {
-            ExecutorError::Deadlock => ExecutionError::Deadlock(Vec::new()),
+            ExecutorError::Deadlock => {
+                self.is_terminated = true;
+                let mut deadlock_info = Vec::new();
+                for (name, observer) in &self.observers {
+                    let mailbox_size = observer.len();
+                    if mailbox_size != 0 {
+                        deadlock_info.push(DeadlockInfo {
+                            model_name: name.clone(),
+                            mailbox_size,
+                        });
+                    }
+                }
+
+                ExecutionError::Deadlock(deadlock_info)
+            }
         })
     }
 
@@ -484,26 +509,13 @@ impl fmt::Debug for Simulation {
     }
 }
 
-/// Error returned when a query did not obtain a response.
-///
-/// This can happen either because the model targeted by the address was not
-/// added to the simulation or due to a simulation deadlock.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct QueryError {}
-
-impl fmt::Display for QueryError {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(fmt, "the query did not receive a response")
-    }
-}
-
-impl Error for QueryError {}
-
 /// Information regarding a deadlocked model.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DeadlockInfo {
-    model_name: String,
-    mailbox_size: usize,
+    /// Name of the deadlocked model.
+    pub model_name: String,
+    /// Number of messages in the mailbox.
+    pub mailbox_size: usize,
 }
 
 /// An error returned upon simulation execution failure.
