@@ -38,7 +38,7 @@ fn passthrough_bench<T: Clone + Send + 'static>(
     model.output.connect_sink(&out_stream);
     let addr = mbox.address();
 
-    let simu = SimInit::new().add_model(model, mbox, "").init(t0);
+    let simu = SimInit::new().add_model(model, mbox, "").init(t0).unwrap();
 
     (simu, addr, out_stream)
 }
@@ -64,7 +64,7 @@ fn simulation_schedule_events() {
         .unwrap();
 
     // Move to the 1st event at t0+2s.
-    simu.step();
+    simu.step().unwrap();
     assert_eq!(simu.time(), t0 + Duration::from_secs(2));
     assert!(output.next().is_some());
 
@@ -74,12 +74,12 @@ fn simulation_schedule_events() {
         .unwrap();
 
     // Move to the 2nd event at t0+3s.
-    simu.step();
+    simu.step().unwrap();
     assert_eq!(simu.time(), t0 + Duration::from_secs(3));
     assert!(output.next().is_some());
 
     // Move to the 3rd event at t0+6s.
-    simu.step();
+    simu.step().unwrap();
     assert_eq!(simu.time(), t0 + Duration::from_secs(6));
     assert!(output.next().is_some());
     assert!(output.next().is_none());
@@ -110,7 +110,7 @@ fn simulation_schedule_keyed_events() {
         .unwrap();
 
     // Move to the 1st event at t0+1.
-    simu.step();
+    simu.step().unwrap();
 
     // Try to cancel the 1st event after it has already taken place and check
     // that the cancellation had no effect.
@@ -121,7 +121,7 @@ fn simulation_schedule_keyed_events() {
     // Cancel the second event (t0+2) before it is meant to takes place and
     // check that we move directly to the 3rd event.
     event_t2_1.cancel();
-    simu.step();
+    simu.step().unwrap();
     assert_eq!(simu.time(), t0 + Duration::from_secs(2));
     assert_eq!(output.next(), Some(22));
     assert!(output.next().is_none());
@@ -156,7 +156,7 @@ fn simulation_schedule_periodic_events() {
 
     // Move to the next events at t0 + 3s + k*2s.
     for k in 0..10 {
-        simu.step();
+        simu.step().unwrap();
         assert_eq!(
             simu.time(),
             t0 + Duration::from_secs(3) + k * Duration::from_secs(2)
@@ -195,7 +195,7 @@ fn simulation_schedule_periodic_keyed_events() {
         .unwrap();
 
     // Move to the next event at t0+3s.
-    simu.step();
+    simu.step().unwrap();
     assert_eq!(simu.time(), t0 + Duration::from_secs(3));
     assert_eq!(output.next(), Some(1));
     assert_eq!(output.next(), Some(2));
@@ -206,7 +206,7 @@ fn simulation_schedule_periodic_keyed_events() {
 
     // Move to the next events at t0 + 3s + k*2s.
     for k in 1..10 {
-        simu.step();
+        simu.step().unwrap();
         assert_eq!(
             simu.time(),
             t0 + Duration::from_secs(3) + k * Duration::from_secs(2)
@@ -263,7 +263,8 @@ fn timestamp_bench(
     let simu = SimInit::new()
         .add_model(model, mbox, "")
         .set_clock(clock)
-        .init(t0);
+        .init(t0)
+        .unwrap();
 
     (simu, addr, stamp_stream)
 }
@@ -320,7 +321,7 @@ fn simulation_system_clock_from_instant() {
                 measured_time,
             );
 
-            simu.step();
+            simu.step().unwrap();
         }
     }
 }
@@ -383,7 +384,7 @@ fn simulation_system_clock_from_system_time() {
                 measured_time,
             );
 
-            simu.step();
+            simu.step().unwrap();
         }
     }
 }
@@ -431,6 +432,6 @@ fn simulation_auto_system_clock() {
             measured_time,
         );
 
-        simu.step();
+        simu.step().unwrap();
     }
 }

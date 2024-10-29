@@ -338,14 +338,20 @@ pub mod any_request {
 pub enum ErrorCode {
     InternalError = 0,
     SimulationNotStarted = 1,
-    MissingArgument = 2,
-    InvalidTime = 3,
-    InvalidDuration = 4,
-    InvalidMessage = 5,
-    InvalidKey = 6,
-    SourceNotFound = 10,
-    SinkNotFound = 11,
-    SimulationTimeOutOfRange = 12,
+    SimulationTerminated = 2,
+    SimulationDeadlock = 3,
+    SimulationModelError = 4,
+    SimulationPanic = 5,
+    SimulationBadQuery = 6,
+    SimulationTimeOutOfRange = 22,
+    MissingArgument = 7,
+    InvalidTime = 8,
+    InvalidDuration = 9,
+    InvalidPeriod = 10,
+    InvalidMessage = 11,
+    InvalidKey = 12,
+    SourceNotFound = 20,
+    SinkNotFound = 21,
 }
 impl ErrorCode {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -356,14 +362,20 @@ impl ErrorCode {
         match self {
             ErrorCode::InternalError => "INTERNAL_ERROR",
             ErrorCode::SimulationNotStarted => "SIMULATION_NOT_STARTED",
+            ErrorCode::SimulationTerminated => "SIMULATION_TERMINATED",
+            ErrorCode::SimulationDeadlock => "SIMULATION_DEADLOCK",
+            ErrorCode::SimulationModelError => "SIMULATION_MODEL_ERROR",
+            ErrorCode::SimulationPanic => "SIMULATION_PANIC",
+            ErrorCode::SimulationBadQuery => "SIMULATION_BAD_QUERY",
+            ErrorCode::SimulationTimeOutOfRange => "SIMULATION_TIME_OUT_OF_RANGE",
             ErrorCode::MissingArgument => "MISSING_ARGUMENT",
             ErrorCode::InvalidTime => "INVALID_TIME",
             ErrorCode::InvalidDuration => "INVALID_DURATION",
+            ErrorCode::InvalidPeriod => "INVALID_PERIOD",
             ErrorCode::InvalidMessage => "INVALID_MESSAGE",
             ErrorCode::InvalidKey => "INVALID_KEY",
             ErrorCode::SourceNotFound => "SOURCE_NOT_FOUND",
             ErrorCode::SinkNotFound => "SINK_NOT_FOUND",
-            ErrorCode::SimulationTimeOutOfRange => "SIMULATION_TIME_OUT_OF_RANGE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -371,14 +383,20 @@ impl ErrorCode {
         match value {
             "INTERNAL_ERROR" => Some(Self::InternalError),
             "SIMULATION_NOT_STARTED" => Some(Self::SimulationNotStarted),
+            "SIMULATION_TERMINATED" => Some(Self::SimulationTerminated),
+            "SIMULATION_DEADLOCK" => Some(Self::SimulationDeadlock),
+            "SIMULATION_MODEL_ERROR" => Some(Self::SimulationModelError),
+            "SIMULATION_PANIC" => Some(Self::SimulationPanic),
+            "SIMULATION_BAD_QUERY" => Some(Self::SimulationBadQuery),
+            "SIMULATION_TIME_OUT_OF_RANGE" => Some(Self::SimulationTimeOutOfRange),
             "MISSING_ARGUMENT" => Some(Self::MissingArgument),
             "INVALID_TIME" => Some(Self::InvalidTime),
             "INVALID_DURATION" => Some(Self::InvalidDuration),
+            "INVALID_PERIOD" => Some(Self::InvalidPeriod),
             "INVALID_MESSAGE" => Some(Self::InvalidMessage),
             "INVALID_KEY" => Some(Self::InvalidKey),
             "SOURCE_NOT_FOUND" => Some(Self::SourceNotFound),
             "SINK_NOT_FOUND" => Some(Self::SinkNotFound),
-            "SIMULATION_TIME_OUT_OF_RANGE" => Some(Self::SimulationTimeOutOfRange),
             _ => None,
         }
     }

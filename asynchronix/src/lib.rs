@@ -235,7 +235,9 @@
 //!     .add_model(multiplier2, multiplier2_mbox, "multiplier2")
 //!     .add_model(delay1, delay1_mbox, "delay1")
 //!     .add_model(delay2, delay2_mbox, "delay2")
-//!     .init(t0);
+//!     .init(t0)?;
+//!
+//! # Ok::<(), asynchronix::simulation::SimulationError>(())
 //! ```
 //!
 //! ## Running simulations
@@ -323,23 +325,25 @@
 //! #     .add_model(multiplier2, multiplier2_mbox, "multiplier2")
 //! #     .add_model(delay1, delay1_mbox, "delay1")
 //! #     .add_model(delay2, delay2_mbox, "delay2")
-//! #     .init(t0);
+//! #     .init(t0)?;
 //! // Send a value to the first multiplier.
-//! simu.process_event(Multiplier::input, 21.0, &input_address);
+//! simu.process_event(Multiplier::input, 21.0, &input_address)?;
 //!
 //! // The simulation is still at t0 so nothing is expected at the output of the
 //! // second delay gate.
 //! assert!(output_slot.next().is_none());
 //!
 //! // Advance simulation time until the next event and check the time and output.
-//! simu.step();
+//! simu.step()?;
 //! assert_eq!(simu.time(), t0 + Duration::from_secs(1));
 //! assert_eq!(output_slot.next(), Some(84.0));
 //!
 //! // Get the answer to the ultimate question of life, the universe & everything.
-//! simu.step();
+//! simu.step()?;
 //! assert_eq!(simu.time(), t0 + Duration::from_secs(2));
 //! assert_eq!(output_slot.next(), Some(42.0));
+//!
+//! # Ok::<(), asynchronix::simulation::SimulationError>(())
 //! ```
 //!
 //! # Message ordering guarantees

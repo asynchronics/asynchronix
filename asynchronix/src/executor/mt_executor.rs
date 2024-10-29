@@ -48,7 +48,7 @@ use std::cell::Cell;
 use std::fmt;
 use std::future::Future;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -56,8 +56,9 @@ use std::time::{Duration, Instant};
 use crossbeam_utils::sync::{Parker, Unparker};
 use slab::Slab;
 
-use super::task::{self, CancelToken, Promise, Runnable};
-use super::{SimulationContext, NEXT_EXECUTOR_ID, SIMULATION_CONTEXT};
+use crate::channel;
+use crate::executor::task::{self, CancelToken, Promise, Runnable};
+use crate::executor::{SimulationContext, NEXT_EXECUTOR_ID, SIMULATION_CONTEXT};
 use crate::macros::scoped_thread_local::scoped_thread_local;
 use crate::util::rng::Rng;
 use pool_manager::PoolManager;
@@ -224,7 +225,10 @@ impl Executor {
 
     /// Execute spawned tasks, blocking until all futures have completed or
     /// until the executor reaches a deadlock.
-    pub(crate) fn run(&mut self) {
+    ///
+    /// The number of unprocessed messages is returned. It should always be 0
+    /// unless a deadlock occurred.
+    pub(crate) fn run(&mut self) -> isize {
         self.context.pool_manager.activate_worker();
 
         loop {
@@ -232,7 +236,7 @@ impl Executor {
                 panic::resume_unwind(worker_panic);
             }
             if self.context.pool_manager.pool_is_idle() {
-                return;
+                return self.context.msg_count.load(Ordering::Relaxed);
             }
 
             self.parker.park();
@@ -298,6 +302,11 @@ struct ExecutorContext {
     executor_unparker: Unparker,
     /// Manager for all worker threads.
     pool_manager: PoolManager,
+    /// Difference between the number of sent and received messages.
+    ///
+    /// This counter is only updated by worker threads before they park and is
+    /// therefore only consistent once all workers are parked.
+    msg_count: AtomicIsize,
 }
 
 impl ExecutorContext {
@@ -320,6 +329,7 @@ impl ExecutorContext {
                 stealers.into_boxed_slice(),
                 worker_unparkers,
             ),
+            msg_count: AtomicIsize::new(0),
         }
     }
 }
@@ -456,6 +466,15 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
     let local_queue = &worker.local_queue;
     let fast_slot = &worker.fast_slot;
 
+    // Update the global message counter.
+    let update_msg_count = || {
+        let thread_msg_count = channel::THREAD_MSG_COUNT.replace(0);
+        worker
+            .executor_context
+            .msg_count
+            .fetch_add(thread_msg_count, Ordering::Relaxed);
+    };
+
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         // Set how long to spin when searching for a task.
         const MAX_SEARCH_DURATION: Duration = Duration::from_nanos(1000);
@@ -468,9 +487,10 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
 
             // Try to deactivate the worker.
             if pool_manager.try_set_worker_inactive(id) {
-                parker.park();
                 // No need to call `begin_worker_search()`: this was done by the
                 // thread that unparked the worker.
+                update_msg_count();
+                parker.park();
             } else if injector.is_empty() {
                 // This worker could not be deactivated because it was the last
                 // active worker. In such case, the call to
@@ -479,6 +499,7 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
                 // not activate a new worker, which is why some tasks may now be
                 // visible in the injector queue.
                 pool_manager.set_all_workers_inactive();
+                update_msg_count();
                 executor_unparker.unpark();
                 parker.park();
                 // No need to call `begin_worker_search()`: this was done by the

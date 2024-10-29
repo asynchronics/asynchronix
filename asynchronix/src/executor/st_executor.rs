@@ -8,6 +8,7 @@ use slab::Slab;
 use super::task::{self, CancelToken, Promise, Runnable};
 use super::NEXT_EXECUTOR_ID;
 
+use crate::channel;
 use crate::executor::{SimulationContext, SIMULATION_CONTEXT};
 use crate::macros::scoped_thread_local::scoped_thread_local;
 
@@ -105,7 +106,13 @@ impl Executor {
 
     /// Execute spawned tasks, blocking until all futures have completed or
     /// until the executor reaches a deadlock.
-    pub(crate) fn run(&mut self) {
+    ///
+    /// The number of unprocessed messages is returned. It should always be 0
+    /// unless a deadlock occurred.
+    pub(crate) fn run(&mut self) -> isize {
+        // In case this executor is nested in another one, reset the counter of in-flight messages.
+        let msg_count_stash = channel::THREAD_MSG_COUNT.replace(self.context.msg_count);
+
         SIMULATION_CONTEXT.set(&self.simulation_context, || {
             ACTIVE_TASKS.set(&self.active_tasks, || {
                 EXECUTOR_CONTEXT.set(&self.context, || loop {
@@ -118,6 +125,10 @@ impl Executor {
                 })
             })
         });
+
+        self.context.msg_count = channel::THREAD_MSG_COUNT.replace(msg_count_stash);
+
+        self.context.msg_count
     }
 }
 
@@ -168,6 +179,8 @@ struct ExecutorContext {
     /// Unique executor identifier inherited by all tasks spawned on this
     /// executor instance.
     executor_id: usize,
+    /// Number of in-flight messages.
+    msg_count: isize,
 }
 
 impl ExecutorContext {
@@ -176,6 +189,7 @@ impl ExecutorContext {
         Self {
             queue: RefCell::new(Vec::with_capacity(QUEUE_MIN_CAPACITY)),
             executor_id,
+            msg_count: 0,
         }
     }
 }

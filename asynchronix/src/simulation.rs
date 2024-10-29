@@ -113,14 +113,15 @@
 //! # impl Model for ModelB {};
 //! # let modelA_addr = Mailbox::<ModelA>::new().address();
 //! # let modelB_addr = Mailbox::<ModelB>::new().address();
-//! # let mut simu = SimInit::new().init(MonotonicTime::EPOCH);
+//! # let mut simu = SimInit::new().init(MonotonicTime::EPOCH)?;
 //! simu.process_event(
 //!     |m: &mut ModelA| {
 //!         m.output.connect(ModelB::input, modelB_addr);
 //!     },
 //!     (),
 //!     &modelA_addr
-//! );
+//! )?;
+//! # Ok::<(), asynchronix::simulation::SimulationError>(())
 //! ```
 mod mailbox;
 mod scheduler;
@@ -143,7 +144,8 @@ use std::time::Duration;
 
 use recycle_box::{coerce_box, RecycleBox};
 
-use crate::executor::Executor;
+use crate::channel::ChannelObserver;
+use crate::executor::{Executor, ExecutorError};
 use crate::model::{Context, Model, SetupContext};
 use crate::ports::{InputFn, ReplierFn};
 use crate::time::{AtomicTime, Clock, MonotonicTime};
@@ -193,6 +195,8 @@ pub struct Simulation {
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
     time: AtomicTime,
     clock: Box<dyn Clock>,
+    observers: Vec<(String, Box<dyn ChannelObserver>)>,
+    is_terminated: bool,
 }
 
 impl Simulation {
@@ -202,12 +206,15 @@ impl Simulation {
         scheduler_queue: Arc<Mutex<SchedulerQueue>>,
         time: AtomicTime,
         clock: Box<dyn Clock + 'static>,
+        observers: Vec<(String, Box<dyn ChannelObserver>)>,
     ) -> Self {
         Self {
             executor,
             scheduler_queue,
             time,
             clock,
+            observers,
+            is_terminated: false,
         }
     }
 
@@ -223,8 +230,8 @@ impl Simulation {
     /// [`Clock::synchronize()`](crate::time::Clock::synchronize) on the configured
     /// simulation clock. This method blocks until all newly processed events
     /// have completed.
-    pub fn step(&mut self) {
-        self.step_to_next_bounded(MonotonicTime::MAX);
+    pub fn step(&mut self) -> Result<(), ExecutionError> {
+        self.step_to_next_bounded(MonotonicTime::MAX).map(|_| ())
     }
 
     /// Iteratively advances the simulation time by the specified duration, as
@@ -234,10 +241,10 @@ impl Simulation {
     /// time have completed. The simulation time upon completion is equal to the
     /// initial simulation time incremented by the specified duration, whether
     /// or not an event was scheduled for that time.
-    pub fn step_by(&mut self, duration: Duration) {
+    pub fn step_by(&mut self, duration: Duration) -> Result<(), ExecutionError> {
         let target_time = self.time.read() + duration;
 
-        self.step_until_unchecked(target_time);
+        self.step_until_unchecked(target_time)
     }
 
     /// Iteratively advances the simulation time until the specified deadline,
@@ -247,16 +254,14 @@ impl Simulation {
     /// time have completed. The simulation time upon completion is equal to the
     /// specified target time, whether or not an event was scheduled for that
     /// time.
-    pub fn step_until(&mut self, target_time: MonotonicTime) -> Result<(), SchedulingError> {
+    pub fn step_until(&mut self, target_time: MonotonicTime) -> Result<(), ExecutionError> {
         if self.time.read() >= target_time {
-            return Err(SchedulingError::InvalidScheduledTime);
+            return Err(ExecutionError::InvalidTargetTime(target_time));
         }
-        self.step_until_unchecked(target_time);
-
-        Ok(())
+        self.step_until_unchecked(target_time)
     }
 
-    /// Returns a scheduler handle.
+    /// Returns an owned scheduler handle.
     pub fn scheduler(&self) -> Scheduler {
         Scheduler::new(self.scheduler_queue.clone(), self.time.reader())
     }
@@ -265,15 +270,20 @@ impl Simulation {
     ///
     /// Simulation time remains unchanged. The periodicity of the action, if
     /// any, is ignored.
-    pub fn process(&mut self, action: Action) {
+    pub fn process(&mut self, action: Action) -> Result<(), ExecutionError> {
         action.spawn_and_forget(&self.executor);
-        self.executor.run();
+        self.run()
     }
 
     /// Processes an event immediately, blocking until completion.
     ///
     /// Simulation time remains unchanged.
-    pub fn process_event<M, F, T, S>(&mut self, func: F, arg: T, address: impl Into<Address<M>>)
+    pub fn process_event<M, F, T, S>(
+        &mut self,
+        func: F,
+        arg: T,
+        address: impl Into<Address<M>>,
+    ) -> Result<(), ExecutionError>
     where
         M: Model,
         F: for<'a> InputFn<'a, M, T, S>,
@@ -297,18 +307,19 @@ impl Simulation {
         };
 
         self.executor.spawn_and_forget(fut);
-        self.executor.run();
+        self.run()
     }
 
     /// Processes a query immediately, blocking until completion.
     ///
-    /// Simulation time remains unchanged.
+    /// Simulation time remains unchanged. If the targeted model was not added
+    /// to the simulation, an `ExecutionError::InvalidQuery` is returned.
     pub fn process_query<M, F, T, R, S>(
         &mut self,
         func: F,
         arg: T,
         address: impl Into<Address<M>>,
-    ) -> Result<R, QueryError>
+    ) -> Result<R, ExecutionError>
     where
         M: Model,
         F: for<'a> ReplierFn<'a, M, T, R, S>,
@@ -338,9 +349,36 @@ impl Simulation {
         };
 
         self.executor.spawn_and_forget(fut);
-        self.executor.run();
+        self.run()?;
 
-        reply_reader.try_read().map_err(|_| QueryError {})
+        reply_reader
+            .try_read()
+            .map_err(|_| ExecutionError::BadQuery)
+    }
+
+    /// Runs the executor.
+    fn run(&mut self) -> Result<(), ExecutionError> {
+        if self.is_terminated {
+            return Err(ExecutionError::Terminated);
+        }
+
+        self.executor.run().map_err(|e| match e {
+            ExecutorError::Deadlock => {
+                self.is_terminated = true;
+                let mut deadlock_info = Vec::new();
+                for (name, observer) in &self.observers {
+                    let mailbox_size = observer.len();
+                    if mailbox_size != 0 {
+                        deadlock_info.push(DeadlockInfo {
+                            model_name: name.clone(),
+                            mailbox_size,
+                        });
+                    }
+                }
+
+                ExecutionError::Deadlock(deadlock_info)
+            }
+        })
     }
 
     /// Advances simulation time to that of the next scheduled action if its
@@ -349,7 +387,10 @@ impl Simulation {
     ///
     /// If at least one action was found that satisfied the time bound, the
     /// corresponding new simulation time is returned.
-    fn step_to_next_bounded(&mut self, upper_time_bound: MonotonicTime) -> Option<MonotonicTime> {
+    fn step_to_next_bounded(
+        &mut self,
+        upper_time_bound: MonotonicTime,
+    ) -> Result<Option<MonotonicTime>, ExecutionError> {
         // Function pulling the next action. If the action is periodic, it is
         // immediately re-scheduled.
         fn pull_next_action(scheduler_queue: &mut MutexGuard<SchedulerQueue>) -> Action {
@@ -380,7 +421,10 @@ impl Simulation {
 
         // Move to the next scheduled time.
         let mut scheduler_queue = self.scheduler_queue.lock().unwrap();
-        let mut current_key = peek_next_key(&mut scheduler_queue)?;
+        let mut current_key = match peek_next_key(&mut scheduler_queue) {
+            Some(key) => key,
+            None => return Ok(None),
+        };
         self.time.write(current_key.0);
 
         loop {
@@ -420,9 +464,9 @@ impl Simulation {
                     let current_time = current_key.0;
                     // TODO: check synchronization status?
                     self.clock.synchronize(current_time);
-                    self.executor.run();
+                    self.run()?;
 
-                    return Some(current_time);
+                    return Ok(Some(current_time));
                 }
             };
         }
@@ -437,18 +481,19 @@ impl Simulation {
     ///
     /// This method does not check whether the specified time lies in the future
     /// of the current simulation time.
-    fn step_until_unchecked(&mut self, target_time: MonotonicTime) {
+    fn step_until_unchecked(&mut self, target_time: MonotonicTime) -> Result<(), ExecutionError> {
         loop {
             match self.step_to_next_bounded(target_time) {
                 // The target time was reached exactly.
-                Some(t) if t == target_time => return,
+                Ok(Some(t)) if t == target_time => return Ok(()),
                 // No actions are scheduled before or at the target time.
-                None => {
+                Ok(None) => {
                     // Update the simulation time.
                     self.time.write(target_time);
                     self.clock.synchronize(target_time);
-                    return;
+                    return Ok(());
                 }
+                Err(e) => return Err(e),
                 // The target time was not reached yet.
                 _ => {}
             }
@@ -464,20 +509,142 @@ impl fmt::Debug for Simulation {
     }
 }
 
-/// Error returned when a query did not obtain a response.
-///
-/// This can happen either because the model targeted by the address was not
-/// added to the simulation or due to a simulation deadlock.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct QueryError {}
+/// Information regarding a deadlocked model.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DeadlockInfo {
+    /// Name of the deadlocked model.
+    pub model_name: String,
+    /// Number of messages in the mailbox.
+    pub mailbox_size: usize,
+}
 
-impl fmt::Display for QueryError {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(fmt, "the query did not receive a response")
+/// An error returned upon simulation execution failure.
+///
+/// Note that if a `Deadlock`, `ModelError` or `ModelPanic` is returned, any
+/// subsequent attempt to run the simulation will return `Terminated`.
+#[derive(Debug)]
+pub enum ExecutionError {
+    /// The simulation has deadlocked.
+    ///
+    /// Enlists all models with non-empty mailboxes.
+    Deadlock(Vec<DeadlockInfo>),
+    /// A model has aborted the simulation.
+    ModelError {
+        /// Name of the model.
+        model_name: String,
+        /// Error registered by the model.
+        error: Box<dyn Error>,
+    },
+    /// A panic was caught during execution with the message contained in the
+    /// payload.
+    Panic(String),
+    /// The specified target simulation time is in the past of the current
+    /// simulation time.
+    InvalidTargetTime(MonotonicTime),
+    /// The query was invalid and did not obtain a response.
+    BadQuery,
+    /// The simulation has been terminated due to an earlier deadlock, model
+    /// error or model panic.
+    Terminated,
+}
+
+impl fmt::Display for ExecutionError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Deadlock(list) => {
+                f.write_str(
+                    "a simulation deadlock has been detected that involves the following models: ",
+                )?;
+                let mut first_item = true;
+                for info in list {
+                    if first_item {
+                        first_item = false;
+                    } else {
+                        f.write_str(", ")?;
+                    }
+                    write!(
+                        f,
+                        "'{}' ({} item{} in mailbox)",
+                        info.model_name,
+                        info.mailbox_size,
+                        if info.mailbox_size == 1 { "" } else { "s" }
+                    )?;
+                }
+
+                Ok(())
+            }
+            Self::ModelError { model_name, error } => {
+                write!(
+                    f,
+                    "the simulation has been aborted by model '{}' with the following error: {}",
+                    model_name, error
+                )
+            }
+            Self::Panic(msg) => {
+                f.write_str("a panic has been caught during simulation:\n")?;
+                f.write_str(msg)
+            }
+            Self::InvalidTargetTime(time) => {
+                write!(
+                    f,
+                    "target simulation stamp {} lies in the past of the current simulation time",
+                    time
+                )
+            }
+            Self::BadQuery => f.write_str("the query did not return any response; maybe the target model was not added to the simulation?"),
+            Self::Terminated => f.write_str("the simulation has been terminated"),
+        }
     }
 }
 
-impl Error for QueryError {}
+impl Error for ExecutionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        if let Self::ModelError { error, .. } = &self {
+            Some(error.as_ref())
+        } else {
+            None
+        }
+    }
+}
+
+/// An error returned upon simulation execution or scheduling failure.
+#[derive(Debug)]
+pub enum SimulationError {
+    /// The execution of the simulation failed.
+    ExecutionError(ExecutionError),
+    /// An attempt to schedule an item failed.
+    SchedulingError(SchedulingError),
+}
+
+impl fmt::Display for SimulationError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::ExecutionError(e) => e.fmt(f),
+            Self::SchedulingError(e) => e.fmt(f),
+        }
+    }
+}
+
+impl Error for SimulationError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::ExecutionError(e) => e.source(),
+            Self::SchedulingError(e) => e.source(),
+        }
+    }
+}
+
+impl From<ExecutionError> for SimulationError {
+    fn from(e: ExecutionError) -> Self {
+        Self::ExecutionError(e)
+    }
+}
+
+impl From<SchedulingError> for SimulationError {
+    fn from(e: SchedulingError) -> Self {
+        Self::SchedulingError(e)
+    }
+}
 
 /// Adds a model and its mailbox to the simulation bench.
 pub(crate) fn add_model<M: Model>(

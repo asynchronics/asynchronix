@@ -32,7 +32,7 @@ use mio::{Events, Interest, Poll, Token};
 
 use asynchronix::model::{Context, InitializedModel, Model, SetupContext};
 use asynchronix::ports::{EventBuffer, Output};
-use asynchronix::simulation::{Mailbox, SimInit};
+use asynchronix::simulation::{Mailbox, SimInit, SimulationError};
 use asynchronix::time::{AutoSystemClock, MonotonicTime};
 
 const DELTA: Duration = Duration::from_millis(2);
@@ -184,7 +184,7 @@ impl Drop for Listener {
     }
 }
 
-fn main() {
+fn main() -> Result<(), SimulationError> {
     // ---------------
     // Bench assembly.
     // ---------------
@@ -210,7 +210,7 @@ fn main() {
     let mut simu = SimInit::new()
         .add_model(listener, listener_mbox, "listener")
         .set_clock(AutoSystemClock::new())
-        .init(t0);
+        .init(t0)?;
 
     // ----------
     // Simulation.
@@ -231,7 +231,7 @@ fn main() {
     });
 
     // Advance simulation, external messages will be collected.
-    simu.step_by(Duration::from_secs(2));
+    simu.step_by(Duration::from_secs(2))?;
 
     // Check collected external messages.
     let mut packets = 0_u32;
@@ -244,4 +244,6 @@ fn main() {
     assert_eq!(message.next(), None);
 
     sender_handle.join().unwrap();
+
+    Ok(())
 }

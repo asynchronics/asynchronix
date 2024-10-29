@@ -38,13 +38,13 @@ fn model_schedule_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0);
+    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0).unwrap();
 
-    simu.process_event(TestModel::trigger, (), addr);
-    simu.step();
+    simu.process_event(TestModel::trigger, (), addr).unwrap();
+    simu.step().unwrap();
     assert_eq!(simu.time(), t0 + Duration::from_secs(2));
     assert!(output.next().is_some());
-    simu.step();
+    simu.step().unwrap();
     assert!(output.next().is_none());
 }
 
@@ -93,13 +93,13 @@ fn model_cancel_future_keyed_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0);
+    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0).unwrap();
 
-    simu.process_event(TestModel::trigger, (), addr);
-    simu.step();
+    simu.process_event(TestModel::trigger, (), addr).unwrap();
+    simu.step().unwrap();
     assert_eq!(simu.time(), t0 + Duration::from_secs(1));
     assert_eq!(output.next(), Some(1));
-    simu.step();
+    simu.step().unwrap();
     assert_eq!(simu.time(), t0 + Duration::from_secs(1));
     assert!(output.next().is_none());
 }
@@ -149,14 +149,14 @@ fn model_cancel_same_time_keyed_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0);
+    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0).unwrap();
 
-    simu.process_event(TestModel::trigger, (), addr);
-    simu.step();
+    simu.process_event(TestModel::trigger, (), addr).unwrap();
+    simu.step().unwrap();
     assert_eq!(simu.time(), t0 + Duration::from_secs(2));
     assert_eq!(output.next(), Some(1));
     assert!(output.next().is_none());
-    simu.step();
+    simu.step().unwrap();
     assert!(output.next().is_none());
 }
 
@@ -192,13 +192,13 @@ fn model_schedule_periodic_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0);
+    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0).unwrap();
 
-    simu.process_event(TestModel::trigger, (), addr);
+    simu.process_event(TestModel::trigger, (), addr).unwrap();
 
     // Move to the next events at t0 + 2s + k*3s.
     for k in 0..10 {
-        simu.step();
+        simu.step().unwrap();
         assert_eq!(
             simu.time(),
             t0 + Duration::from_secs(2) + k * Duration::from_secs(3)
@@ -243,16 +243,16 @@ fn model_cancel_periodic_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0);
+    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0).unwrap();
 
-    simu.process_event(TestModel::trigger, (), addr);
+    simu.process_event(TestModel::trigger, (), addr).unwrap();
 
-    simu.step();
+    simu.step().unwrap();
     assert_eq!(simu.time(), t0 + Duration::from_secs(2));
     assert!(output.next().is_some());
     assert!(output.next().is_none());
 
-    simu.step();
+    simu.step().unwrap();
     assert_eq!(simu.time(), t0 + Duration::from_secs(2));
     assert!(output.next().is_none());
 }

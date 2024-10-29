@@ -4,6 +4,7 @@
 
 mod queue;
 
+use std::cell::Cell;
 use std::error;
 use std::fmt;
 use std::future::Future;
@@ -19,6 +20,14 @@ use queue::{PopError, PushError, Queue};
 use recycle_box::coerce_box;
 
 use crate::model::{Context, Model};
+
+// Counts the difference between the number of sent and received messages for
+// this thread.
+//
+// This is used by the executor to make sure that all messages have been
+// received upon completion of a simulation step, i.e. that no deadlock
+// occurred.
+thread_local! { pub(crate) static THREAD_MSG_COUNT: Cell<isize> = const { Cell::new(0) }; }
 
 /// Data shared between the receiver and the senders.
 struct Inner<M> {
@@ -84,6 +93,13 @@ impl<M: Model> Receiver<M> {
         }
     }
 
+    /// Creates a new observer.
+    pub(crate) fn observer(&self) -> impl ChannelObserver {
+        Observer {
+            inner: self.inner.clone(),
+        }
+    }
+
     /// Receives and executes a message asynchronously, if necessary waiting
     /// until one becomes available.
     pub(crate) async fn recv(
@@ -104,12 +120,16 @@ impl<M: Model> Receiver<M> {
 
         match msg {
             Some(mut msg) => {
-                // Consume the message to obtain a boxed future.
+                // Decrement the count of in-flight messages.
+                THREAD_MSG_COUNT.set(THREAD_MSG_COUNT.get().wrapping_sub(1));
+
+                // Take the message to obtain a boxed future.
                 let fut = msg.call_once(model, context, self.future_box.take().unwrap());
 
-                // Now that `msg` was consumed and its slot in the queue was
-                // freed, signal to one awaiting sender that one slot is
+                // Now that the message was taken, drop `msg` to free its slot
+                // in the queue and signal to one awaiting sender that a slot is
                 // available for sending.
+                drop(msg);
                 self.inner.sender_signal.notify_one();
 
                 // Await the future provided by the message.
@@ -219,6 +239,9 @@ impl<M: Model> Sender<M> {
         if success {
             self.inner.receiver_signal.notify();
 
+            // Increment the count of in-flight messages.
+            THREAD_MSG_COUNT.set(THREAD_MSG_COUNT.get().wrapping_add(1));
+
             Ok(())
         } else {
             Err(SendError)
@@ -272,6 +295,37 @@ impl<M> Clone for Sender<M> {
         Self {
             inner: self.inner.clone(),
         }
+    }
+}
+
+/// A model-independent handle to a channel that can observe the current number
+/// of messages.
+pub(crate) trait ChannelObserver: Send {
+    /// Returns the current number of messages in the channel.
+    ///
+    /// # Warning
+    ///
+    /// The returned result is only meaningful if it can be established than
+    /// there are no concurrent send or receive operations on the channel.
+    /// Otherwise, the returned value may neither reflect the current state nor
+    /// the past state of the channel, and may be greater than the capacity of
+    /// the channel.
+    fn len(&self) -> usize;
+}
+
+/// A handle to a channel that can observe the current number of messages.
+///
+/// Multiple [`Observer`]s can be created using the [`Receiver::observer`]
+/// method or via cloning.
+#[derive(Clone)]
+pub(crate) struct Observer<M: 'static> {
+    /// Shared data.
+    inner: Arc<Inner<M>>,
+}
+
+impl<M: Model> ChannelObserver for Observer<M> {
+    fn len(&self) -> usize {
+        self.inner.queue.len()
     }
 }
 

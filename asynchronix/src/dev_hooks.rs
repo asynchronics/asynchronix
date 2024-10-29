@@ -43,6 +43,6 @@ impl Executor {
     /// Let the executor run, blocking until all futures have completed or until
     /// the executor deadlocks.
     pub fn run(&mut self) {
-        self.0.run();
+        self.0.run().unwrap();
     }
 }
