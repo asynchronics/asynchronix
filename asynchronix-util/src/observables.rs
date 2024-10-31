@@ -19,7 +19,7 @@ where
 
 /// Observable state.
 ///
-/// This struct incapsulates state. Every state change is propagated to the
+/// This object encapsulates state. Every state change is propagated to the
 /// output.
 #[derive(Debug)]
 pub struct ObservableState<S, T>
@@ -66,6 +66,11 @@ where
         let r = f(&mut self.state);
         self.out.send(self.state.observe()).await;
         r
+    }
+
+    /// Propagate value.
+    pub async fn propagate(&mut self) {
+        self.out.send(self.state.observe()).await;
     }
 }
 
