@@ -22,7 +22,7 @@ pub(crate) struct CachedRwLock<T: Clone> {
 }
 
 impl<T: Clone> CachedRwLock<T> {
-    /// Creates a new cached read-write lock in an ulocked state.
+    /// Creates a new cached read-write lock in unlocked state.
     pub(crate) fn new(t: T) -> Self {
         let shared = t.clone();
         Self {

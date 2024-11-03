@@ -4,14 +4,17 @@
 //!
 //! * self-scheduling methods,
 //! * model initialization,
-//! * simulation monitoring with event streams.
+//! * simulation monitoring with buffered event sinks.
 //!
 //! ```text
-//!                       ┌──────────┐                ┌──────────┐
-//!                PPS    │          │ coil currents  │          │ position
-//! Pulse rate ●─────────►│  Driver  ├───────────────►│  Motor   ├──────────►
-//!              (±freq)  │          │    (IA, IB)    │          │ (0:199)
-//!                       └──────────┘                └──────────┘
+//!                       ┌──────────┐
+//!                PPS    │          │ coil currents  ┌─────────┐
+//! Pulse rate ●─────────►│  Driver  ├───────────────►│         │
+//!              (±freq)  │          │    (IA, IB)    │         │ position
+//!                       └──────────┘                │  Motor  ├──────────►
+//!                                       torque      │         │ (0:199)
+//!       Load ●─────────────────────────────────────►│         │
+//!                                                   └─────────┘
 //! ```
 
 use std::future::Future;
@@ -136,7 +139,7 @@ impl Driver {
         }
     }
 
-    /// Sets the pulse rate (sign = direction) [Hz] -- input port.
+    /// Pulse rate (sign = direction) [Hz] -- input port.
     pub async fn pulse_rate(&mut self, pps: f64, context: &Context<Self>) {
         println!(
             "Model instance {} at time {}: setting pps: {:.2}",

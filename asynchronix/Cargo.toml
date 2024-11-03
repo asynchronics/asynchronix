@@ -58,10 +58,8 @@ tracing = { version= "0.1.40", default-features = false, features=["std"], optio
 tracing-subscriber = { version= "0.3.18", optional = true }
 
 [dev-dependencies]
-atomic-wait = "1.1"
 futures-util = "0.3"
 futures-executor = "0.3"
-mio = { version = "1.0", features = ["os-poll", "net"] }
 tracing-subscriber = { version= "0.3.18", features=["env-filter"] }
 
 [target.'cfg(asynchronix_loom)'.dev-dependencies]

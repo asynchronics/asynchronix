@@ -3,7 +3,7 @@ use std::fmt;
 use crate::executor::Executor;
 use crate::simulation::{self, LocalScheduler, Mailbox};
 
-use super::Model;
+use super::{Model, ProtoModel};
 
 /// A local context for models.
 ///
@@ -95,75 +95,102 @@ impl<M: Model> fmt::Debug for Context<M> {
     }
 }
 
-/// A setup context for models.
+/// Context available when building a model from a model prototype.
 ///
-/// A `SetupContext` can be used by models during the setup stage to
-/// create submodels and add them to the simulation bench.
+/// A `BuildContext` can be used to add the sub-models of a hierarchical model
+/// to the simulation bench.
 ///
 /// # Examples
 ///
-/// A model that contains two connected submodels.
+/// A model that multiplies its input by four using two sub-models that each
+/// multiply their input by two.
+///
+/// ```text
+///             ┌───────────────────────────────────────┐
+///             │ MyltiplyBy4                           │
+///             │   ┌─────────────┐   ┌─────────────┐   │
+///             │   │             │   │             │   │
+/// Input ●─────┼──►│ MultiplyBy2 ├──►│ MultiplyBy2 ├───┼─────► Output
+///         f64 │   │             │   │             │   │ f64
+///             │   └─────────────┘   └─────────────┘   │
+///             │                                       │
+///             └───────────────────────────────────────┘
+/// ```
 ///
 /// ```
 /// use std::time::Duration;
-/// use asynchronix::model::{Model, SetupContext};
+/// use asynchronix::model::{BuildContext, Model, ProtoModel};
 /// use asynchronix::ports::Output;
 /// use asynchronix::simulation::Mailbox;
 ///
 /// #[derive(Default)]
-/// pub struct SubmodelA {
-///     out: Output<u32>,
+/// struct MultiplyBy2 {
+///     pub output: Output<i32>,
 /// }
+/// impl MultiplyBy2 {
+///     pub async fn input(&mut self, value: i32) {
+///         self.output.send(value * 2).await;
+///     }
+/// }
+/// impl Model for MultiplyBy2 {}
 ///
-/// impl Model for SubmodelA {}
+/// pub struct MultiplyBy4 {
+///     // Private forwarding output.
+///     forward: Output<i32>,
+/// }
+/// impl MultiplyBy4 {
+///     pub async fn input(&mut self, value: i32) {
+///         self.forward.send(value).await;
+///     }
+/// }
+/// impl Model for MultiplyBy4 {}
 ///
-/// #[derive(Default)]
-/// pub struct SubmodelB {}
+/// pub struct ProtoMultiplyBy4 {
+///     pub output: Output<i32>,
+/// }
+/// impl ProtoModel for ProtoMultiplyBy4 {
+///     type Model = MultiplyBy4;
 ///
-/// impl SubmodelB {
-///     pub async fn input(&mut self, value: u32) {
-///         println!("Received {}", value);
+///     fn build(
+///         self,
+///         ctx: &BuildContext<Self>)
+///     -> MultiplyBy4 {
+///         let mut mult = MultiplyBy4 { forward: Output::default() };
+///         let mut submult1 = MultiplyBy2::default();
+///
+///         // Move the prototype's output to the second multiplier.
+///         let mut submult2 = MultiplyBy2 { output: self.output };
+///
+///         // Forward the parent's model input to the first multiplier.
+///         let submult1_mbox = Mailbox::new();
+///         mult.forward.connect(MultiplyBy2::input, &submult1_mbox);
+///         
+///         // Connect the two multiplier submodels.
+///         let submult2_mbox = Mailbox::new();
+///         submult1.output.connect(MultiplyBy2::input, &submult2_mbox);
+///         
+///         // Add the submodels to the simulation.
+///         ctx.add_submodel(submult1, submult1_mbox, "submultiplier 1");
+///         ctx.add_submodel(submult2, submult2_mbox, "submultiplier 2");
+///
+///         mult
 ///     }
 /// }
 ///
-/// impl Model for SubmodelB {}
-///
-/// #[derive(Default)]
-/// pub struct Parent {}
-///
-/// impl Model for Parent {
-///     fn setup(
-///        &mut self,
-///        setup_context: &SetupContext<Self>) {
-///            let mut a = SubmodelA::default();
-///            let b = SubmodelB::default();
-///            let a_mbox = Mailbox::new();
-///            let b_mbox = Mailbox::new();
-///            let a_name = setup_context.name().to_string() + "::a";
-///            let b_name = setup_context.name().to_string() + "::b";
-///
-///            a.out.connect(SubmodelB::input, &b_mbox);
-///
-///            setup_context.add_model(a, a_mbox, a_name);
-///            setup_context.add_model(b, b_mbox, b_name);
-///    }
-/// }
-///
 /// ```
-
 #[derive(Debug)]
-pub struct SetupContext<'a, M: Model> {
+pub struct BuildContext<'a, P: ProtoModel> {
     /// Mailbox of the model.
-    pub mailbox: &'a Mailbox<M>,
-    context: &'a Context<M>,
+    pub mailbox: &'a Mailbox<P::Model>,
+    context: &'a Context<P::Model>,
     executor: &'a Executor,
 }
 
-impl<'a, M: Model> SetupContext<'a, M> {
+impl<'a, P: ProtoModel> BuildContext<'a, P> {
     /// Creates a new local context.
     pub(crate) fn new(
-        mailbox: &'a Mailbox<M>,
-        context: &'a Context<M>,
+        mailbox: &'a Mailbox<P::Model>,
+        context: &'a Context<P::Model>,
         executor: &'a Executor,
     ) -> Self {
         Self {
@@ -178,16 +205,26 @@ impl<'a, M: Model> SetupContext<'a, M> {
         &self.context.name
     }
 
-    /// Adds a new model and its mailbox to the simulation bench.
+    /// Adds a sub-model to the simulation bench.
     ///
-    /// The `name` argument needs not be unique (it can be an empty string) and
-    /// is used for convenience for model instance identification (e.g. for
-    /// logging purposes).
-    pub fn add_model<N: Model>(&self, model: N, mailbox: Mailbox<N>, name: impl Into<String>) {
+    /// The `name` argument needs not be unique. If an empty string is provided,
+    /// it is replaced by the string `<unknown>`.
+    ///
+    /// The provided name is appended to that of the parent model using a dot as
+    /// a separator (e.g. `parent_name.child_name`) to build an identifier. This
+    /// identifier is used for logging or error-reporting purposes.
+    pub fn add_submodel<S: ProtoModel>(
+        &self,
+        model: S,
+        mailbox: Mailbox<S::Model>,
+        name: impl Into<String>,
+    ) {
         let mut submodel_name = name.into();
-        if !self.context.name().is_empty() && !submodel_name.is_empty() {
-            submodel_name = self.context.name().to_string() + "." + &submodel_name;
-        }
+        if submodel_name.is_empty() {
+            submodel_name = String::from("<unknown>");
+        };
+        submodel_name = self.context.name().to_string() + "." + &submodel_name;
+
         simulation::add_model(
             model,
             mailbox,
