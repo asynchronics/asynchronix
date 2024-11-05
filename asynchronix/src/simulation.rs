@@ -146,7 +146,7 @@ use recycle_box::{coerce_box, RecycleBox};
 
 use crate::channel::ChannelObserver;
 use crate::executor::{Executor, ExecutorError};
-use crate::model::{Context, Model, SetupContext};
+use crate::model::{BuildContext, Context, Model, ProtoModel};
 use crate::ports::{InputFn, ReplierFn};
 use crate::time::{AtomicTime, Clock, MonotonicTime};
 use crate::util::seq_futures::SeqFuture;
@@ -647,9 +647,9 @@ impl From<SchedulingError> for SimulationError {
 }
 
 /// Adds a model and its mailbox to the simulation bench.
-pub(crate) fn add_model<M: Model>(
-    mut model: M,
-    mailbox: Mailbox<M>,
+pub(crate) fn add_model<P: ProtoModel>(
+    model: P,
+    mailbox: Mailbox<P::Model>,
     name: String,
     scheduler: Scheduler,
     executor: &Executor,
@@ -658,9 +658,9 @@ pub(crate) fn add_model<M: Model>(
     let span = tracing::span!(target: env!("CARGO_PKG_NAME"), tracing::Level::INFO, "model", name);
 
     let context = Context::new(name, LocalScheduler::new(scheduler, mailbox.address()));
-    let setup_context = SetupContext::new(&mailbox, &context, executor);
+    let build_context = BuildContext::new(&mailbox, &context, executor);
 
-    model.setup(&setup_context);
+    let model = model.build(&build_context);
 
     let mut receiver = mailbox.0;
     let fut = async move {

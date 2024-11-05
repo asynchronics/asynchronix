@@ -19,18 +19,18 @@
 //!
 //! #### Example
 //!
-//! This example demonstrates a submodel inside a parent model. The output of
-//! the submodel is a clone of the parent model output. Both outputs remain
-//! therefore always connected to the same inputs.
+//! This example demonstrates two submodels inside a parent model. The output of
+//! the submodel and of the main model are clones and remain therefore always
+//! connected to the same inputs.
 //!
-//! For a more comprehensive example demonstrating output cloning in submodels
+//! For a more comprehensive example demonstrating hierarchical model
 //! assemblies, see the [`assembly example`][assembly].
 //!
 //! [assembly]:
 //!     https://github.com/asynchronics/asynchronix/tree/main/asynchronix/examples/assembly.rs
 //!
 //! ```
-//! use asynchronix::model::{Model, SetupContext};
+//! use asynchronix::model::{BuildContext, Model, ProtoModel};
 //! use asynchronix::ports::Output;
 //! use asynchronix::simulation::Mailbox;
 //!
@@ -39,9 +39,9 @@
 //! }
 //!
 //! impl ChildModel {
-//!     pub fn new() -> Self {
+//!     pub fn new(output: Output<u64>) -> Self {
 //!         Self {
-//!             output: Default::default(),
+//!             output,
 //!         }
 //!     }
 //! }
@@ -49,10 +49,16 @@
 //! impl Model for ChildModel {}
 //!
 //! pub struct ParentModel {
+//!     output: Output<u64>,
+//! }
+//!
+//! impl Model for ParentModel {}
+//!
+//! pub struct ProtoParentModel {
 //!     pub output: Output<u64>,
 //! }
 //!
-//! impl ParentModel {
+//! impl ProtoParentModel {
 //!     pub fn new() -> Self {
 //!         Self {
 //!             output: Default::default(),
@@ -60,13 +66,15 @@
 //!     }
 //! }
 //!
-//! impl Model for ParentModel {
-//!     fn setup(&mut self, setup_context: &SetupContext<Self>) {
-//!         let mut child = ChildModel::new();
-//!         let child_mbox = Mailbox::new();
-//!         child.output = self.output.clone();
-//!         let child_name = setup_context.name().to_string() + "::child";
-//!         setup_context.add_model(child, child_mbox, child_name);
+//! impl ProtoModel for ProtoParentModel {
+//!     type Model = ParentModel;
+//!
+//!     fn build(self, ctx: &BuildContext<Self>) -> ParentModel {
+//!         let mut child = ChildModel::new(self.output.clone());
+//!
+//!         ctx.add_submodel(child, Mailbox::new(), "child");
+//!
+//!         ParentModel { output: self.output }
 //!     }
 //! }
 //! ```

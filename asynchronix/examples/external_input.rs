@@ -1,80 +1,97 @@
-//! Example: a model that reads data from the external world.
+//! Example: a model that reads data external to the simulation.
 //!
 //! This example demonstrates in particular:
 //!
-//! * external world inputs (useful in cosimulation),
+//! * processing of external inputs (useful in co-simulation),
 //! * system clock,
 //! * periodic scheduling.
 //!
 //! ```text
-//!                                                  ┌────────────────────────────────┐
-//!                                                  │ Simulation                     │
-//! ┌────────────┐          ┌────────────┐           │          ┌──────────┐          │
-//! │            │   UDP    │            │ message   │ message  │          │ message  │   ┌─────────────┐
-//! │ UDP Client ├─────────►│ UDP Server ├──────────►├─────────►│ Listener ├─────────►├──►│ EventBuffer │
-//! │            │ message  │            │           │          │          │          │   └─────────────┘
-//! └────────────┘          └────────────┘           │          └──────────┘          │
-//!                                                  └────────────────────────────────┘
+//!                                                 ┏━━━━━━━━━━━━━━━━━━━━━━━━┓
+//!                                                 ┃ Simulation             ┃
+//! ┌╌╌╌╌╌╌╌╌╌╌╌╌┐         ┌╌╌╌╌╌╌╌╌╌╌╌╌┐           ┃   ┌──────────┐         ┃
+//! ┆            ┆ message ┆            ┆  message  ┃   │          │ message ┃
+//! ┆ UDP Client ├╌╌╌╌╌╌╌╌►┆ UDP Server ├╌╌╌╌╌╌╌╌╌╌╌╂╌╌►│ Listener ├─────────╂─►
+//! ┆            ┆  [UDP]  ┆            ┆ [channel] ┃   │          │         ┃
+//! └╌╌╌╌╌╌╌╌╌╌╌╌┘         └╌╌╌╌╌╌╌╌╌╌╌╌┘           ┃   └──────────┘         ┃
+//!                                                 ┗━━━━━━━━━━━━━━━━━━━━━━━━┛
 //! ```
 
 use std::io::ErrorKind;
-use std::net::UdpSocket;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::net::{Ipv4Addr, UdpSocket};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, sleep, JoinHandle};
 use std::time::Duration;
 
-use atomic_wait::{wait, wake_one};
-
-use mio::net::UdpSocket as MioUdpSocket;
-use mio::{Events, Interest, Poll, Token};
-
-use asynchronix::model::{Context, InitializedModel, Model, SetupContext};
+use asynchronix::model::{BuildContext, Context, InitializedModel, Model, ProtoModel};
 use asynchronix::ports::{EventBuffer, Output};
 use asynchronix::simulation::{Mailbox, SimInit, SimulationError};
 use asynchronix::time::{AutoSystemClock, MonotonicTime};
 
 const DELTA: Duration = Duration::from_millis(2);
 const PERIOD: Duration = Duration::from_millis(20);
-const N: u32 = 10;
-const SENDER: &str = "127.0.0.1:8000";
-const RECEIVER: &str = "127.0.0.1:9000";
+const N: usize = 10;
+const SHUTDOWN_SIGNAL: &str = "<SHUTDOWN>";
+const SENDER: (Ipv4Addr, u16) = (Ipv4Addr::new(127, 0, 0, 1), 8000);
+const RECEIVER: (Ipv4Addr, u16) = (Ipv4Addr::new(127, 0, 0, 1), 9000);
 
-/// Model that receives external input.
-pub struct Listener {
+/// Prototype for the `Listener` Model.
+pub struct ProtoListener {
     /// Received message.
     pub message: Output<String>,
+
+    /// Notifier to start the UDP client.
+    start: Notifier,
+}
+
+impl ProtoListener {
+    fn new(start: Notifier) -> Self {
+        Self {
+            message: Output::default(),
+            start,
+        }
+    }
+}
+
+impl ProtoModel for ProtoListener {
+    type Model = Listener;
+
+    /// Start the UDP Server immediately upon model construction.
+    fn build(self, _: &BuildContext<Self>) -> Listener {
+        let (tx, rx) = channel();
+
+        let external_handle = thread::spawn(move || {
+            Listener::listen(tx, self.start);
+        });
+
+        Listener::new(self.message, rx, external_handle)
+    }
+}
+
+/// Model that asynchronously receives messages external to the simulation.
+pub struct Listener {
+    /// Received message.
+    message: Output<String>,
 
     /// Receiver of external messages.
     rx: Receiver<String>,
 
-    /// External sender.
-    tx: Option<Sender<String>>,
-
-    /// Synchronization with client.
-    start: Arc<AtomicU32>,
-
-    /// Synchronization with simulation.
-    stop: Arc<AtomicBool>,
-
     /// Handle to UDP Server.
-    external_handle: Option<JoinHandle<()>>,
+    server_handle: Option<JoinHandle<()>>,
 }
 
 impl Listener {
     /// Creates a Listener.
-    pub fn new(start: Arc<AtomicU32>) -> Self {
-        start.store(0, Ordering::Relaxed);
-
-        let (tx, rx) = channel();
+    pub fn new(
+        message: Output<String>,
+        rx: Receiver<String>,
+        server_handle: JoinHandle<()>,
+    ) -> Self {
         Self {
-            message: Output::default(),
+            message,
             rx,
-            tx: Some(tx),
-            start,
-            stop: Arc::new(AtomicBool::new(false)),
-            external_handle: None,
+            server_handle: Some(server_handle),
         }
     }
 
@@ -85,82 +102,39 @@ impl Listener {
         }
     }
 
-    /// UDP server.
-    ///
-    /// Code is based on the MIO UDP example.
-    fn listener(tx: Sender<String>, start: Arc<AtomicU32>, stop: Arc<AtomicBool>) {
-        const UDP_SOCKET: Token = Token(0);
-        let mut poll = Poll::new().unwrap();
-        let mut events = Events::with_capacity(10);
-        let mut socket = MioUdpSocket::bind(RECEIVER.parse().unwrap()).unwrap();
-        poll.registry()
-            .register(&mut socket, UDP_SOCKET, Interest::READABLE)
-            .unwrap();
+    /// Starts the UDP server.
+    fn listen(tx: Sender<String>, start: Notifier) {
+        let socket = UdpSocket::bind(RECEIVER).unwrap();
         let mut buf = [0; 1 << 16];
 
         // Wake up the client.
-        start.store(1, Ordering::Relaxed);
-        wake_one(&*start);
+        start.notify();
 
-        'process: loop {
-            // Wait for UDP packet or end of simulation.
-            if let Err(err) = poll.poll(&mut events, Some(Duration::from_secs(1))) {
-                if err.kind() == ErrorKind::Interrupted {
-                    // Exit if simulation is finished.
-                    if stop.load(Ordering::Relaxed) {
-                        break 'process;
-                    }
+        loop {
+            match socket.recv_from(&mut buf) {
+                Ok((packet_size, _)) => {
+                    if let Ok(message) = std::str::from_utf8(&buf[..packet_size]) {
+                        if message == SHUTDOWN_SIGNAL {
+                            break;
+                        }
+                        // Inject external message into simulation.
+                        if tx.send(message.into()).is_err() {
+                            break;
+                        }
+                    };
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {
                     continue;
                 }
-                break 'process;
-            }
-
-            for event in events.iter() {
-                match event.token() {
-                    UDP_SOCKET => loop {
-                        match socket.recv_from(&mut buf) {
-                            Ok((packet_size, _)) => {
-                                if let Ok(message) = std::str::from_utf8(&buf[..packet_size]) {
-                                    // Inject external message into simulation.
-                                    if tx.send(message.into()).is_err() {
-                                        break 'process;
-                                    }
-                                };
-                            }
-                            Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                                break;
-                            }
-                            _ => {
-                                break 'process;
-                            }
-                        }
-                    },
-                    _ => {
-                        panic!("Got event for unexpected token: {:?}", event);
-                    }
+                _ => {
+                    break;
                 }
             }
-            // Exit if simulation is finished.
-            if stop.load(Ordering::Relaxed) {
-                break 'process;
-            }
         }
-
-        poll.registry().deregister(&mut socket).unwrap();
     }
 }
 
 impl Model for Listener {
-    /// Start UDP Server on model setup.
-    fn setup(&mut self, _: &SetupContext<Self>) {
-        let tx = self.tx.take().unwrap();
-        let start = Arc::clone(&self.start);
-        let stop = Arc::clone(&self.stop);
-        self.external_handle = Some(thread::spawn(move || {
-            Self::listener(tx, start, stop);
-        }));
-    }
-
     /// Initialize model.
     async fn init(self, context: &Context<Self>) -> InitializedModel<Self> {
         // Schedule periodic function that processes external events.
@@ -174,13 +148,40 @@ impl Model for Listener {
 }
 
 impl Drop for Listener {
-    /// Notify UDP Server that simulation is over and wait for server shutdown.
+    /// Wait for UDP Server shutdown.
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        let handle = self.external_handle.take();
-        if let Some(handle) = handle {
-            handle.join().unwrap();
-        }
+        self.server_handle.take().map(|handle| {
+            let _ = handle.join();
+        });
+    }
+}
+
+/// A synchronization barrier that can be unblocked by a notifier.
+struct WaitBarrier(Arc<(Mutex<bool>, Condvar)>);
+
+impl WaitBarrier {
+    fn new() -> Self {
+        Self(Arc::new((Mutex::new(false), Condvar::new())))
+    }
+    fn notifier(&self) -> Notifier {
+        Notifier(self.0.clone())
+    }
+    fn wait(self) {
+        let _unused = self
+            .0
+             .1
+            .wait_while(self.0 .0.lock().unwrap(), |pending| *pending)
+            .unwrap();
+    }
+}
+
+/// A notifier for the associated synchronization barrier.
+struct Notifier(Arc<(Mutex<bool>, Condvar)>);
+
+impl Notifier {
+    fn notify(self) {
+        *self.0 .0.lock().unwrap() = false;
+        self.0 .1.notify_one();
     }
 }
 
@@ -191,16 +192,17 @@ fn main() -> Result<(), SimulationError> {
 
     // Models.
 
-    // Client-server synchronization.
-    let start = Arc::new(AtomicU32::new(0));
+    // Synchronization barrier for the UDP client.
+    let start = WaitBarrier::new();
 
-    let mut listener = Listener::new(Arc::clone(&start));
+    // Prototype of the listener model.
+    let mut listener = ProtoListener::new(start.notifier());
 
     // Mailboxes.
     let listener_mbox = Mailbox::new();
 
     // Model handles for simulation.
-    let mut message = EventBuffer::new();
+    let mut message = EventBuffer::with_capacity(N + 1);
     listener.message.connect_sink(&message);
 
     // Start time (arbitrary since models do not depend on absolute time).
@@ -218,32 +220,39 @@ fn main() -> Result<(), SimulationError> {
 
     // External client that sends UDP messages.
     let sender_handle = thread::spawn(move || {
-        // Wait until UDP Server is ready.
-        wait(&start, 0);
+        let socket = UdpSocket::bind(SENDER).unwrap();
+
+        // Wait until the UDP Server is ready.
+        start.wait();
 
         for i in 0..N {
-            let socket = UdpSocket::bind(SENDER).unwrap();
             socket.send_to(i.to_string().as_bytes(), RECEIVER).unwrap();
             if i % 3 == 0 {
-                sleep(PERIOD * i)
+                sleep(PERIOD * i as u32)
             }
         }
+
+        socket
     });
 
     // Advance simulation, external messages will be collected.
     simu.step_by(Duration::from_secs(2))?;
 
+    // Shut down the server.
+    let socket = sender_handle.join().unwrap();
+    socket
+        .send_to(SHUTDOWN_SIGNAL.as_bytes(), RECEIVER)
+        .unwrap();
+
     // Check collected external messages.
     let mut packets = 0_u32;
     for _ in 0..N {
-        // UDP can reorder packages, we are expecting that on not too loaded
-        // localhost packages would not be dropped
+        // Check all messages accounting for possible UDP packet re-ordering,
+        // but assuming no packet loss.
         packets |= 1 << message.next().unwrap().parse::<u8>().unwrap();
     }
     assert_eq!(packets, u32::MAX >> 22);
     assert_eq!(message.next(), None);
-
-    sender_handle.join().unwrap();
 
     Ok(())
 }

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::channel::ChannelObserver;
 use crate::executor::{Executor, SimulationContext};
-use crate::model::Model;
+use crate::model::ProtoModel;
 use crate::time::{AtomicTime, MonotonicTime, TearableAtomicTime};
 use crate::time::{Clock, NoClock};
 use crate::util::priority_queue::PriorityQueue;
@@ -57,13 +57,13 @@ impl SimInit {
 
     /// Adds a model and its mailbox to the simulation bench.
     ///
-    /// The `name` argument needs not be unique (it can be the empty string) and
-    /// is used for convenience for the model instance identification (e.g. for
-    /// logging purposes).
-    pub fn add_model<M: Model>(
+    /// The `name` argument needs not be unique. If an empty string is provided,
+    /// it is replaced by the string `<unknown>`. This name serves an identifier
+    /// for logging or error-reporting purposes.
+    pub fn add_model<P: ProtoModel>(
         mut self,
-        model: M,
-        mailbox: Mailbox<M>,
+        model: P,
+        mailbox: Mailbox<P::Model>,
         name: impl Into<String>,
     ) -> Self {
         let name = name.into();
