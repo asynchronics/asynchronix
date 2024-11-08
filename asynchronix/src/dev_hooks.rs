@@ -3,6 +3,7 @@
 //! Not for production use!
 
 use std::future::Future;
+use std::time::Duration;
 
 use crate::executor;
 
@@ -25,6 +26,7 @@ impl Executor {
         Self(executor::Executor::new_multi_threaded(
             pool_size,
             dummy_context,
+            executor::Signal::new(),
         ))
     }
 
@@ -43,6 +45,6 @@ impl Executor {
     /// Let the executor run, blocking until all futures have completed or until
     /// the executor deadlocks.
     pub fn run(&mut self) {
-        self.0.run().unwrap();
+        self.0.run(Duration::ZERO).unwrap();
     }
 }

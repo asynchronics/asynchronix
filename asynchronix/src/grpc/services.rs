@@ -38,8 +38,10 @@ fn map_execution_error(error: ExecutionError) -> Error {
         ExecutionError::Panic(_) => ErrorCode::SimulationPanic,
         ExecutionError::BadQuery => ErrorCode::SimulationBadQuery,
         ExecutionError::Terminated => ErrorCode::SimulationTerminated,
+        ExecutionError::Timeout => ErrorCode::SimulationTimeout,
         ExecutionError::InvalidTargetTime(_) => ErrorCode::InvalidTime,
     };
+
     let error_message = error.to_string();
 
     to_error(error_code, error_message)

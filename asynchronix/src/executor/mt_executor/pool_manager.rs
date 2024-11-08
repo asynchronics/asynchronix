@@ -1,8 +1,8 @@
 use std::any::Any;
-use std::sync::atomic::{self, AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{self, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use crossbeam_utils::sync::Unparker;
+use parking::Unparker;
 
 use super::Stealer;
 use crate::util::bit;
@@ -22,8 +22,6 @@ pub(super) struct PoolManager {
     active_workers: AtomicUsize,
     /// Count of all workers currently searching for tasks.
     searching_workers: AtomicUsize,
-    /// Flag requesting all workers to return immediately.
-    terminate_signal: AtomicBool,
     /// Panic caught in a worker thread.
     worker_panic: Mutex<Option<Box<dyn Any + Send + 'static>>>,
 }
@@ -56,7 +54,6 @@ impl PoolManager {
             worker_unparkers,
             active_workers: AtomicUsize::new(0),
             searching_workers: AtomicUsize::new(0),
-            terminate_signal: AtomicBool::new(false),
             worker_panic: Mutex::new(None),
         }
     }
@@ -211,20 +208,12 @@ impl PoolManager {
         self.searching_workers.load(Ordering::Relaxed)
     }
 
-    /// Triggers the termination signal and unparks all worker threads so they
-    /// can cleanly terminate.
-    pub(super) fn trigger_termination(&self) {
-        self.terminate_signal.store(true, Ordering::Relaxed);
-
+    /// Unparks all workers and mark them as active.
+    pub(super) fn activate_all_workers(&self) {
         self.set_all_workers_active();
         for unparker in &*self.worker_unparkers {
             unparker.unpark();
         }
-    }
-
-    /// Returns true if the termination signal was triggered.
-    pub(super) fn termination_is_triggered(&self) -> bool {
-        self.terminate_signal.load(Ordering::Relaxed)
     }
 
     /// Registers a panic associated with the provided worker ID.

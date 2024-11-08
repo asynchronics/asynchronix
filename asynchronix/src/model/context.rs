@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::executor::Executor;
+use crate::executor::{Executor, Signal};
 use crate::simulation::{self, LocalScheduler, Mailbox};
 
 use super::{Model, ProtoModel};
@@ -184,6 +184,7 @@ pub struct BuildContext<'a, P: ProtoModel> {
     pub mailbox: &'a Mailbox<P::Model>,
     context: &'a Context<P::Model>,
     executor: &'a Executor,
+    abort_signal: &'a Signal,
 }
 
 impl<'a, P: ProtoModel> BuildContext<'a, P> {
@@ -192,11 +193,13 @@ impl<'a, P: ProtoModel> BuildContext<'a, P> {
         mailbox: &'a Mailbox<P::Model>,
         context: &'a Context<P::Model>,
         executor: &'a Executor,
+        abort_signal: &'a Signal,
     ) -> Self {
         Self {
             mailbox,
             context,
             executor,
+            abort_signal,
         }
     }
 
@@ -231,6 +234,7 @@ impl<'a, P: ProtoModel> BuildContext<'a, P> {
             submodel_name,
             self.context.scheduler.scheduler.clone(),
             self.executor,
+            self.abort_signal,
         );
     }
 }

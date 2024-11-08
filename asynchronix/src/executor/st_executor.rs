@@ -1,15 +1,20 @@
 use std::cell::RefCell;
-use std::fmt;
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
+use std::{fmt, panic, thread};
 
+// TODO: revert to `crossbeam_utils::sync::Parker` once timeout support lands in
+// v1.0 (see https://github.com/crossbeam-rs/crossbeam/pull/1012).
+use parking::Parker;
 use slab::Slab;
 
 use super::task::{self, CancelToken, Promise, Runnable};
 use super::NEXT_EXECUTOR_ID;
 
 use crate::channel;
-use crate::executor::{SimulationContext, SIMULATION_CONTEXT};
+use crate::executor::{ExecutorError, Signal, SimulationContext, SIMULATION_CONTEXT};
 use crate::macros::scoped_thread_local::scoped_thread_local;
 
 const QUEUE_MIN_CAPACITY: usize = 32;
@@ -19,17 +24,15 @@ scoped_thread_local!(static ACTIVE_TASKS: RefCell<Slab<CancelToken>>);
 
 /// A single-threaded `async` executor.
 pub(crate) struct Executor {
-    /// Shared executor data.
-    context: ExecutorContext,
-    /// List of tasks that have not completed yet.
-    active_tasks: RefCell<Slab<CancelToken>>,
-    /// Read-only handle to the simulation time.
-    simulation_context: SimulationContext,
+    /// Executor state.
+    inner: Option<Box<ExecutorInner>>,
+    /// Handle to the forced termination signal.
+    abort_signal: Signal,
 }
 
 impl Executor {
     /// Creates an executor that runs futures on the current thread.
-    pub(crate) fn new(simulation_context: SimulationContext) -> Self {
+    pub(crate) fn new(simulation_context: SimulationContext, abort_signal: Signal) -> Self {
         // Each executor instance has a unique ID inherited by tasks to ensure
         // that tasks are scheduled on their parent executor.
         let executor_id = NEXT_EXECUTOR_ID.fetch_add(1, Ordering::Relaxed);
@@ -42,9 +45,13 @@ impl Executor {
         let active_tasks = RefCell::new(Slab::new());
 
         Self {
-            context,
-            active_tasks,
-            simulation_context,
+            inner: Some(Box::new(ExecutorInner {
+                context,
+                active_tasks,
+                simulation_context,
+                abort_signal: abort_signal.clone(),
+            })),
+            abort_signal,
         }
     }
 
@@ -58,8 +65,10 @@ impl Executor {
         T: Future + Send + 'static,
         T::Output: Send + 'static,
     {
+        let inner = self.inner.as_ref().unwrap();
+
         // Book a slot to store the task cancellation token.
-        let mut active_tasks = self.active_tasks.borrow_mut();
+        let mut active_tasks = inner.active_tasks.borrow_mut();
         let task_entry = active_tasks.vacant_entry();
 
         // Wrap the future so that it removes its cancel token from the
@@ -67,10 +76,10 @@ impl Executor {
         let future = CancellableFuture::new(future, task_entry.key());
 
         let (promise, runnable, cancel_token) =
-            task::spawn(future, schedule_task, self.context.executor_id);
+            task::spawn(future, schedule_task, inner.context.executor_id);
 
         task_entry.insert(cancel_token);
-        let mut queue = self.context.queue.borrow_mut();
+        let mut queue = inner.context.queue.borrow_mut();
         queue.push(runnable);
 
         promise
@@ -88,8 +97,10 @@ impl Executor {
         T: Future + Send + 'static,
         T::Output: Send + 'static,
     {
+        let inner = self.inner.as_ref().unwrap();
+
         // Book a slot to store the task cancellation token.
-        let mut active_tasks = self.active_tasks.borrow_mut();
+        let mut active_tasks = inner.active_tasks.borrow_mut();
         let task_entry = active_tasks.vacant_entry();
 
         // Wrap the future so that it removes its cancel token from the
@@ -97,19 +108,71 @@ impl Executor {
         let future = CancellableFuture::new(future, task_entry.key());
 
         let (runnable, cancel_token) =
-            task::spawn_and_forget(future, schedule_task, self.context.executor_id);
+            task::spawn_and_forget(future, schedule_task, inner.context.executor_id);
 
         task_entry.insert(cancel_token);
-        let mut queue = self.context.queue.borrow_mut();
+        let mut queue = inner.context.queue.borrow_mut();
         queue.push(runnable);
     }
 
-    /// Execute spawned tasks, blocking until all futures have completed or
-    /// until the executor reaches a deadlock.
-    ///
-    /// The number of unprocessed messages is returned. It should always be 0
-    /// unless a deadlock occurred.
-    pub(crate) fn run(&mut self) -> isize {
+    /// Execute spawned tasks, blocking until all futures have completed or an
+    /// error is encountered.
+    pub(crate) fn run(&mut self, timeout: Duration) -> Result<(), ExecutorError> {
+        if timeout.is_zero() {
+            return self.inner.as_mut().unwrap().run();
+        }
+
+        // Temporarily move out the inner state so it can be moved to another
+        // thread.
+        let mut inner = self.inner.take().unwrap();
+
+        let parker = Parker::new();
+        let unparker = parker.unparker();
+        let th = thread::spawn(move || {
+            // It is necessary to catch worker panics, otherwise the main thread
+            // will never be unparked if the worker thread panics.
+            let res = panic::catch_unwind(AssertUnwindSafe(|| inner.run()));
+
+            unparker.unpark();
+
+            match res {
+                Ok(res) => (inner, res),
+                Err(e) => panic::resume_unwind(e),
+            }
+        });
+
+        if !parker.park_timeout(timeout) {
+            // Make a best-effort attempt at stopping the worker thread.
+            self.abort_signal.set();
+
+            return Err(ExecutorError::Timeout);
+        }
+
+        match th.join() {
+            Ok((inner, res)) => {
+                self.inner = Some(inner);
+
+                res
+            }
+            Err(e) => panic::resume_unwind(e),
+        }
+    }
+}
+
+/// Inner state of the executor.
+struct ExecutorInner {
+    /// Shared executor data.
+    context: ExecutorContext,
+    /// List of tasks that have not completed yet.
+    active_tasks: RefCell<Slab<CancelToken>>,
+    /// Read-only handle to the simulation time.
+    simulation_context: SimulationContext,
+    /// Signal requesting the worker thread to return as soon as possible.
+    abort_signal: Signal,
+}
+
+impl ExecutorInner {
+    fn run(&mut self) -> Result<(), ExecutorError> {
         // In case this executor is nested in another one, reset the counter of in-flight messages.
         let msg_count_stash = channel::THREAD_MSG_COUNT.replace(self.context.msg_count);
 
@@ -122,17 +185,27 @@ impl Executor {
                     };
 
                     task.run();
+
+                    if self.abort_signal.is_set() {
+                        return;
+                    }
                 })
             })
         });
 
         self.context.msg_count = channel::THREAD_MSG_COUNT.replace(msg_count_stash);
 
-        self.context.msg_count
+        if self.context.msg_count != 0 {
+            assert!(self.context.msg_count > 0);
+
+            return Err(ExecutorError::Deadlock);
+        }
+
+        Ok(())
     }
 }
 
-impl Drop for Executor {
+impl Drop for ExecutorInner {
     fn drop(&mut self) {
         // Drop all tasks that have not completed.
         //

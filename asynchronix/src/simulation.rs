@@ -145,7 +145,7 @@ use std::time::Duration;
 use recycle_box::{coerce_box, RecycleBox};
 
 use crate::channel::ChannelObserver;
-use crate::executor::{Executor, ExecutorError};
+use crate::executor::{Executor, ExecutorError, Signal};
 use crate::model::{BuildContext, Context, Model, ProtoModel};
 use crate::ports::{InputFn, ReplierFn};
 use crate::time::{AtomicTime, Clock, MonotonicTime};
@@ -195,6 +195,7 @@ pub struct Simulation {
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
     time: AtomicTime,
     clock: Box<dyn Clock>,
+    timeout: Duration,
     observers: Vec<(String, Box<dyn ChannelObserver>)>,
     is_terminated: bool,
 }
@@ -206,6 +207,7 @@ impl Simulation {
         scheduler_queue: Arc<Mutex<SchedulerQueue>>,
         time: AtomicTime,
         clock: Box<dyn Clock + 'static>,
+        timeout: Duration,
         observers: Vec<(String, Box<dyn ChannelObserver>)>,
     ) -> Self {
         Self {
@@ -213,9 +215,24 @@ impl Simulation {
             scheduler_queue,
             time,
             clock,
+            timeout,
             observers,
             is_terminated: false,
         }
+    }
+
+    /// Sets a timeout for each simulation step.
+    ///
+    /// The timeout corresponds to the maximum wall clock time allocated for the
+    /// completion of a single simulation step before an
+    /// [`ExecutionError::Timeout`] error is raised.
+    ///
+    /// A null duration disables the timeout, which is the default behavior.
+    ///
+    /// See also [`SimInit::set_timeout`].
+    #[cfg(not(target_family = "wasm"))]
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
     }
 
     /// Returns the current simulation time.
@@ -362,7 +379,7 @@ impl Simulation {
             return Err(ExecutionError::Terminated);
         }
 
-        self.executor.run().map_err(|e| match e {
+        self.executor.run(self.timeout).map_err(|e| match e {
             ExecutorError::Deadlock => {
                 self.is_terminated = true;
                 let mut deadlock_info = Vec::new();
@@ -377,6 +394,11 @@ impl Simulation {
                 }
 
                 ExecutionError::Deadlock(deadlock_info)
+            }
+            ExecutorError::Timeout => {
+                self.is_terminated = true;
+
+                ExecutionError::Timeout
             }
         })
     }
@@ -544,8 +566,10 @@ pub enum ExecutionError {
     /// The query was invalid and did not obtain a response.
     BadQuery,
     /// The simulation has been terminated due to an earlier deadlock, model
-    /// error or model panic.
+    /// error, model panic or timeout.
     Terminated,
+    /// The simulation step has failed to complete within the allocated time.
+    Timeout,
 }
 
 impl fmt::Display for ExecutionError {
@@ -593,6 +617,7 @@ impl fmt::Display for ExecutionError {
             }
             Self::BadQuery => f.write_str("the query did not return any response; maybe the target model was not added to the simulation?"),
             Self::Terminated => f.write_str("the simulation has been terminated"),
+            Self::Timeout => f.write_str("the simulation step has failed to complete within the allocated time"),
         }
     }
 }
@@ -653,19 +678,22 @@ pub(crate) fn add_model<P: ProtoModel>(
     name: String,
     scheduler: Scheduler,
     executor: &Executor,
+    abort_signal: &Signal,
 ) {
     #[cfg(feature = "tracing")]
     let span = tracing::span!(target: env!("CARGO_PKG_NAME"), tracing::Level::INFO, "model", name);
 
     let context = Context::new(name, LocalScheduler::new(scheduler, mailbox.address()));
-    let build_context = BuildContext::new(&mailbox, &context, executor);
+    let build_context = BuildContext::new(&mailbox, &context, executor, abort_signal);
 
     let model = model.build(&build_context);
 
     let mut receiver = mailbox.0;
+    let abort_signal = abort_signal.clone();
+
     let fut = async move {
         let mut model = model.init(&context).await.0;
-        while receiver.recv(&mut model, &context).await.is_ok() {}
+        while !abort_signal.is_set() && receiver.recv(&mut model, &context).await.is_ok() {}
     };
 
     #[cfg(feature = "tracing")]

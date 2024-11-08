@@ -1,5 +1,6 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::channel::ChannelObserver;
 use crate::executor::{Executor, SimulationContext};
@@ -9,7 +10,7 @@ use crate::time::{Clock, NoClock};
 use crate::util::priority_queue::PriorityQueue;
 use crate::util::sync_cell::SyncCell;
 
-use super::{add_model, ExecutionError, Mailbox, Scheduler, SchedulerQueue, Simulation};
+use super::{add_model, ExecutionError, Mailbox, Scheduler, SchedulerQueue, Signal, Simulation};
 
 /// Builder for a multi-threaded, discrete-event simulation.
 pub struct SimInit {
@@ -17,7 +18,9 @@ pub struct SimInit {
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
     time: AtomicTime,
     clock: Box<dyn Clock + 'static>,
+    timeout: Duration,
     observers: Vec<(String, Box<dyn ChannelObserver>)>,
+    abort_signal: Signal,
 }
 
 impl SimInit {
@@ -31,19 +34,25 @@ impl SimInit {
     /// threads.
     ///
     /// Note that the number of worker threads is automatically constrained to
-    /// be between 1 and `usize::BITS` (inclusive).
+    /// be between 1 and `usize::BITS` (inclusive). It is always set to 1 on
+    /// `wasm` targets.
     pub fn with_num_threads(num_threads: usize) -> Self {
-        let num_threads = num_threads.clamp(1, usize::BITS as usize);
+        let num_threads = if cfg!(target_family = "wasm") {
+            1
+        } else {
+            num_threads.clamp(1, usize::BITS as usize)
+        };
         let time = SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH));
         let simulation_context = SimulationContext {
             #[cfg(feature = "tracing")]
             time_reader: time.reader(),
         };
 
+        let abort_signal = Signal::new();
         let executor = if num_threads == 1 {
-            Executor::new_single_threaded(simulation_context)
+            Executor::new_single_threaded(simulation_context, abort_signal.clone())
         } else {
-            Executor::new_multi_threaded(num_threads, simulation_context)
+            Executor::new_multi_threaded(num_threads, simulation_context, abort_signal.clone())
         };
 
         Self {
@@ -51,7 +60,9 @@ impl SimInit {
             scheduler_queue: Arc::new(Mutex::new(PriorityQueue::new())),
             time,
             clock: Box::new(NoClock::new()),
+            timeout: Duration::ZERO,
             observers: Vec::new(),
+            abort_signal,
         }
     }
 
@@ -70,17 +81,42 @@ impl SimInit {
         self.observers
             .push((name.clone(), Box::new(mailbox.0.observer())));
         let scheduler = Scheduler::new(self.scheduler_queue.clone(), self.time.reader());
-        add_model(model, mailbox, name, scheduler, &self.executor);
+
+        add_model(
+            model,
+            mailbox,
+            name,
+            scheduler,
+            &self.executor,
+            &self.abort_signal,
+        );
 
         self
     }
 
-    /// Synchronize the simulation with the provided [`Clock`].
+    /// Synchronizes the simulation with the provided [`Clock`].
     ///
     /// If the clock isn't explicitly set then the default [`NoClock`] is used,
     /// resulting in the simulation running as fast as possible.
     pub fn set_clock(mut self, clock: impl Clock + 'static) -> Self {
         self.clock = Box::new(clock);
+
+        self
+    }
+
+    /// Sets a timeout for the call to [`SimInit::init`] and for any subsequent
+    /// simulation step.
+    ///
+    /// The timeout corresponds to the maximum wall clock time allocated for the
+    /// completion of a single simulation step before an
+    /// [`ExecutionError::Timeout`] error is raised.
+    ///
+    /// A null duration disables the timeout, which is the default behavior.
+    ///
+    /// See also [`Simulation::set_timeout`].
+    #[cfg(not(target_family = "wasm"))]
+    pub fn set_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
 
         self
     }
@@ -97,6 +133,7 @@ impl SimInit {
             self.scheduler_queue,
             self.time,
             self.clock,
+            self.timeout,
             self.observers,
         );
         simulation.run()?;
