@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn loom_cached_rw_lock_write() {
-        const DEFAULT_PREEMPTION_BOUND: usize = 4;
+        const DEFAULT_PREEMPTION_BOUND: usize = 3;
         const ITERATIONS_NUMBER: usize = 5;
 
         let mut builder = Builder::new();

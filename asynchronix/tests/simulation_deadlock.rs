@@ -5,6 +5,8 @@ use asynchronix::ports::{Output, Requestor};
 use asynchronix::simulation::{DeadlockInfo, ExecutionError, Mailbox, SimInit};
 use asynchronix::time::MonotonicTime;
 
+const MT_NUM_THREADS: usize = 4;
+
 #[derive(Default)]
 struct TestModel {
     output: Output<()>,
@@ -22,8 +24,7 @@ impl Model for TestModel {}
 
 /// Overflows a mailbox by sending 2 messages in loopback for each incoming
 /// message.
-#[test]
-fn deadlock_on_mailbox_overflow() {
+fn deadlock_on_mailbox_overflow(num_threads: usize) {
     const MODEL_NAME: &str = "testmodel";
     const MAILBOX_SIZE: usize = 5;
 
@@ -41,7 +42,7 @@ fn deadlock_on_mailbox_overflow() {
         .connect(TestModel::activate_output, addr.clone());
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new()
+    let mut simu = SimInit::with_num_threads(num_threads)
         .add_model(model, mbox, MODEL_NAME)
         .init(t0)
         .unwrap();
@@ -64,8 +65,7 @@ fn deadlock_on_mailbox_overflow() {
 }
 
 /// Generates a deadlock with a query loopback.
-#[test]
-fn deadlock_on_query_loopback() {
+fn deadlock_on_query_loopback(num_threads: usize) {
     const MODEL_NAME: &str = "testmodel";
 
     let mut model = TestModel::default();
@@ -77,7 +77,7 @@ fn deadlock_on_query_loopback() {
         .connect(TestModel::activate_requestor, addr.clone());
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new()
+    let mut simu = SimInit::with_num_threads(num_threads)
         .add_model(model, mbox, MODEL_NAME)
         .init(t0)
         .unwrap();
@@ -100,8 +100,7 @@ fn deadlock_on_query_loopback() {
 }
 
 /// Generates a deadlock with a query loopback involving several models.
-#[test]
-fn deadlock_on_transitive_query_loopback() {
+fn deadlock_on_transitive_query_loopback(num_threads: usize) {
     const MODEL1_NAME: &str = "testmodel1";
     const MODEL2_NAME: &str = "testmodel2";
 
@@ -121,7 +120,7 @@ fn deadlock_on_transitive_query_loopback() {
         .connect(TestModel::activate_requestor, addr1.clone());
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new()
+    let mut simu = SimInit::with_num_threads(num_threads)
         .add_model(model1, mbox1, MODEL1_NAME)
         .add_model(model2, mbox2, MODEL2_NAME)
         .init(t0)
@@ -145,8 +144,7 @@ fn deadlock_on_transitive_query_loopback() {
 }
 
 /// Generates deadlocks with query loopbacks on several models at the same time.
-#[test]
-fn deadlock_on_multiple_query_loopback() {
+fn deadlock_on_multiple_query_loopback(num_threads: usize) {
     const MODEL0_NAME: &str = "testmodel0";
     const MODEL1_NAME: &str = "testmodel1";
     const MODEL2_NAME: &str = "testmodel2";
@@ -178,7 +176,7 @@ fn deadlock_on_multiple_query_loopback() {
         .connect(TestModel::activate_requestor, addr2);
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new()
+    let mut simu = SimInit::with_num_threads(num_threads)
         .add_model(model0, mbox0, MODEL0_NAME)
         .add_model(model1, mbox1, MODEL1_NAME)
         .add_model(model2, mbox2, MODEL2_NAME)
@@ -208,4 +206,44 @@ fn deadlock_on_multiple_query_loopback() {
         }
         _ => panic!("deadlock not detected"),
     }
+}
+
+#[test]
+fn deadlock_on_mailbox_overflow_st() {
+    deadlock_on_mailbox_overflow(1);
+}
+
+#[test]
+fn deadlock_on_mailbox_overflow_mt() {
+    deadlock_on_mailbox_overflow(MT_NUM_THREADS);
+}
+
+#[test]
+fn deadlock_on_query_loopback_st() {
+    deadlock_on_query_loopback(1);
+}
+
+#[test]
+fn deadlock_on_query_loopback_mt() {
+    deadlock_on_query_loopback(MT_NUM_THREADS);
+}
+
+#[test]
+fn deadlock_on_transitive_query_loopback_st() {
+    deadlock_on_transitive_query_loopback(1);
+}
+
+#[test]
+fn deadlock_on_transitive_query_loopback_mt() {
+    deadlock_on_transitive_query_loopback(MT_NUM_THREADS);
+}
+
+#[test]
+fn deadlock_on_multiple_query_loopback_st() {
+    deadlock_on_multiple_query_loopback(1);
+}
+
+#[test]
+fn deadlock_on_multiple_query_loopback_mt() {
+    deadlock_on_multiple_query_loopback(MT_NUM_THREADS);
 }

@@ -1,6 +1,7 @@
 name: Loom
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [ main ]
@@ -30,6 +31,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run cargo test (Loom)
-        run: cargo test --tests --release
+        run: cargo test --lib --release
         env:
           RUSTFLAGS: --cfg asynchronix_loom
