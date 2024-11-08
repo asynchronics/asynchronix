@@ -49,7 +49,8 @@ The [API] documentation is relatively exhaustive and includes a practical
 overview which should provide all necessary information to get started.
 
 More fleshed out examples can also be found in the dedicated
-[directory](asynchronix/examples).
+[simulator](asynchronix/examples) and [utilities](asynchronix-util/examples)
+directories.
 
 [API]: https://docs.rs/asynchronix
 
