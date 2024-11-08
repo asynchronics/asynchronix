@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, dev]
+    branches: [ main ]
 
 env:
   RUSTFLAGS: -Dwarnings
@@ -69,7 +69,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Dry-run cargo test (Loom)
-        run: cargo test --no-run --tests --all-features
+        run: cargo test --no-run --lib --all-features
         env:
           RUSTFLAGS: --cfg asynchronix_loom
 

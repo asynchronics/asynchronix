@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+const MT_NUM_THREADS: usize = 4;
+
 #[cfg(not(miri))]
 use asynchronix::model::Context;
 use asynchronix::model::Model;
@@ -28,6 +30,7 @@ impl<T: Clone + Send + 'static> Model for PassThroughModel<T> {}
 /// A simple bench containing a single pass-through model (input forwarded to
 /// output) running as fast as possible.
 fn passthrough_bench<T: Clone + Send + 'static>(
+    num_threads: usize,
     t0: MonotonicTime,
 ) -> (Simulation, Address<PassThroughModel<T>>, EventBuffer<T>) {
     // Bench assembly.
@@ -38,15 +41,17 @@ fn passthrough_bench<T: Clone + Send + 'static>(
     model.output.connect_sink(&out_stream);
     let addr = mbox.address();
 
-    let simu = SimInit::new().add_model(model, mbox, "").init(t0).unwrap();
+    let simu = SimInit::with_num_threads(num_threads)
+        .add_model(model, mbox, "")
+        .init(t0)
+        .unwrap();
 
     (simu, addr, out_stream)
 }
 
-#[test]
-fn simulation_schedule_events() {
+fn simulation_schedule_events(num_threads: usize) {
     let t0 = MonotonicTime::EPOCH;
-    let (mut simu, addr, mut output) = passthrough_bench(t0);
+    let (mut simu, addr, mut output) = passthrough_bench(num_threads, t0);
 
     let scheduler = simu.scheduler();
 
@@ -85,10 +90,9 @@ fn simulation_schedule_events() {
     assert!(output.next().is_none());
 }
 
-#[test]
-fn simulation_schedule_keyed_events() {
+fn simulation_schedule_keyed_events(num_threads: usize) {
     let t0 = MonotonicTime::EPOCH;
-    let (mut simu, addr, mut output) = passthrough_bench(t0);
+    let (mut simu, addr, mut output) = passthrough_bench(num_threads, t0);
 
     let scheduler = simu.scheduler();
 
@@ -127,10 +131,9 @@ fn simulation_schedule_keyed_events() {
     assert!(output.next().is_none());
 }
 
-#[test]
-fn simulation_schedule_periodic_events() {
+fn simulation_schedule_periodic_events(num_threads: usize) {
     let t0 = MonotonicTime::EPOCH;
-    let (mut simu, addr, mut output) = passthrough_bench(t0);
+    let (mut simu, addr, mut output) = passthrough_bench(num_threads, t0);
 
     let scheduler = simu.scheduler();
 
@@ -167,10 +170,9 @@ fn simulation_schedule_periodic_events() {
     }
 }
 
-#[test]
-fn simulation_schedule_periodic_keyed_events() {
+fn simulation_schedule_periodic_keyed_events(num_threads: usize) {
     let t0 = MonotonicTime::EPOCH;
-    let (mut simu, addr, mut output) = passthrough_bench(t0);
+    let (mut simu, addr, mut output) = passthrough_bench(num_threads, t0);
 
     let scheduler = simu.scheduler();
 
@@ -216,6 +218,46 @@ fn simulation_schedule_periodic_keyed_events() {
     }
 }
 
+#[test]
+fn simulation_schedule_events_st() {
+    simulation_schedule_events(1);
+}
+
+#[test]
+fn simulation_schedule_events_mt() {
+    simulation_schedule_events(MT_NUM_THREADS);
+}
+
+#[test]
+fn simulation_schedule_keyed_events_st() {
+    simulation_schedule_keyed_events(1);
+}
+
+#[test]
+fn simulation_schedule_keyed_events_mt() {
+    simulation_schedule_keyed_events(MT_NUM_THREADS);
+}
+
+#[test]
+fn simulation_schedule_periodic_events_st() {
+    simulation_schedule_periodic_events(1);
+}
+
+#[test]
+fn simulation_schedule_periodic_events_mt() {
+    simulation_schedule_periodic_events(MT_NUM_THREADS);
+}
+
+#[test]
+fn simulation_schedule_periodic_keyed_events_st() {
+    simulation_schedule_periodic_keyed_events(1);
+}
+
+#[test]
+fn simulation_schedule_periodic_keyed_events_mt() {
+    simulation_schedule_periodic_keyed_events(MT_NUM_THREADS);
+}
+
 #[cfg(not(miri))]
 use std::time::{Instant, SystemTime};
 
@@ -245,6 +287,7 @@ impl Model for TimestampModel {
 /// A simple bench containing a single timestamping model with a custom clock.
 #[cfg(not(miri))]
 fn timestamp_bench(
+    num_threads: usize,
     t0: MonotonicTime,
     clock: impl Clock + 'static,
 ) -> (
@@ -260,7 +303,7 @@ fn timestamp_bench(
     model.stamp.connect_sink(&stamp_stream);
     let addr = mbox.address();
 
-    let simu = SimInit::new()
+    let simu = SimInit::with_num_threads(num_threads)
         .add_model(model, mbox, "")
         .set_clock(clock)
         .init(t0)
@@ -270,8 +313,7 @@ fn timestamp_bench(
 }
 
 #[cfg(not(miri))]
-#[test]
-fn simulation_system_clock_from_instant() {
+fn simulation_system_clock_from_instant(num_threads: usize) {
     let t0 = MonotonicTime::EPOCH;
     const TOLERANCE: f64 = 0.005; // [s]
 
@@ -293,7 +335,7 @@ fn simulation_system_clock_from_instant() {
 
         let clock = SystemClock::from_instant(simulation_ref, wall_clock_ref);
 
-        let (mut simu, addr, mut stamp) = timestamp_bench(t0, clock);
+        let (mut simu, addr, mut stamp) = timestamp_bench(num_threads, t0, clock);
 
         let scheduler = simu.scheduler();
 
@@ -327,8 +369,7 @@ fn simulation_system_clock_from_instant() {
 }
 
 #[cfg(not(miri))]
-#[test]
-fn simulation_system_clock_from_system_time() {
+fn simulation_system_clock_from_system_time(num_threads: usize) {
     let t0 = MonotonicTime::EPOCH;
     const TOLERANCE: f64 = 0.005; // [s]
 
@@ -350,7 +391,7 @@ fn simulation_system_clock_from_system_time() {
 
         let clock = SystemClock::from_system_time(simulation_ref, wall_clock_ref);
 
-        let (mut simu, addr, mut stamp) = timestamp_bench(t0, clock);
+        let (mut simu, addr, mut stamp) = timestamp_bench(num_threads, t0, clock);
 
         let scheduler = simu.scheduler();
 
@@ -390,12 +431,11 @@ fn simulation_system_clock_from_system_time() {
 }
 
 #[cfg(not(miri))]
-#[test]
-fn simulation_auto_system_clock() {
+fn simulation_auto_system_clock(num_threads: usize) {
     let t0 = MonotonicTime::EPOCH;
     const TOLERANCE: f64 = 0.005; // [s]
 
-    let (mut simu, addr, mut stamp) = timestamp_bench(t0, AutoSystemClock::new());
+    let (mut simu, addr, mut stamp) = timestamp_bench(num_threads, t0, AutoSystemClock::new());
     let instant_t0 = Instant::now();
 
     let scheduler = simu.scheduler();
@@ -434,4 +474,40 @@ fn simulation_auto_system_clock() {
 
         simu.step().unwrap();
     }
+}
+
+#[cfg(not(miri))]
+#[test]
+fn simulation_system_clock_from_instant_st() {
+    simulation_system_clock_from_instant(1);
+}
+
+#[cfg(not(miri))]
+#[test]
+fn simulation_system_clock_from_instant_mt() {
+    simulation_system_clock_from_instant(MT_NUM_THREADS);
+}
+
+#[cfg(not(miri))]
+#[test]
+fn simulation_system_clock_from_system_time_st() {
+    simulation_system_clock_from_system_time(1);
+}
+
+#[cfg(not(miri))]
+#[test]
+fn simulation_system_clock_from_system_time_mt() {
+    simulation_system_clock_from_system_time(MT_NUM_THREADS);
+}
+
+#[cfg(not(miri))]
+#[test]
+fn simulation_auto_system_clock_st() {
+    simulation_auto_system_clock(1);
+}
+
+#[cfg(not(miri))]
+#[test]
+fn simulation_auto_system_clock_mt() {
+    simulation_auto_system_clock(MT_NUM_THREADS);
 }

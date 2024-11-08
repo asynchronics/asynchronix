@@ -21,7 +21,6 @@ A high performance asychronous compute framework for system simulation.
 """
 categories = ["simulation", "aerospace", "science"]
 keywords = ["simulation", "discrete-event", "systems", "cyberphysical", "real-time"]
-autotests = false
 
 [features]
 # gRPC service.
@@ -65,7 +64,7 @@ futures-executor = "0.3"
 tracing-subscriber = { version= "0.3.18", features=["env-filter"] }
 
 [target.'cfg(asynchronix_loom)'.dev-dependencies]
-loom = "0.5"
+loom = "0.7"
 waker-fn = "1.1"
 
 [target.'cfg(asynchronix_grpc_codegen)'.build-dependencies]
@@ -79,7 +78,3 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(asynchronix_loom)', 'cfg(a
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
-
-[[test]]
-name = "integration"
-path = "tests/tests.rs"

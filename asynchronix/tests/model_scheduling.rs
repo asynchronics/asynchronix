@@ -7,8 +7,9 @@ use asynchronix::ports::{EventBuffer, Output};
 use asynchronix::simulation::{ActionKey, Mailbox, SimInit};
 use asynchronix::time::MonotonicTime;
 
-#[test]
-fn model_schedule_event() {
+const MT_NUM_THREADS: usize = 4;
+
+fn model_schedule_event(num_threads: usize) {
     #[derive(Default)]
     struct TestModel {
         output: Output<()>,
@@ -38,7 +39,10 @@ fn model_schedule_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0).unwrap();
+    let mut simu = SimInit::with_num_threads(num_threads)
+        .add_model(model, mbox, "")
+        .init(t0)
+        .unwrap();
 
     simu.process_event(TestModel::trigger, (), addr).unwrap();
     simu.step().unwrap();
@@ -48,8 +52,7 @@ fn model_schedule_event() {
     assert!(output.next().is_none());
 }
 
-#[test]
-fn model_cancel_future_keyed_event() {
+fn model_cancel_future_keyed_event(num_threads: usize) {
     #[derive(Default)]
     struct TestModel {
         output: Output<i32>,
@@ -93,7 +96,10 @@ fn model_cancel_future_keyed_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0).unwrap();
+    let mut simu = SimInit::with_num_threads(num_threads)
+        .add_model(model, mbox, "")
+        .init(t0)
+        .unwrap();
 
     simu.process_event(TestModel::trigger, (), addr).unwrap();
     simu.step().unwrap();
@@ -104,8 +110,7 @@ fn model_cancel_future_keyed_event() {
     assert!(output.next().is_none());
 }
 
-#[test]
-fn model_cancel_same_time_keyed_event() {
+fn model_cancel_same_time_keyed_event(num_threads: usize) {
     #[derive(Default)]
     struct TestModel {
         output: Output<i32>,
@@ -149,7 +154,10 @@ fn model_cancel_same_time_keyed_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0).unwrap();
+    let mut simu = SimInit::with_num_threads(num_threads)
+        .add_model(model, mbox, "")
+        .init(t0)
+        .unwrap();
 
     simu.process_event(TestModel::trigger, (), addr).unwrap();
     simu.step().unwrap();
@@ -160,8 +168,7 @@ fn model_cancel_same_time_keyed_event() {
     assert!(output.next().is_none());
 }
 
-#[test]
-fn model_schedule_periodic_event() {
+fn model_schedule_periodic_event(num_threads: usize) {
     #[derive(Default)]
     struct TestModel {
         output: Output<i32>,
@@ -192,7 +199,10 @@ fn model_schedule_periodic_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0).unwrap();
+    let mut simu = SimInit::with_num_threads(num_threads)
+        .add_model(model, mbox, "")
+        .init(t0)
+        .unwrap();
 
     simu.process_event(TestModel::trigger, (), addr).unwrap();
 
@@ -208,8 +218,7 @@ fn model_schedule_periodic_event() {
     }
 }
 
-#[test]
-fn model_cancel_periodic_event() {
+fn model_cancel_periodic_event(num_threads: usize) {
     #[derive(Default)]
     struct TestModel {
         output: Output<()>,
@@ -243,7 +252,10 @@ fn model_cancel_periodic_event() {
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::new().add_model(model, mbox, "").init(t0).unwrap();
+    let mut simu = SimInit::with_num_threads(num_threads)
+        .add_model(model, mbox, "")
+        .init(t0)
+        .unwrap();
 
     simu.process_event(TestModel::trigger, (), addr).unwrap();
 
@@ -255,4 +267,54 @@ fn model_cancel_periodic_event() {
     simu.step().unwrap();
     assert_eq!(simu.time(), t0 + Duration::from_secs(2));
     assert!(output.next().is_none());
+}
+
+#[test]
+fn model_schedule_event_st() {
+    model_schedule_event(1);
+}
+
+#[test]
+fn model_schedule_event_mt() {
+    model_schedule_event(MT_NUM_THREADS);
+}
+
+#[test]
+fn model_cancel_future_keyed_event_st() {
+    model_cancel_future_keyed_event(1);
+}
+
+#[test]
+fn model_cancel_future_keyed_event_mt() {
+    model_cancel_future_keyed_event(MT_NUM_THREADS);
+}
+
+#[test]
+fn model_cancel_same_time_keyed_event_st() {
+    model_cancel_same_time_keyed_event(1);
+}
+
+#[test]
+fn model_cancel_same_time_keyed_event_mt() {
+    model_cancel_same_time_keyed_event(MT_NUM_THREADS);
+}
+
+#[test]
+fn model_schedule_periodic_event_st() {
+    model_schedule_periodic_event(1);
+}
+
+#[test]
+fn model_schedule_periodic_event_mt() {
+    model_schedule_periodic_event(MT_NUM_THREADS);
+}
+
+#[test]
+fn model_cancel_periodic_event_st() {
+    model_cancel_periodic_event(1);
+}
+
+#[test]
+fn model_cancel_periodic_event_mt() {
+    model_cancel_periodic_event(MT_NUM_THREADS);
 }
