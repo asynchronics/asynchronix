@@ -5,7 +5,11 @@ mod st_executor;
 mod task;
 
 use std::future::Future;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use crossbeam_utils::CachePadded;
 
 use crate::macros::scoped_thread_local::scoped_thread_local;
 #[cfg(feature = "tracing")]
@@ -19,11 +23,14 @@ static NEXT_EXECUTOR_ID: AtomicUsize = AtomicUsize::new(0);
 pub(crate) enum ExecutorError {
     /// The simulation has deadlocked.
     Deadlock,
+    /// The simulation has timed out.
+    Timeout,
 }
 
 /// Context common to all executor types.
 #[derive(Clone)]
 pub(crate) struct SimulationContext {
+    /// Read-only handle to the simulation time.
     #[cfg(feature = "tracing")]
     pub(crate) time_reader: AtomicTimeReader,
 }
@@ -39,8 +46,11 @@ pub(crate) enum Executor {
 
 impl Executor {
     /// Creates an executor that runs futures on the current thread.
-    pub(crate) fn new_single_threaded(simulation_context: SimulationContext) -> Self {
-        Self::StExecutor(st_executor::Executor::new(simulation_context))
+    pub(crate) fn new_single_threaded(
+        simulation_context: SimulationContext,
+        abort_signal: Signal,
+    ) -> Self {
+        Self::StExecutor(st_executor::Executor::new(simulation_context, abort_signal))
     }
 
     /// Creates an executor that runs futures on a thread pool.
@@ -54,8 +64,13 @@ impl Executor {
     pub(crate) fn new_multi_threaded(
         num_threads: usize,
         simulation_context: SimulationContext,
+        abort_signal: Signal,
     ) -> Self {
-        Self::MtExecutor(mt_executor::Executor::new(num_threads, simulation_context))
+        Self::MtExecutor(mt_executor::Executor::new(
+            num_threads,
+            simulation_context,
+            abort_signal,
+        ))
     }
 
     /// Spawns a task which output will never be retrieved.
@@ -91,19 +106,32 @@ impl Executor {
 
     /// Execute spawned tasks, blocking until all futures have completed or
     /// until the executor reaches a deadlock.
-    pub(crate) fn run(&mut self) -> Result<(), ExecutorError> {
-        let msg_count = match self {
-            Self::StExecutor(executor) => executor.run(),
-            Self::MtExecutor(executor) => executor.run(),
-        };
-
-        if msg_count != 0 {
-            assert!(msg_count > 0);
-
-            return Err(ExecutorError::Deadlock);
+    pub(crate) fn run(&mut self, timeout: Duration) -> Result<(), ExecutorError> {
+        match self {
+            Self::StExecutor(executor) => executor.run(timeout),
+            Self::MtExecutor(executor) => executor.run(timeout),
         }
+    }
+}
 
-        Ok(())
+/// A single-use shared boolean signal.
+#[derive(Clone, Debug)]
+pub(crate) struct Signal(Arc<CachePadded<AtomicBool>>);
+
+impl Signal {
+    /// Create a new, cleared signal.
+    pub(crate) fn new() -> Self {
+        Self(Arc::new(CachePadded::new(AtomicBool::new(false))))
+    }
+
+    /// Sets the signal.
+    pub(crate) fn set(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    /// Returns `true``is the signal was set.
+    pub(crate) fn is_set(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
     }
 }
 
@@ -196,7 +224,7 @@ mod tests {
             }
         });
 
-        executor.run().unwrap();
+        executor.run(Duration::ZERO).unwrap();
 
         // Make sure that all tasks are eventually dropped even though each task
         // wakes the others when dropped.
@@ -206,11 +234,18 @@ mod tests {
 
     #[test]
     fn executor_drop_cycle_st() {
-        executor_drop_cycle(Executor::new_single_threaded(dummy_simulation_context()));
+        executor_drop_cycle(Executor::new_single_threaded(
+            dummy_simulation_context(),
+            Signal::new(),
+        ));
     }
 
     #[test]
     fn executor_drop_cycle_mt() {
-        executor_drop_cycle(Executor::new_multi_threaded(3, dummy_simulation_context()));
+        executor_drop_cycle(Executor::new_multi_threaded(
+            3,
+            dummy_simulation_context(),
+            Signal::new(),
+        ));
     }
 }

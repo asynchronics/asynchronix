@@ -53,12 +53,16 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crossbeam_utils::sync::{Parker, Unparker};
+// TODO: revert to `crossbeam_utils::sync::Parker` once timeout support lands in
+// v1.0 (see https://github.com/crossbeam-rs/crossbeam/pull/1012).
+use parking::{Parker, Unparker};
 use slab::Slab;
 
 use crate::channel;
 use crate::executor::task::{self, CancelToken, Promise, Runnable};
-use crate::executor::{SimulationContext, NEXT_EXECUTOR_ID, SIMULATION_CONTEXT};
+use crate::executor::{
+    ExecutorError, Signal, SimulationContext, NEXT_EXECUTOR_ID, SIMULATION_CONTEXT,
+};
 use crate::macros::scoped_thread_local::scoped_thread_local;
 use crate::util::rng::Rng;
 use pool_manager::PoolManager;
@@ -84,6 +88,8 @@ pub(crate) struct Executor {
     parker: Parker,
     /// Handles to the worker threads.
     worker_handles: Vec<JoinHandle<()>>,
+    /// Handle to the forced termination signal.
+    abort_signal: Signal,
 }
 
 impl Executor {
@@ -95,7 +101,11 @@ impl Executor {
     ///
     /// This will panic if the specified number of threads is zero or is more
     /// than `usize::BITS`.
-    pub(crate) fn new(num_threads: usize, simulation_context: SimulationContext) -> Self {
+    pub(crate) fn new(
+        num_threads: usize,
+        simulation_context: SimulationContext,
+        abort_signal: Signal,
+    ) -> Self {
         let parker = Parker::new();
         let unparker = parker.unparker().clone();
 
@@ -142,12 +152,14 @@ impl Executor {
                         let context = context.clone();
                         let active_tasks = active_tasks.clone();
                         let simulation_context = simulation_context.clone();
+                        let abort_signal = abort_signal.clone();
+
                         move || {
                             let worker = Worker::new(local_queue, context);
                             SIMULATION_CONTEXT.set(&simulation_context, || {
                                 ACTIVE_TASKS.set(&active_tasks, || {
                                     LOCAL_WORKER.set(&worker, || {
-                                        run_local_worker(&worker, id, worker_parker)
+                                        run_local_worker(&worker, id, worker_parker, abort_signal)
                                     })
                                 })
                             });
@@ -166,6 +178,7 @@ impl Executor {
             active_tasks,
             parker,
             worker_handles,
+            abort_signal,
         }
     }
 
@@ -223,23 +236,37 @@ impl Executor {
         self.context.injector.insert_task(runnable);
     }
 
-    /// Execute spawned tasks, blocking until all futures have completed or
-    /// until the executor reaches a deadlock.
-    ///
-    /// The number of unprocessed messages is returned. It should always be 0
-    /// unless a deadlock occurred.
-    pub(crate) fn run(&mut self) -> isize {
+    /// Execute spawned tasks, blocking until all futures have completed or an
+    /// error is encountered.
+    pub(crate) fn run(&mut self, timeout: Duration) -> Result<(), ExecutorError> {
         self.context.pool_manager.activate_worker();
 
         loop {
             if let Some(worker_panic) = self.context.pool_manager.take_panic() {
                 panic::resume_unwind(worker_panic);
             }
+
             if self.context.pool_manager.pool_is_idle() {
-                return self.context.msg_count.load(Ordering::Relaxed);
+                let msg_count = self.context.msg_count.load(Ordering::Relaxed);
+                if msg_count != 0 {
+                    assert!(msg_count > 0);
+
+                    return Err(ExecutorError::Deadlock);
+                }
+
+                return Ok(());
             }
 
-            self.parker.park();
+            if timeout.is_zero() {
+                self.parker.park();
+            } else if !self.parker.park_timeout(timeout) {
+                // A timeout occurred: request all worker threads to return
+                // as soon as possible.
+                self.abort_signal.set();
+                self.context.pool_manager.activate_all_workers();
+
+                return Err(ExecutorError::Timeout);
+            }
         }
     }
 }
@@ -247,7 +274,8 @@ impl Executor {
 impl Drop for Executor {
     fn drop(&mut self) {
         // Force all threads to return.
-        self.context.pool_manager.trigger_termination();
+        self.abort_signal.set();
+        self.context.pool_manager.activate_all_workers();
         for handle in self.worker_handles.drain(0..) {
             handle.join().unwrap();
         }
@@ -459,7 +487,7 @@ fn schedule_task(task: Runnable, executor_id: usize) {
 /// is received or until it panics.
 ///
 /// Panics caught in this thread are relayed to the main executor thread.
-fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
+fn run_local_worker(worker: &Worker, id: usize, parker: Parker, abort_signal: Signal) {
     let pool_manager = &worker.executor_context.pool_manager;
     let injector = &worker.executor_context.injector;
     let executor_unparker = &worker.executor_context.executor_unparker;
@@ -508,7 +536,7 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
                 pool_manager.begin_worker_search();
             }
 
-            if pool_manager.termination_is_triggered() {
+            if abort_signal.is_set() {
                 return;
             }
 
@@ -578,7 +606,7 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
 
                 // Pop tasks from the fast slot or the local queue.
                 while let Some(task) = fast_slot.take().or_else(|| local_queue.pop()) {
-                    if pool_manager.termination_is_triggered() {
+                    if abort_signal.is_set() {
                         return;
                     }
                     task.run();
@@ -594,7 +622,8 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker) {
     // Propagate the panic, if any.
     if let Err(panic) = result {
         pool_manager.register_panic(panic);
-        pool_manager.trigger_termination();
+        abort_signal.set();
+        pool_manager.activate_all_workers();
         executor_unparker.unpark();
     }
 }
