@@ -1,4 +1,4 @@
-//! Timeout during step execution.
+//! Timeout during simulation step execution.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -12,7 +12,6 @@ use asynchronix::time::MonotonicTime;
 
 const MT_NUM_THREADS: usize = 4;
 
-#[derive(Default)]
 struct TestModel {
     output: Output<()>,
     // A liveliness flag that is cleared when the model is dropped.

@@ -21,7 +21,8 @@ pub trait Clock: Send {
 pub enum SyncStatus {
     /// The clock is synchronized.
     Synchronized,
-    /// The clock is lagging behind by the specified offset.
+    /// The deadline has already elapsed and lags behind the current clock time
+    /// by the duration given in the payload.
     OutOfSync(Duration),
 }
 

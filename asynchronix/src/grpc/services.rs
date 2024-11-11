@@ -36,9 +36,10 @@ fn map_execution_error(error: ExecutionError) -> Error {
         ExecutionError::Deadlock(_) => ErrorCode::SimulationDeadlock,
         ExecutionError::ModelError { .. } => ErrorCode::SimulationModelError,
         ExecutionError::Panic(_) => ErrorCode::SimulationPanic,
+        ExecutionError::Timeout => ErrorCode::SimulationTimeout,
+        ExecutionError::OutOfSync(_) => ErrorCode::SimulationOutOfSync,
         ExecutionError::BadQuery => ErrorCode::SimulationBadQuery,
         ExecutionError::Terminated => ErrorCode::SimulationTerminated,
-        ExecutionError::Timeout => ErrorCode::SimulationTimeout,
         ExecutionError::InvalidTargetTime(_) => ErrorCode::InvalidTime,
     };
 
