@@ -18,6 +18,7 @@ pub struct SimInit {
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
     time: AtomicTime,
     clock: Box<dyn Clock + 'static>,
+    clock_tolerance: Option<Duration>,
     timeout: Duration,
     observers: Vec<(String, Box<dyn ChannelObserver>)>,
     abort_signal: Signal,
@@ -60,6 +61,7 @@ impl SimInit {
             scheduler_queue: Arc::new(Mutex::new(PriorityQueue::new())),
             time,
             clock: Box::new(NoClock::new()),
+            clock_tolerance: None,
             timeout: Duration::ZERO,
             observers: Vec::new(),
             abort_signal,
@@ -104,6 +106,17 @@ impl SimInit {
         self
     }
 
+    /// Specifies a tolerance for clock synchronization.
+    ///
+    /// When a clock synchronization tolerance is set, then any report of
+    /// synchronization loss by `Clock::synchronize` that exceeds the specified
+    /// tolerance will trigger an `ExecutionError::OutOfSync` error.
+    pub fn set_clock_tolerance(mut self, tolerance: Duration) -> Self {
+        self.clock_tolerance = Some(tolerance);
+
+        self
+    }
+
     /// Sets a timeout for the call to [`SimInit::init`] and for any subsequent
     /// simulation step.
     ///
@@ -133,6 +146,7 @@ impl SimInit {
             self.scheduler_queue,
             self.time,
             self.clock,
+            self.clock_tolerance,
             self.timeout,
             self.observers,
         );

@@ -148,7 +148,7 @@ use crate::channel::ChannelObserver;
 use crate::executor::{Executor, ExecutorError, Signal};
 use crate::model::{BuildContext, Context, Model, ProtoModel};
 use crate::ports::{InputFn, ReplierFn};
-use crate::time::{AtomicTime, Clock, MonotonicTime};
+use crate::time::{AtomicTime, Clock, MonotonicTime, SyncStatus};
 use crate::util::seq_futures::SeqFuture;
 use crate::util::slot;
 
@@ -195,6 +195,7 @@ pub struct Simulation {
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
     time: AtomicTime,
     clock: Box<dyn Clock>,
+    clock_tolerance: Option<Duration>,
     timeout: Duration,
     observers: Vec<(String, Box<dyn ChannelObserver>)>,
     is_terminated: bool,
@@ -207,6 +208,7 @@ impl Simulation {
         scheduler_queue: Arc<Mutex<SchedulerQueue>>,
         time: AtomicTime,
         clock: Box<dyn Clock + 'static>,
+        clock_tolerance: Option<Duration>,
         timeout: Duration,
         observers: Vec<(String, Box<dyn ChannelObserver>)>,
     ) -> Self {
@@ -215,6 +217,7 @@ impl Simulation {
             scheduler_queue,
             time,
             clock,
+            clock_tolerance,
             timeout,
             observers,
             is_terminated: false,
@@ -483,9 +486,15 @@ impl Simulation {
                 // Otherwise wait until all actions have completed and return.
                 _ => {
                     drop(scheduler_queue); // make sure the queue's mutex is released.
+
                     let current_time = current_key.0;
-                    // TODO: check synchronization status?
-                    self.clock.synchronize(current_time);
+                    if let SyncStatus::OutOfSync(lag) = self.clock.synchronize(current_time) {
+                        if let Some(tolerance) = &self.clock_tolerance {
+                            if &lag > tolerance {
+                                return Err(ExecutionError::OutOfSync(lag));
+                            }
+                        }
+                    }
                     self.run()?;
 
                     return Ok(Some(current_time));
@@ -560,6 +569,11 @@ pub enum ExecutionError {
     /// A panic was caught during execution with the message contained in the
     /// payload.
     Panic(String),
+    /// The simulation step has failed to complete within the allocated time.
+    Timeout,
+    /// The simulation has lost synchronization with the clock and lags behind
+    /// by the duration given in the payload.
+    OutOfSync(Duration),
     /// The specified target simulation time is in the past of the current
     /// simulation time.
     InvalidTargetTime(MonotonicTime),
@@ -568,8 +582,6 @@ pub enum ExecutionError {
     /// The simulation has been terminated due to an earlier deadlock, model
     /// error, model panic or timeout.
     Terminated,
-    /// The simulation step has failed to complete within the allocated time.
-    Timeout,
 }
 
 impl fmt::Display for ExecutionError {
@@ -608,6 +620,14 @@ impl fmt::Display for ExecutionError {
                 f.write_str("a panic has been caught during simulation:\n")?;
                 f.write_str(msg)
             }
+            Self::Timeout => f.write_str("the simulation step has failed to complete within the allocated time"),
+            Self::OutOfSync(lag) => {
+                write!(
+                    f,
+                    "the simulation has lost synchronization and lags behind the clock by '{:?}'",
+                    lag
+                )
+            }
             Self::InvalidTargetTime(time) => {
                 write!(
                     f,
@@ -617,7 +637,6 @@ impl fmt::Display for ExecutionError {
             }
             Self::BadQuery => f.write_str("the query did not return any response; maybe the target model was not added to the simulation?"),
             Self::Terminated => f.write_str("the simulation has been terminated"),
-            Self::Timeout => f.write_str("the simulation step has failed to complete within the allocated time"),
         }
     }
 }
