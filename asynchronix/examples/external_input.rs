@@ -58,7 +58,7 @@ impl ProtoModel for ProtoListener {
     type Model = Listener;
 
     /// Start the UDP Server immediately upon model construction.
-    fn build(self, _: &BuildContext<Self>) -> Listener {
+    fn build(self, _: &mut BuildContext<Self>) -> Listener {
         let (tx, rx) = channel();
 
         let external_handle = thread::spawn(move || {

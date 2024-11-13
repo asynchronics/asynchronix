@@ -153,7 +153,7 @@ impl<M: Model> fmt::Debug for Context<M> {
 ///
 ///     fn build(
 ///         self,
-///         ctx: &BuildContext<Self>)
+///         ctx: &mut BuildContext<Self>)
 ///     -> MultiplyBy4 {
 ///         let mut mult = MultiplyBy4 { forward: Output::default() };
 ///         let mut submult1 = MultiplyBy2::default();
@@ -185,6 +185,7 @@ pub struct BuildContext<'a, P: ProtoModel> {
     context: &'a Context<P::Model>,
     executor: &'a Executor,
     abort_signal: &'a Signal,
+    model_names: &'a mut Vec<String>,
 }
 
 impl<'a, P: ProtoModel> BuildContext<'a, P> {
@@ -194,30 +195,35 @@ impl<'a, P: ProtoModel> BuildContext<'a, P> {
         context: &'a Context<P::Model>,
         executor: &'a Executor,
         abort_signal: &'a Signal,
+        model_names: &'a mut Vec<String>,
     ) -> Self {
         Self {
             mailbox,
             context,
             executor,
             abort_signal,
+            model_names,
         }
     }
 
-    /// Returns the model instance name.
+    /// Returns the fully qualified model instance name.
+    ///
+    /// The fully qualified name is made of the unqualified model name, if
+    /// relevant prepended by the dot-separated names of all parent models.
     pub fn name(&self) -> &str {
         &self.context.name
     }
 
     /// Adds a sub-model to the simulation bench.
     ///
-    /// The `name` argument needs not be unique. If an empty string is provided,
-    /// it is replaced by the string `<unknown>`.
-    ///
-    /// The provided name is appended to that of the parent model using a dot as
-    /// a separator (e.g. `parent_name.child_name`) to build an identifier. This
-    /// identifier is used for logging or error-reporting purposes.
+    /// The `name` argument needs not be unique. It is appended to that of the
+    /// parent models' names using a dot separator (e.g.
+    /// `parent_name.child_name`) to build the fully qualified name. The use of
+    /// the dot character in the unqualified name is possible but discouraged.
+    /// If an empty string is provided, it is replaced by the string
+    /// `<unknown>`.
     pub fn add_submodel<S: ProtoModel>(
-        &self,
+        &mut self,
         model: S,
         mailbox: Mailbox<S::Model>,
         name: impl Into<String>,
@@ -235,6 +241,7 @@ impl<'a, P: ProtoModel> BuildContext<'a, P> {
             self.context.scheduler.scheduler.clone(),
             self.executor,
             self.abort_signal,
+            self.model_names,
         );
     }
 }

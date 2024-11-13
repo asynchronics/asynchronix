@@ -34,13 +34,12 @@ fn simulation_not_started_error() -> Error {
 fn map_execution_error(error: ExecutionError) -> Error {
     let error_code = match error {
         ExecutionError::Deadlock(_) => ErrorCode::SimulationDeadlock,
-        ExecutionError::ModelError { .. } => ErrorCode::SimulationModelError,
-        ExecutionError::Panic(_) => ErrorCode::SimulationPanic,
+        ExecutionError::Panic { .. } => ErrorCode::SimulationPanic,
         ExecutionError::Timeout => ErrorCode::SimulationTimeout,
         ExecutionError::OutOfSync(_) => ErrorCode::SimulationOutOfSync,
         ExecutionError::BadQuery => ErrorCode::SimulationBadQuery,
         ExecutionError::Terminated => ErrorCode::SimulationTerminated,
-        ExecutionError::InvalidTargetTime(_) => ErrorCode::InvalidTime,
+        ExecutionError::InvalidDeadline(_) => ErrorCode::InvalidDeadline,
     };
 
     let error_message = error.to_string();

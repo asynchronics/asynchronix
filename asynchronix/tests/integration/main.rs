@@ -5,6 +5,7 @@ mod model_scheduling;
 #[cfg(not(miri))]
 mod simulation_clock_sync;
 mod simulation_deadlock;
+mod simulation_panic;
 mod simulation_scheduling;
 #[cfg(not(miri))]
 mod simulation_timeout;

@@ -107,14 +107,14 @@ impl ControllerService {
 
                         simulation.step_until(time).map_err(|_| {
                             to_error(
-                                ErrorCode::InvalidTime,
+                                ErrorCode::InvalidDeadline,
                                 "the specified deadline lies in the past",
                             )
                         })?;
                     }
                     step_until_request::Deadline::Duration(duration) => {
                         let duration = to_positive_duration(duration).ok_or(to_error(
-                            ErrorCode::InvalidDuration,
+                            ErrorCode::InvalidDeadline,
                             "the specified deadline lies in the past",
                         ))?;
 
@@ -156,7 +156,7 @@ impl ControllerService {
                     .period
                     .map(|period| {
                         to_strictly_positive_duration(period).ok_or(to_error(
-                            ErrorCode::InvalidDuration,
+                            ErrorCode::InvalidPeriod,
                             "the specified event period is not strictly positive",
                         ))
                     })
@@ -175,7 +175,7 @@ impl ControllerService {
                         ))?,
                     schedule_event_request::Deadline::Duration(duration) => {
                         let duration = to_strictly_positive_duration(duration).ok_or(to_error(
-                            ErrorCode::InvalidDuration,
+                            ErrorCode::InvalidDeadline,
                             "the specified scheduling deadline is not in the future",
                         ))?;
 

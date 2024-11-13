@@ -64,6 +64,7 @@ use crate::executor::{
     ExecutorError, Signal, SimulationContext, NEXT_EXECUTOR_ID, SIMULATION_CONTEXT,
 };
 use crate::macros::scoped_thread_local::scoped_thread_local;
+use crate::simulation::CURRENT_MODEL_ID;
 use crate::util::rng::Rng;
 use pool_manager::PoolManager;
 
@@ -242,8 +243,8 @@ impl Executor {
         self.context.pool_manager.activate_worker();
 
         loop {
-            if let Some(worker_panic) = self.context.pool_manager.take_panic() {
-                panic::resume_unwind(worker_panic);
+            if let Some((model_id, payload)) = self.context.pool_manager.take_panic() {
+                return Err(ExecutorError::Panic(model_id, payload));
             }
 
             if self.context.pool_manager.pool_is_idle() {
@@ -619,9 +620,10 @@ fn run_local_worker(worker: &Worker, id: usize, parker: Parker, abort_signal: Si
         }
     }));
 
-    // Propagate the panic, if any.
-    if let Err(panic) = result {
-        pool_manager.register_panic(panic);
+    // Report the panic, if any.
+    if let Err(payload) = result {
+        let model_id = CURRENT_MODEL_ID.take();
+        pool_manager.register_panic(model_id, payload);
         abort_signal.set();
         pool_manager.activate_all_workers();
         executor_unparker.unpark();

@@ -4,6 +4,7 @@ mod mt_executor;
 mod st_executor;
 mod task;
 
+use std::any::Any;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use std::time::Duration;
 use crossbeam_utils::CachePadded;
 
 use crate::macros::scoped_thread_local::scoped_thread_local;
+use crate::simulation::ModelId;
 #[cfg(feature = "tracing")]
 use crate::time::AtomicTimeReader;
 use task::Promise;
@@ -19,12 +21,14 @@ use task::Promise;
 /// Unique identifier for executor instances.
 static NEXT_EXECUTOR_ID: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug)]
 pub(crate) enum ExecutorError {
     /// The simulation has deadlocked.
     Deadlock,
     /// The simulation has timed out.
     Timeout,
+    /// The simulation has panicked.
+    Panic(ModelId, Box<dyn Any + Send + 'static>),
 }
 
 /// Context common to all executor types.

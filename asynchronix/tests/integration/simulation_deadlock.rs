@@ -55,7 +55,7 @@ fn deadlock_on_mailbox_overflow(num_threads: usize) {
             assert_eq!(
                 deadlock_info[0],
                 DeadlockInfo {
-                    model_name: MODEL_NAME.into(),
+                    model: MODEL_NAME.into(),
                     mailbox_size: MAILBOX_SIZE
                 }
             )
@@ -90,7 +90,7 @@ fn deadlock_on_query_loopback(num_threads: usize) {
             assert_eq!(
                 deadlock_info[0],
                 DeadlockInfo {
-                    model_name: MODEL_NAME.into(),
+                    model: MODEL_NAME.into(),
                     mailbox_size: 1,
                 }
             );
@@ -134,7 +134,7 @@ fn deadlock_on_transitive_query_loopback(num_threads: usize) {
             assert_eq!(
                 deadlock_info[0],
                 DeadlockInfo {
-                    model_name: MODEL1_NAME.into(),
+                    model: MODEL1_NAME.into(),
                     mailbox_size: 1,
                 }
             );
@@ -192,14 +192,14 @@ fn deadlock_on_multiple_query_loopback(num_threads: usize) {
             assert_eq!(
                 deadlock_info[0],
                 DeadlockInfo {
-                    model_name: MODEL1_NAME.into(),
+                    model: MODEL1_NAME.into(),
                     mailbox_size: 1,
                 }
             );
             assert_eq!(
                 deadlock_info[1],
                 DeadlockInfo {
-                    model_name: MODEL2_NAME.into(),
+                    model: MODEL2_NAME.into(),
                     mailbox_size: 1,
                 }
             );
