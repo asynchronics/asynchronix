@@ -10,7 +10,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{fmt, ptr};
 
-use pin_project_lite::pin_project;
+use pin_project::pin_project;
 use recycle_box::{coerce_box, RecycleBox};
 
 use crate::channel::Sender;
@@ -741,18 +741,17 @@ pub(crate) trait ActionInner: Send + 'static {
     fn spawn_and_forget(self: Box<Self>, executor: &Executor);
 }
 
-pin_project! {
-    /// An object that can be converted to a future performing a single
-    /// non-cancellable action.
-    ///
-    /// Note that this particular action is in fact already a future: since the
-    /// future cannot be cancelled and the action does not need to be cloned,
-    /// there is no need to defer the construction of the future. This makes
-    /// `into_future` a trivial cast, which saves a boxing operation.
-    pub(crate) struct OnceAction<F> {
-        #[pin]
-        fut: F,
-    }
+#[pin_project]
+/// An object that can be converted to a future performing a single
+/// non-cancellable action.
+///
+/// Note that this particular action is in fact already a future: since the
+/// future cannot be cancelled and the action does not need to be cloned,
+/// there is no need to defer the construction of the future. This makes
+/// `into_future` a trivial cast, which saves a boxing operation.
+pub(crate) struct OnceAction<F> {
+    #[pin]
+    fut: F,
 }
 
 impl<F> OnceAction<F>

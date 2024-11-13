@@ -85,7 +85,7 @@ impl Model for MotorAssembly {}
 impl ProtoModel for ProtoMotorAssembly {
     type Model = MotorAssembly;
 
-    fn build(self, ctx: &BuildContext<Self>) -> MotorAssembly {
+    fn build(self, ctx: &mut BuildContext<Self>) -> MotorAssembly {
         let mut assembly = MotorAssembly::new();
         let mut motor = Motor::new(self.init_pos);
         let mut driver = Driver::new(1.0);

@@ -22,6 +22,7 @@ pub struct SimInit {
     timeout: Duration,
     observers: Vec<(String, Box<dyn ChannelObserver>)>,
     abort_signal: Signal,
+    model_names: Vec<String>,
 }
 
 impl SimInit {
@@ -65,21 +66,26 @@ impl SimInit {
             timeout: Duration::ZERO,
             observers: Vec::new(),
             abort_signal,
+            model_names: Vec::new(),
         }
     }
 
     /// Adds a model and its mailbox to the simulation bench.
     ///
-    /// The `name` argument needs not be unique. If an empty string is provided,
-    /// it is replaced by the string `<unknown>`. This name serves an identifier
-    /// for logging or error-reporting purposes.
+    /// The `name` argument needs not be unique. The use of the dot character in
+    /// the name is possible but discouraged as it can cause confusion with the
+    /// fully qualified name of a submodel. If an empty string is provided, it
+    /// is replaced by the string `<unknown>`.
     pub fn add_model<P: ProtoModel>(
         mut self,
         model: P,
         mailbox: Mailbox<P::Model>,
         name: impl Into<String>,
     ) -> Self {
-        let name = name.into();
+        let mut name = name.into();
+        if name.is_empty() {
+            name = String::from("<unknown>");
+        };
         self.observers
             .push((name.clone(), Box::new(mailbox.0.observer())));
         let scheduler = Scheduler::new(self.scheduler_queue.clone(), self.time.reader());
@@ -91,6 +97,7 @@ impl SimInit {
             scheduler,
             &self.executor,
             &self.abort_signal,
+            &mut self.model_names,
         );
 
         self
@@ -109,8 +116,8 @@ impl SimInit {
     /// Specifies a tolerance for clock synchronization.
     ///
     /// When a clock synchronization tolerance is set, then any report of
-    /// synchronization loss by `Clock::synchronize` that exceeds the specified
-    /// tolerance will trigger an `ExecutionError::OutOfSync` error.
+    /// synchronization loss by [`Clock::synchronize`] that exceeds the
+    /// specified tolerance will trigger an [`ExecutionError::OutOfSync`] error.
     pub fn set_clock_tolerance(mut self, tolerance: Duration) -> Self {
         self.clock_tolerance = Some(tolerance);
 
@@ -149,6 +156,7 @@ impl SimInit {
             self.clock_tolerance,
             self.timeout,
             self.observers,
+            self.model_names,
         );
         simulation.run()?;
 

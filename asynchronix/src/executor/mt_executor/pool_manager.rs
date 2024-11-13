@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use parking::Unparker;
 
 use super::Stealer;
+use crate::simulation::ModelId;
 use crate::util::bit;
 use crate::util::rng;
 
@@ -23,7 +24,7 @@ pub(super) struct PoolManager {
     /// Count of all workers currently searching for tasks.
     searching_workers: AtomicUsize,
     /// Panic caught in a worker thread.
-    worker_panic: Mutex<Option<Box<dyn Any + Send + 'static>>>,
+    worker_panic: Mutex<Option<(ModelId, Box<dyn Any + Send + 'static>)>>,
 }
 
 impl PoolManager {
@@ -216,20 +217,19 @@ impl PoolManager {
         }
     }
 
-    /// Registers a panic associated with the provided worker ID.
+    /// Registers a worker panic.
     ///
-    /// If no panic is currently registered, the panic in argument is
-    /// registered. If a panic was already registered by a worker and was not
-    /// yet processed by the executor, then nothing is done.
-    pub(super) fn register_panic(&self, panic: Box<dyn Any + Send + 'static>) {
+    /// If a panic was already registered and was not yet processed by the
+    /// executor, then nothing is done.
+    pub(super) fn register_panic(&self, model_id: ModelId, payload: Box<dyn Any + Send + 'static>) {
         let mut worker_panic = self.worker_panic.lock().unwrap();
         if worker_panic.is_none() {
-            *worker_panic = Some(panic);
+            *worker_panic = Some((model_id, payload));
         }
     }
 
     /// Takes a worker panic if any is registered.
-    pub(super) fn take_panic(&self) -> Option<Box<dyn Any + Send + 'static>> {
+    pub(super) fn take_panic(&self) -> Option<(ModelId, Box<dyn Any + Send + 'static>)> {
         let mut worker_panic = self.worker_panic.lock().unwrap();
         worker_panic.take()
     }

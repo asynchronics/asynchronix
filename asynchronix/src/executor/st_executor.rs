@@ -16,6 +16,7 @@ use super::NEXT_EXECUTOR_ID;
 use crate::channel;
 use crate::executor::{ExecutorError, Signal, SimulationContext, SIMULATION_CONTEXT};
 use crate::macros::scoped_thread_local::scoped_thread_local;
+use crate::simulation::CURRENT_MODEL_ID;
 
 const QUEUE_MIN_CAPACITY: usize = 32;
 
@@ -129,16 +130,10 @@ impl Executor {
         let parker = Parker::new();
         let unparker = parker.unparker();
         let th = thread::spawn(move || {
-            // It is necessary to catch worker panics, otherwise the main thread
-            // will never be unparked if the worker thread panics.
-            let res = panic::catch_unwind(AssertUnwindSafe(|| inner.run()));
-
+            let res = inner.run();
             unparker.unpark();
 
-            match res {
-                Ok(res) => (inner, res),
-                Err(e) => panic::resume_unwind(e),
-            }
+            (inner, res)
         });
 
         if !parker.park_timeout(timeout) {
@@ -148,14 +143,10 @@ impl Executor {
             return Err(ExecutorError::Timeout);
         }
 
-        match th.join() {
-            Ok((inner, res)) => {
-                self.inner = Some(inner);
+        let (inner, res) = th.join().unwrap();
+        self.inner = Some(inner);
 
-                res
-            }
-            Err(e) => panic::resume_unwind(e),
-        }
+        res
     }
 }
 
@@ -176,25 +167,34 @@ impl ExecutorInner {
         // In case this executor is nested in another one, reset the counter of in-flight messages.
         let msg_count_stash = channel::THREAD_MSG_COUNT.replace(self.context.msg_count);
 
-        SIMULATION_CONTEXT.set(&self.simulation_context, || {
+        let result = SIMULATION_CONTEXT.set(&self.simulation_context, || {
             ACTIVE_TASKS.set(&self.active_tasks, || {
-                EXECUTOR_CONTEXT.set(&self.context, || loop {
-                    let task = match self.context.queue.borrow_mut().pop() {
-                        Some(task) => task,
-                        None => break,
-                    };
+                EXECUTOR_CONTEXT.set(&self.context, || {
+                    panic::catch_unwind(AssertUnwindSafe(|| loop {
+                        let task = match self.context.queue.borrow_mut().pop() {
+                            Some(task) => task,
+                            None => break,
+                        };
 
-                    task.run();
+                        task.run();
 
-                    if self.abort_signal.is_set() {
-                        return;
-                    }
+                        if self.abort_signal.is_set() {
+                            return;
+                        }
+                    }))
                 })
             })
         });
 
-        self.context.msg_count = channel::THREAD_MSG_COUNT.replace(msg_count_stash);
+        // Return the panic payload, if any.
+        if let Err(payload) = result {
+            let model_id = CURRENT_MODEL_ID.take();
 
+            return Err(ExecutorError::Panic(model_id, payload));
+        }
+
+        // Check for deadlock.
+        self.context.msg_count = channel::THREAD_MSG_COUNT.replace(msg_count_stash);
         if self.context.msg_count != 0 {
             assert!(self.context.msg_count > 0);
 

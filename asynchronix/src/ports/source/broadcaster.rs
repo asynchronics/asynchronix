@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::vec;
 
-use pin_project_lite::pin_project;
+use pin_project::pin_project;
 
 use diatomic_waker::WakeSink;
 
@@ -292,26 +292,25 @@ impl<T: Clone, R> Default for QueryBroadcaster<T, R> {
     }
 }
 
-pin_project! {
-    /// A future aggregating the outputs of a collection of sender futures.
-    ///
-    /// The idea is to join all sender futures as efficiently as possible, meaning:
-    ///
-    /// - the sender futures are polled simultaneously rather than waiting for their
-    ///   completion in a sequential manner,
-    /// - the happy path (all futures immediately ready) is very fast.
-    pub(super) struct BroadcastFuture<R> {
-        // Thread-safe waker handle.
-        wake_sink: WakeSink,
-        // Tasks associated to the sender futures.
-        task_set: TaskSet,
-        // List of all sender futures or their outputs.
-        future_states: Vec<SenderFutureState<R>>,
-        // The total count of futures that have not yet been polled to completion.
-        pending_futures_count: usize,
-        // State of completion of the future.
-        state: FutureState,
-    }
+#[pin_project]
+/// A future aggregating the outputs of a collection of sender futures.
+///
+/// The idea is to join all sender futures as efficiently as possible, meaning:
+///
+/// - the sender futures are polled simultaneously rather than waiting for their
+///   completion in a sequential manner,
+/// - the happy path (all futures immediately ready) is very fast.
+pub(super) struct BroadcastFuture<R> {
+    // Thread-safe waker handle.
+    wake_sink: WakeSink,
+    // Tasks associated to the sender futures.
+    task_set: TaskSet,
+    // List of all sender futures or their outputs.
+    future_states: Vec<SenderFutureState<R>>,
+    // The total count of futures that have not yet been polled to completion.
+    pending_futures_count: usize,
+    // State of completion of the future.
+    state: FutureState,
 }
 
 impl<R> BroadcastFuture<R> {

@@ -52,14 +52,14 @@
 //! possible in safe Rust) it is still possible in theory to generate deadlocks.
 //! Though rare in practice, these may occur due to one of the below:
 //!
-//! 1. *query loopback*: if a model sends a query which is further forwarded by
-//!    other models until it loops back to the initial model, that model would
-//!    in effect wait for its own response and block,
-//! 2. *mailbox saturation*: if several models concurrently send to one another
-//!    a very large number of messages in succession, these models may end up
-//!    saturating all mailboxes, at which point they will wait for the other's
-//!    mailboxes to free space so they can send the next message, eventually
-//!    preventing all of them to make further progress.
+//! 1. *query loopback*: if a model sends a query which loops back to itself
+//!    (either directly or transitively via other models), that model
+//!    would in effect wait for its own response and block,
+//! 2. *mailbox saturation loopback*: if an asynchronous model method sends in
+//!    the same call many events that end up saturating its own mailbox (either
+//!    directly or transitively via other models), then any attempt to send
+//!    another event would block forever waiting for its own mailbox to free
+//!    some space.
 //!
 //! The first scenario is usually very easy to avoid and is typically the result
 //! of an improper assembly of models. Because requestor ports are only used
@@ -67,21 +67,15 @@
 //! exceptional.
 //!
 //! The second scenario is rare in well-behaving models and if it occurs, it is
-//! most typically at the very beginning of a simulation when all models
-//! simultaneously send events during the call to
+//! most typically at the very beginning of a simulation when models
+//! simultaneously and mutually send events during the call to
 //! [`Model::init()`](crate::model::Model::init). If such a large amount of
-//! concurrent messages is deemed normal behavior, the issue can be readily
-//! remedied by increasing the capacity of the saturated mailboxes.
+//! events is deemed normal behavior, the issue can be remedied by increasing
+//! the capacity of the saturated mailboxes.
 //!
-//! At the moment, Asynchronix is unfortunately not able to discriminate between
-//! such pathological deadlocks and the "expected" deadlock that occurs when all
-//! events in a given time slice have completed and all models are starved on an
-//! empty mailbox. Consequently, blocking method such as [`SimInit::init()`],
-//! [`Simulation::step()`], [`Simulation::process_event()`], etc., will return
-//! without error after a pathological deadlock, leaving the user responsible
-//! for inferring the deadlock from the behavior of the simulation in the next
-//! steps. This is obviously not ideal, but is hopefully only a temporary state
-//! of things until a more precise deadlock detection algorithm is implemented.
+//! Any deadlocks will be reported as an [`ExecutionError::Deadlock`] error,
+//! which identifies all involved models and the amount of unprocessed messages
+//! (events or requests) in their mailboxes.
 //!
 //! ## Modifying connections during simulation
 //!
@@ -136,12 +130,18 @@ pub(crate) use scheduler::{
 };
 pub use sim_init::SimInit;
 
+use std::any::Any;
+use std::cell::Cell;
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::task::Poll;
 use std::time::Duration;
+use std::{panic, task};
 
+use pin_project::pin_project;
 use recycle_box::{coerce_box, RecycleBox};
 
 use crate::channel::ChannelObserver;
@@ -151,6 +151,8 @@ use crate::ports::{InputFn, ReplierFn};
 use crate::time::{AtomicTime, Clock, MonotonicTime, SyncStatus};
 use crate::util::seq_futures::SeqFuture;
 use crate::util::slot;
+
+thread_local! { pub(crate) static CURRENT_MODEL_ID: Cell<ModelId> = const { Cell::new(ModelId::none()) }; }
 
 /// Simulation environment.
 ///
@@ -198,11 +200,13 @@ pub struct Simulation {
     clock_tolerance: Option<Duration>,
     timeout: Duration,
     observers: Vec<(String, Box<dyn ChannelObserver>)>,
+    model_names: Vec<String>,
     is_terminated: bool,
 }
 
 impl Simulation {
     /// Creates a new `Simulation` with the specified clock.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         executor: Executor,
         scheduler_queue: Arc<Mutex<SchedulerQueue>>,
@@ -211,6 +215,7 @@ impl Simulation {
         clock_tolerance: Option<Duration>,
         timeout: Duration,
         observers: Vec<(String, Box<dyn ChannelObserver>)>,
+        model_names: Vec<String>,
     ) -> Self {
         Self {
             executor,
@@ -220,6 +225,7 @@ impl Simulation {
             clock_tolerance,
             timeout,
             observers,
+            model_names,
             is_terminated: false,
         }
     }
@@ -276,7 +282,7 @@ impl Simulation {
     /// time.
     pub fn step_until(&mut self, target_time: MonotonicTime) -> Result<(), ExecutionError> {
         if self.time.read() >= target_time {
-            return Err(ExecutionError::InvalidTargetTime(target_time));
+            return Err(ExecutionError::InvalidDeadline(target_time));
         }
         self.step_until_unchecked(target_time)
     }
@@ -332,8 +338,9 @@ impl Simulation {
 
     /// Processes a query immediately, blocking until completion.
     ///
-    /// Simulation time remains unchanged. If the targeted model was not added
-    /// to the simulation, an `ExecutionError::InvalidQuery` is returned.
+    /// Simulation time remains unchanged. If the mailbox targeted by the query
+    /// was not found in the simulation, an [`ExecutionError::BadQuery`] is
+    /// returned.
     pub fn process_query<M, F, T, R, S>(
         &mut self,
         func: F,
@@ -386,11 +393,11 @@ impl Simulation {
             ExecutorError::Deadlock => {
                 self.is_terminated = true;
                 let mut deadlock_info = Vec::new();
-                for (name, observer) in &self.observers {
+                for (model, observer) in &self.observers {
                     let mailbox_size = observer.len();
                     if mailbox_size != 0 {
                         deadlock_info.push(DeadlockInfo {
-                            model_name: name.clone(),
+                            model: model.clone(),
                             mailbox_size,
                         });
                     }
@@ -402,6 +409,18 @@ impl Simulation {
                 self.is_terminated = true;
 
                 ExecutionError::Timeout
+            }
+            ExecutorError::Panic(model_id, payload) => {
+                self.is_terminated = true;
+
+                let model = match model_id.get() {
+                    // The panic was emitted by a model.
+                    Some(id) => self.model_names.get(id).unwrap().clone(),
+                    // The panic is due to an internal issue.
+                    None => panic::resume_unwind(payload),
+                };
+
+                ExecutionError::Panic { model, payload }
             }
         })
     }
@@ -491,6 +510,8 @@ impl Simulation {
                     if let SyncStatus::OutOfSync(lag) = self.clock.synchronize(current_time) {
                         if let Some(tolerance) = &self.clock_tolerance {
                             if &lag > tolerance {
+                                self.is_terminated = true;
+
                                 return Err(ExecutionError::OutOfSync(lag));
                             }
                         }
@@ -543,50 +564,75 @@ impl fmt::Debug for Simulation {
 /// Information regarding a deadlocked model.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DeadlockInfo {
-    /// Name of the deadlocked model.
-    pub model_name: String,
+    /// The fully qualified name of a deadlocked model.
+    ///
+    /// This is the name of the model, if relevant prepended by the
+    /// dot-separated names of all parent models.
+    pub model: String,
     /// Number of messages in the mailbox.
     pub mailbox_size: usize,
 }
 
 /// An error returned upon simulation execution failure.
-///
-/// Note that if a `Deadlock`, `ModelError` or `ModelPanic` is returned, any
-/// subsequent attempt to run the simulation will return `Terminated`.
 #[derive(Debug)]
 pub enum ExecutionError {
-    /// The simulation has deadlocked.
+    /// The simulation has been terminated due to an earlier deadlock, model
+    /// panic, timeout or synchronization loss.
+    Terminated,
+    /// The simulation has deadlocked due to the enlisted models.
     ///
-    /// Enlists all models with non-empty mailboxes.
+    /// This is a fatal error: any subsequent attempt to run the simulation will
+    /// return an [`ExecutionError::Terminated`] error.
     Deadlock(Vec<DeadlockInfo>),
-    /// A model has aborted the simulation.
-    ModelError {
-        /// Name of the model.
-        model_name: String,
-        /// Error registered by the model.
-        error: Box<dyn Error>,
+    /// A panic was caught during execution.
+    ///
+    /// This is a fatal error: any subsequent attempt to run the simulation will
+    /// return an [`ExecutionError::Terminated`] error.
+    Panic {
+        /// The fully qualified name of the panicking model.
+        ///
+        /// The fully qualified name is made of the unqualified model name, if
+        /// relevant prepended by the dot-separated names of all parent models.
+        model: String,
+        /// The payload associated with the panic.
+        ///
+        /// The payload can be usually downcast to a `String` or `&str`. This is
+        /// always the case if the panic was triggered by the `panic!` macro,
+        /// but panics can in principle emit arbitrary payloads with e.g.
+        /// [`panic_any`](std::panic::panic_any).
+        payload: Box<dyn Any + Send + 'static>,
     },
-    /// A panic was caught during execution with the message contained in the
-    /// payload.
-    Panic(String),
     /// The simulation step has failed to complete within the allocated time.
+    ///
+    /// This is a fatal error: any subsequent attempt to run the simulation will
+    /// return an [`ExecutionError::Terminated`] error.
+    ///
+    /// See also [`SimInit::set_timeout`] and [`Simulation::set_timeout`].
     Timeout,
     /// The simulation has lost synchronization with the clock and lags behind
     /// by the duration given in the payload.
+    ///
+    /// This is a fatal error: any subsequent attempt to run the simulation will
+    /// return an [`ExecutionError::Terminated`] error.
+    ///
+    /// See also [`SimInit::set_clock_tolerance`].
     OutOfSync(Duration),
-    /// The specified target simulation time is in the past of the current
-    /// simulation time.
-    InvalidTargetTime(MonotonicTime),
-    /// The query was invalid and did not obtain a response.
+    /// The query did not obtain a response because the mailbox targeted by the
+    /// query was not found in the simulation.
+    ///
+    /// This is a non-fatal error.
     BadQuery,
-    /// The simulation has been terminated due to an earlier deadlock, model
-    /// error, model panic or timeout.
-    Terminated,
+    /// The specified simulation deadline is in the past of the current
+    /// simulation time.
+    ///
+    /// This is a non-fatal error.
+    InvalidDeadline(MonotonicTime),
 }
 
 impl fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Self::Terminated => f.write_str("the simulation has been terminated"),
             Self::Deadlock(list) => {
                 f.write_str(
                     "a simulation deadlock has been detected that involves the following models: ",
@@ -601,7 +647,7 @@ impl fmt::Display for ExecutionError {
                     write!(
                         f,
                         "'{}' ({} item{} in mailbox)",
-                        info.model_name,
+                        info.model,
                         info.mailbox_size,
                         if info.mailbox_size == 1 { "" } else { "s" }
                     )?;
@@ -609,16 +655,15 @@ impl fmt::Display for ExecutionError {
 
                 Ok(())
             }
-            Self::ModelError { model_name, error } => {
-                write!(
-                    f,
-                    "the simulation has been aborted by model '{}' with the following error: {}",
-                    model_name, error
-                )
-            }
-            Self::Panic(msg) => {
-                f.write_str("a panic has been caught during simulation:\n")?;
-                f.write_str(msg)
+            Self::Panic{model, payload} => {
+                let msg: &str = if let Some(s) = payload.downcast_ref::<&str>() {
+                    s
+                } else if let Some(s) = payload.downcast_ref::<String>() {
+                    s
+                } else {
+                    return write!(f, "model '{}' has panicked", model);
+                };
+                write!(f, "model '{}' has panicked with the message: '{}'", model, msg)
             }
             Self::Timeout => f.write_str("the simulation step has failed to complete within the allocated time"),
             Self::OutOfSync(lag) => {
@@ -628,28 +673,19 @@ impl fmt::Display for ExecutionError {
                     lag
                 )
             }
-            Self::InvalidTargetTime(time) => {
+            Self::BadQuery => f.write_str("the query did not return any response; was the target mailbox added to the simulation?"),
+            Self::InvalidDeadline(time) => {
                 write!(
                     f,
-                    "target simulation stamp {} lies in the past of the current simulation time",
+                    "the specified deadline ({}) lies in the past of the current simulation time",
                     time
                 )
             }
-            Self::BadQuery => f.write_str("the query did not return any response; maybe the target model was not added to the simulation?"),
-            Self::Terminated => f.write_str("the simulation has been terminated"),
         }
     }
 }
 
-impl Error for ExecutionError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        if let Self::ModelError { error, .. } = &self {
-            Some(error.as_ref())
-        } else {
-            None
-        }
-    }
-}
+impl Error for ExecutionError {}
 
 /// An error returned upon simulation execution or scheduling failure.
 #[derive(Debug)]
@@ -698,14 +734,19 @@ pub(crate) fn add_model<P: ProtoModel>(
     scheduler: Scheduler,
     executor: &Executor,
     abort_signal: &Signal,
+    model_names: &mut Vec<String>,
 ) {
     #[cfg(feature = "tracing")]
     let span = tracing::span!(target: env!("CARGO_PKG_NAME"), tracing::Level::INFO, "model", name);
 
-    let context = Context::new(name, LocalScheduler::new(scheduler, mailbox.address()));
-    let build_context = BuildContext::new(&mailbox, &context, executor, abort_signal);
+    let context = Context::new(
+        name.clone(),
+        LocalScheduler::new(scheduler, mailbox.address()),
+    );
+    let mut build_context =
+        BuildContext::new(&mailbox, &context, executor, abort_signal, model_names);
 
-    let model = model.build(&build_context);
+    let model = model.build(&mut build_context);
 
     let mut receiver = mailbox.0;
     let abort_signal = abort_signal.clone();
@@ -715,8 +756,90 @@ pub(crate) fn add_model<P: ProtoModel>(
         while !abort_signal.is_set() && receiver.recv(&mut model, &context).await.is_ok() {}
     };
 
+    let model_id = ModelId::new(model_names.len());
+    model_names.push(name);
+
+    #[cfg(not(feature = "tracing"))]
+    let fut = ModelFuture::new(fut, model_id);
     #[cfg(feature = "tracing")]
-    let fut = tracing::Instrument::instrument(fut, span);
+    let fut = ModelFuture::new(fut, model_id, span);
 
     executor.spawn_and_forget(fut);
+}
+
+/// A unique index assigned to a model instance.
+///
+/// This is a thin wrapper over a `usize` which encodes a lack of value as
+/// `usize::MAX`.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct ModelId(usize);
+
+impl ModelId {
+    const fn none() -> Self {
+        Self(usize::MAX)
+    }
+    fn new(id: usize) -> Self {
+        assert_ne!(id, usize::MAX);
+
+        Self(id)
+    }
+    fn get(&self) -> Option<usize> {
+        if self.0 != usize::MAX {
+            Some(self.0)
+        } else {
+            None
+        }
+    }
+}
+
+impl Default for ModelId {
+    fn default() -> Self {
+        Self(usize::MAX)
+    }
+}
+
+#[pin_project]
+struct ModelFuture<F> {
+    #[pin]
+    fut: F,
+    id: ModelId,
+    #[cfg(feature = "tracing")]
+    span: tracing::Span,
+}
+
+impl<F> ModelFuture<F> {
+    #[cfg(not(feature = "tracing"))]
+    fn new(fut: F, id: ModelId) -> Self {
+        Self { fut, id }
+    }
+    #[cfg(feature = "tracing")]
+    fn new(fut: F, id: ModelId, span: tracing::Span) -> Self {
+        Self { fut, id, span }
+    }
+}
+
+impl<F: Future> Future for ModelFuture<F> {
+    type Output = F::Output;
+
+    // Required method
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+
+        #[cfg(feature = "tracing")]
+        let _enter = this.span.enter();
+
+        // The current model ID is not set/unset through a guard or scoped TLS
+        // because it must survive panics to identify the last model that was
+        // polled.
+        CURRENT_MODEL_ID.set(*this.id);
+        let poll = this.fut.poll(cx);
+
+        // The model ID is unset right after polling so we can distinguish
+        // between panics generated by models and panics generated by the
+        // executor itself, as in the later case `CURRENT_MODEL_ID.get()` will
+        // return `None`.
+        CURRENT_MODEL_ID.set(ModelId::none());
+
+        poll
+    }
 }
