@@ -1,3 +1,9 @@
+//! Observable states.
+//!
+//! This module contains types used to implement states automatically propagated
+//! to output on change.
+//!
+
 use std::ops::Deref;
 
 use asynchronix::ports::Output;

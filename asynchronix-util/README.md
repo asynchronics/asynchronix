@@ -1,3 +1,5 @@
 # Utilities for model-building
 
-TODO: add documentation
+This crate contains utilities used for model and simulation bench development.
+
+

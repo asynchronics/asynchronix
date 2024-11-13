@@ -135,6 +135,16 @@ jobs:
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=4
 
+      - name: Run cargo miri example5 (single-threaded executor)
+        run: cargo miri run --example observables
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=1
+
+      - name: Run cargo miri example5 (multi-threaded executor)
+        run: cargo miri run --example observables
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-num-cpus=4
+
   lints:
     name: Lints
     runs-on: ubuntu-latest
