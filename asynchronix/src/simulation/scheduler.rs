@@ -18,7 +18,7 @@ use crate::executor::Executor;
 use crate::model::Model;
 use crate::ports::InputFn;
 use crate::simulation::Address;
-use crate::time::{AtomicTimeReader, MonotonicTime};
+use crate::time::{AtomicTimeReader, Deadline, MonotonicTime};
 use crate::util::priority_queue::PriorityQueue;
 
 /// Scheduler.
@@ -556,30 +556,6 @@ impl<M: Model> fmt::Debug for LocalScheduler<M> {
 // event loop to easily aggregate such events into single futures and thus
 // control their relative order of execution.
 pub(crate) type SchedulerQueue = PriorityQueue<(MonotonicTime, usize), Action>;
-
-/// Trait abstracting over time-absolute and time-relative deadlines.
-///
-/// This trait is implemented by [`std::time::Duration`] and
-/// [`MonotonicTime`].
-pub trait Deadline {
-    /// Make this deadline into an absolute timestamp, using the provided
-    /// current time as a reference.
-    fn into_time(self, now: MonotonicTime) -> MonotonicTime;
-}
-
-impl Deadline for Duration {
-    #[inline(always)]
-    fn into_time(self, now: MonotonicTime) -> MonotonicTime {
-        now + self
-    }
-}
-
-impl Deadline for MonotonicTime {
-    #[inline(always)]
-    fn into_time(self, _: MonotonicTime) -> MonotonicTime {
-        self
-    }
-}
 
 /// Managed handle to a scheduled action.
 ///

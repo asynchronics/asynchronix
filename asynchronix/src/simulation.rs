@@ -122,9 +122,7 @@ mod scheduler;
 mod sim_init;
 
 pub use mailbox::{Address, Mailbox};
-pub use scheduler::{
-    Action, ActionKey, AutoActionKey, Deadline, LocalScheduler, Scheduler, SchedulingError,
-};
+pub use scheduler::{Action, ActionKey, AutoActionKey, LocalScheduler, Scheduler, SchedulingError};
 pub(crate) use scheduler::{
     KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction, SchedulerQueue,
 };
@@ -148,7 +146,7 @@ use crate::channel::ChannelObserver;
 use crate::executor::{Executor, ExecutorError, Signal};
 use crate::model::{BuildContext, Context, Model, ProtoModel};
 use crate::ports::{InputFn, ReplierFn};
-use crate::time::{AtomicTime, Clock, MonotonicTime, SyncStatus};
+use crate::time::{AtomicTime, Clock, Deadline, MonotonicTime, SyncStatus};
 use crate::util::seq_futures::SeqFuture;
 use crate::util::slot;
 
@@ -189,9 +187,8 @@ thread_local! { pub(crate) static CURRENT_MODEL_ID: Cell<ModelId> = const { Cell
 ///    desired wall clock time, and finally
 /// 3. run all computations scheduled for the new simulation time.
 ///
-/// The [`step_by()`](Simulation::step_by) and
-/// [`step_until()`](Simulation::step_until) methods operate similarly but
-/// iterate until the target simulation time has been reached.
+/// The [`step_until()`](Simulation::step_until) method operates similarly but
+/// iterates until the target simulation time has been reached.
 pub struct Simulation {
     executor: Executor,
     scheduler_queue: Arc<Mutex<SchedulerQueue>>,
@@ -260,19 +257,6 @@ impl Simulation {
         self.step_to_next_bounded(MonotonicTime::MAX).map(|_| ())
     }
 
-    /// Iteratively advances the simulation time by the specified duration, as
-    /// if by calling [`Simulation::step()`] repeatedly.
-    ///
-    /// This method blocks until all events scheduled up to the specified target
-    /// time have completed. The simulation time upon completion is equal to the
-    /// initial simulation time incremented by the specified duration, whether
-    /// or not an event was scheduled for that time.
-    pub fn step_by(&mut self, duration: Duration) -> Result<(), ExecutionError> {
-        let target_time = self.time.read() + duration;
-
-        self.step_until_unchecked(target_time)
-    }
-
     /// Iteratively advances the simulation time until the specified deadline,
     /// as if by calling [`Simulation::step()`] repeatedly.
     ///
@@ -280,8 +264,10 @@ impl Simulation {
     /// time have completed. The simulation time upon completion is equal to the
     /// specified target time, whether or not an event was scheduled for that
     /// time.
-    pub fn step_until(&mut self, target_time: MonotonicTime) -> Result<(), ExecutionError> {
-        if self.time.read() >= target_time {
+    pub fn step_until(&mut self, deadline: impl Deadline) -> Result<(), ExecutionError> {
+        let now = self.time.read();
+        let target_time = deadline.into_time(now);
+        if target_time < now {
             return Err(ExecutionError::InvalidDeadline(target_time));
         }
         self.step_until_unchecked(target_time)

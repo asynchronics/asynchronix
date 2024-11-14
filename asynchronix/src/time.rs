@@ -55,3 +55,27 @@ pub(crate) use monotonic_time::TearableAtomicTime;
 
 pub(crate) type AtomicTime = crate::util::sync_cell::SyncCell<TearableAtomicTime>;
 pub(crate) type AtomicTimeReader = crate::util::sync_cell::SyncCellReader<TearableAtomicTime>;
+
+/// Trait abstracting over time-absolute and time-relative deadlines.
+///
+/// This trait is implemented by [`std::time::Duration`] and
+/// [`MonotonicTime`].
+pub trait Deadline {
+    /// Make this deadline into an absolute timestamp, using the provided
+    /// current time as a reference.
+    fn into_time(self, now: MonotonicTime) -> MonotonicTime;
+}
+
+impl Deadline for std::time::Duration {
+    #[inline(always)]
+    fn into_time(self, now: MonotonicTime) -> MonotonicTime {
+        now + self
+    }
+}
+
+impl Deadline for MonotonicTime {
+    #[inline(always)]
+    fn into_time(self, _: MonotonicTime) -> MonotonicTime {
+        self
+    }
+}

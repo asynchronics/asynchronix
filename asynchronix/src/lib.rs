@@ -246,8 +246,8 @@
 //!
 //! 1. by advancing time, either until the next scheduled event with
 //!    [`Simulation::step()`](simulation::Simulation::step), or until a specific
-//!    deadline using for instance
-//!    [`Simulation::step_by()`](simulation::Simulation::step_by).
+//!    deadline with
+//!    [`Simulation::step_until()`](simulation::Simulation::step_until).
 //! 2. by sending events or queries without advancing simulation time, using
 //!    [`Simulation::process_event()`](simulation::Simulation::process_event) or
 //!    [`Simulation::send_query()`](simulation::Simulation::process_query),
