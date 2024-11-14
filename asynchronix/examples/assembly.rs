@@ -175,7 +175,7 @@ fn main() -> Result<(), SimulationError> {
 
     // Advance simulation time by 0.9s, which with a 10Hz PPS should correspond to
     // 9 position increments.
-    simu.step_by(Duration::new(0, 900_000_000))?;
+    simu.step_until(Duration::new(0, 900_000_000))?;
     t += Duration::new(0, 900_000_000);
     assert_eq!(simu.time(), t);
     for _ in 0..9 {

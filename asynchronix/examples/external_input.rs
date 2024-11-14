@@ -236,7 +236,7 @@ fn main() -> Result<(), SimulationError> {
     });
 
     // Advance simulation, external messages will be collected.
-    simu.step_by(Duration::from_secs(2))?;
+    simu.step_until(Duration::from_secs(2))?;
 
     // Shut down the server.
     let socket = sender_handle.join().unwrap();

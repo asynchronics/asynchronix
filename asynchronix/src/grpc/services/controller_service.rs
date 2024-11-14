@@ -118,7 +118,9 @@ impl ControllerService {
                             "the specified deadline lies in the past",
                         ))?;
 
-                        simulation.step_by(duration).map_err(map_execution_error)?;
+                        simulation
+                            .step_until(duration)
+                            .map_err(map_execution_error)?;
                     }
                 };
 

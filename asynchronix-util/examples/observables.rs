@@ -230,7 +230,7 @@ fn main() -> Result<(), SimulationError> {
     );
 
     // All data processed.
-    simu.step_by(Duration::from_millis(101))?;
+    simu.step_until(Duration::from_millis(101))?;
     expect(
         &mut mode,
         Some(ModeId::Idle),
@@ -266,7 +266,7 @@ fn main() -> Result<(), SimulationError> {
     );
 
     // Wait for short processing to finish, check results.
-    simu.step_by(Duration::from_millis(11))?;
+    simu.step_until(Duration::from_millis(11))?;
     expect(
         &mut mode,
         Some(ModeId::Idle),
@@ -279,7 +279,7 @@ fn main() -> Result<(), SimulationError> {
 
     // Wait long enough, no state change as the long processing has been
     // cancelled.
-    simu.step_by(Duration::from_millis(100))?;
+    simu.step_until(Duration::from_millis(100))?;
     assert_eq!(mode.next(), None);
     assert_eq!(value.next(), None);
     assert_eq!(hk.next(), None);

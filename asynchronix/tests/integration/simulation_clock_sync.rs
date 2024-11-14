@@ -23,7 +23,7 @@ impl Model for TestModel {}
 // synchronization tolerance.
 //
 // Returns the last simulation tick at completion or when the error occurred, and
-// the result of `Simulation::step_by`.
+// the result of `Simulation::step_until`.
 fn clock_sync(
     num_threads: usize,
     block_time_ms: u64,
@@ -58,7 +58,7 @@ fn clock_sync(
             .unwrap();
     }
 
-    let res = simu.step_by(delta);
+    let res = simu.step_until(delta);
     let last_tick = simu.time().duration_since(t0);
 
     (last_tick, res)

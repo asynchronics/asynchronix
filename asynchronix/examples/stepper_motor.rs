@@ -251,7 +251,7 @@ fn main() -> Result<(), asynchronix::simulation::SimulationError> {
 
     // Advance simulation time by 0.9s, which with a 10Hz PPS should correspond to
     // 9 position increments.
-    simu.step_by(Duration::new(0, 900_000_000))?;
+    simu.step_until(Duration::new(0, 900_000_000))?;
     t += Duration::new(0, 900_000_000);
     assert_eq!(simu.time(), t);
     for _ in 0..9 {
@@ -290,7 +290,7 @@ fn main() -> Result<(), asynchronix::simulation::SimulationError> {
 
     // Advance simulation time by 0.7s, which with a 10Hz PPS should correspond to
     // 7 position increments.
-    simu.step_by(Duration::new(0, 700_000_000))?;
+    simu.step_until(Duration::new(0, 700_000_000))?;
     t += Duration::new(0, 700_000_000);
     assert_eq!(simu.time(), t);
     for _ in 0..7 {
@@ -310,7 +310,7 @@ fn main() -> Result<(), asynchronix::simulation::SimulationError> {
 
     // Advance simulation time by 1.9s, which with a -10Hz PPS should correspond
     // to 19 position decrements.
-    simu.step_by(Duration::new(1, 900_000_000))?;
+    simu.step_until(Duration::new(1, 900_000_000))?;
     t += Duration::new(1, 900_000_000);
     assert_eq!(simu.time(), t);
     pos = (pos + Motor::STEPS_PER_REV - 19) % Motor::STEPS_PER_REV;
