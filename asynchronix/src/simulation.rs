@@ -121,11 +121,14 @@ mod mailbox;
 mod scheduler;
 mod sim_init;
 
+use scheduler::SchedulerQueue;
+
+pub(crate) use scheduler::{
+    KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction, SchedulerInner,
+};
+
 pub use mailbox::{Address, Mailbox};
 pub use scheduler::{Action, ActionKey, AutoActionKey, LocalScheduler, Scheduler, SchedulingError};
-pub(crate) use scheduler::{
-    KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction, SchedulerQueue,
-};
 pub use sim_init::SimInit;
 
 use std::any::Any;
@@ -461,13 +464,13 @@ impl Simulation {
             let action = pull_next_action(&mut scheduler_queue);
             let mut next_key = peek_next_key(&mut scheduler_queue);
             if next_key != Some(current_key) {
-                // Since there are no other actions targeting the same mailbox
-                // and the same time, the action is spawned immediately.
+                // Since there are no other actions with the same origin and the
+                // same time, the action is spawned immediately.
                 action.spawn_and_forget(&self.executor);
             } else {
                 // To ensure that their relative order of execution is
-                // preserved, all actions targeting the same mailbox are
-                // executed sequentially within a single compound future.
+                // preserved, all actions with the same origin are executed
+                // sequentially within a single compound future.
                 let mut action_sequence = SeqFuture::new();
                 action_sequence.push(action.into_future());
                 loop {
@@ -717,7 +720,7 @@ pub(crate) fn add_model<P: ProtoModel>(
     model: P,
     mailbox: Mailbox<P::Model>,
     name: String,
-    scheduler: Scheduler,
+    scheduler: SchedulerInner,
     executor: &Executor,
     abort_signal: &Signal,
     model_names: &mut Vec<String>,
@@ -725,18 +728,20 @@ pub(crate) fn add_model<P: ProtoModel>(
     #[cfg(feature = "tracing")]
     let span = tracing::span!(target: env!("CARGO_PKG_NAME"), tracing::Level::INFO, "model", name);
 
-    let context = Context::new(
-        name.clone(),
-        LocalScheduler::new(scheduler, mailbox.address()),
+    let mut build_context = BuildContext::new(
+        &mailbox,
+        &name,
+        &scheduler,
+        executor,
+        abort_signal,
+        model_names,
     );
-    let mut build_context =
-        BuildContext::new(&mailbox, &context, executor, abort_signal, model_names);
-
     let model = model.build(&mut build_context);
 
+    let address = mailbox.address();
     let mut receiver = mailbox.0;
     let abort_signal = abort_signal.clone();
-
+    let context = Context::new(name.clone(), LocalScheduler::new(scheduler, address));
     let fut = async move {
         let mut model = model.init(&context).await.0;
         while !abort_signal.is_set() && receiver.recv(&mut model, &context).await.is_ok() {}

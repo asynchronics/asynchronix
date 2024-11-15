@@ -468,7 +468,7 @@ mod tests {
     use futures_executor::block_on;
 
     use crate::channel::Receiver;
-    use crate::simulation::{Address, LocalScheduler, Scheduler};
+    use crate::simulation::{Address, LocalScheduler, SchedulerInner};
     use crate::time::{MonotonicTime, TearableAtomicTime};
     use crate::util::priority_queue::PriorityQueue;
     use crate::util::sync_cell::SyncCell;
@@ -539,7 +539,7 @@ mod tests {
                         let dummy_context = Context::new(
                             String::new(),
                             LocalScheduler::new(
-                                Scheduler::new(dummy_priority_queue, dummy_time),
+                                SchedulerInner::new(dummy_priority_queue, dummy_time),
                                 Address(dummy_address),
                             ),
                         );
@@ -611,7 +611,7 @@ mod tests {
                         let dummy_context = Context::new(
                             String::new(),
                             LocalScheduler::new(
-                                Scheduler::new(dummy_priority_queue, dummy_time),
+                                SchedulerInner::new(dummy_priority_queue, dummy_time),
                                 Address(dummy_address),
                             ),
                         );
@@ -673,7 +673,7 @@ mod tests {
                         let dummy_context = Context::new(
                             String::new(),
                             LocalScheduler::new(
-                                Scheduler::new(dummy_priority_queue, dummy_time),
+                                SchedulerInner::new(dummy_priority_queue, dummy_time),
                                 Address(dummy_address),
                             ),
                         );
@@ -760,7 +760,7 @@ mod tests {
                         let dummy_context = Context::new(
                             String::new(),
                             LocalScheduler::new(
-                                Scheduler::new(dummy_priority_queue, dummy_time),
+                                SchedulerInner::new(dummy_priority_queue, dummy_time),
                                 Address(dummy_address),
                             ),
                         );

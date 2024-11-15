@@ -183,6 +183,15 @@ impl<T: TearableAtomic> SyncCellReader<T> {
             Err(SyncCellReadError {})
         }
     }
+
+    /// Performs a synchronized read by spinning on `try_read`.
+    pub(crate) fn read(&self) -> T::Value {
+        loop {
+            if let Ok(value) = self.try_read() {
+                return value;
+            }
+        }
+    }
 }
 
 impl<T: TearableAtomic> Clone for SyncCellReader<T> {

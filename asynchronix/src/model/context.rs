@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::executor::{Executor, Signal};
-use crate::simulation::{self, LocalScheduler, Mailbox};
+use crate::simulation::{self, LocalScheduler, Mailbox, SchedulerInner};
 
 use super::{Model, ProtoModel};
 
@@ -182,7 +182,8 @@ impl<M: Model> fmt::Debug for Context<M> {
 pub struct BuildContext<'a, P: ProtoModel> {
     /// Mailbox of the model.
     pub mailbox: &'a Mailbox<P::Model>,
-    context: &'a Context<P::Model>,
+    name: &'a String,
+    scheduler: &'a SchedulerInner,
     executor: &'a Executor,
     abort_signal: &'a Signal,
     model_names: &'a mut Vec<String>,
@@ -192,14 +193,16 @@ impl<'a, P: ProtoModel> BuildContext<'a, P> {
     /// Creates a new local context.
     pub(crate) fn new(
         mailbox: &'a Mailbox<P::Model>,
-        context: &'a Context<P::Model>,
+        name: &'a String,
+        scheduler: &'a SchedulerInner,
         executor: &'a Executor,
         abort_signal: &'a Signal,
         model_names: &'a mut Vec<String>,
     ) -> Self {
         Self {
             mailbox,
-            context,
+            name,
+            scheduler,
             executor,
             abort_signal,
             model_names,
@@ -211,7 +214,7 @@ impl<'a, P: ProtoModel> BuildContext<'a, P> {
     /// The fully qualified name is made of the unqualified model name, if
     /// relevant prepended by the dot-separated names of all parent models.
     pub fn name(&self) -> &str {
-        &self.context.name
+        self.name
     }
 
     /// Adds a sub-model to the simulation bench.
@@ -232,13 +235,13 @@ impl<'a, P: ProtoModel> BuildContext<'a, P> {
         if submodel_name.is_empty() {
             submodel_name = String::from("<unknown>");
         };
-        submodel_name = self.context.name().to_string() + "." + &submodel_name;
+        submodel_name = self.name.to_string() + "." + &submodel_name;
 
         simulation::add_model(
             model,
             mailbox,
             submodel_name,
-            self.context.scheduler.scheduler.clone(),
+            self.scheduler.clone(),
             self.executor,
             self.abort_signal,
             self.model_names,

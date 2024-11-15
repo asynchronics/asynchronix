@@ -10,7 +10,9 @@ use crate::time::{Clock, NoClock};
 use crate::util::priority_queue::PriorityQueue;
 use crate::util::sync_cell::SyncCell;
 
-use super::{add_model, ExecutionError, Mailbox, Scheduler, SchedulerQueue, Signal, Simulation};
+use super::{
+    add_model, ExecutionError, Mailbox, SchedulerInner, SchedulerQueue, Signal, Simulation,
+};
 
 /// Builder for a multi-threaded, discrete-event simulation.
 pub struct SimInit {
@@ -88,7 +90,7 @@ impl SimInit {
         };
         self.observers
             .push((name.clone(), Box::new(mailbox.0.observer())));
-        let scheduler = Scheduler::new(self.scheduler_queue.clone(), self.time.reader());
+        let scheduler = SchedulerInner::new(self.scheduler_queue.clone(), self.time.reader());
 
         add_model(
             model,
