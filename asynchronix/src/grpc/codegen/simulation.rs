@@ -15,8 +15,6 @@ pub struct EventKey {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct InitRequest {
-    #[prost(message, optional, tag = "1")]
-    pub time: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(bytes = "vec", tag = "2")]
     pub cfg: ::prost::alloc::vec::Vec<u8>,
 }
