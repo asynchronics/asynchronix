@@ -102,9 +102,10 @@ impl simulation_server::Simulation for GrpcSimulationService {
 
         let (reply, bench) = self.initializer().init(request);
 
-        if let Some((simulation, endpoint_registry)) = bench {
+        if let Some((simulation, scheduler, endpoint_registry)) = bench {
             *self.controller() = ControllerService::Started {
                 simulation,
+                scheduler,
                 event_source_registry: endpoint_registry.event_source_registry,
                 query_source_registry: endpoint_registry.query_source_registry,
                 key_registry: KeyRegistry::default(),

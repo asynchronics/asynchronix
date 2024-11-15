@@ -69,8 +69,6 @@ impl Scheduler {
     ///
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
-    ///
-    /// See also: [`LocalScheduler::schedule_event`](LocalScheduler::schedule_event).
     pub fn schedule_event<M, F, T, S>(
         &self,
         deadline: impl Deadline,
@@ -95,8 +93,6 @@ impl Scheduler {
     ///
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
-    ///
-    /// See also: [`LocalScheduler::schedule_keyed_event`](LocalScheduler::schedule_keyed_event).
     pub fn schedule_keyed_event<M, F, T, S>(
         &self,
         deadline: impl Deadline,
@@ -121,8 +117,6 @@ impl Scheduler {
     ///
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
-    ///
-    /// See also: [`LocalScheduler::schedule_periodic_event`](LocalScheduler::schedule_periodic_event).
     pub fn schedule_periodic_event<M, F, T, S>(
         &self,
         deadline: impl Deadline,
@@ -155,8 +149,6 @@ impl Scheduler {
     ///
     /// Events scheduled for the same time and targeting the same model are
     /// guaranteed to be processed according to the scheduling order.
-    ///
-    /// See also: [`LocalScheduler::schedule_keyed_periodic_event`](LocalScheduler::schedule_keyed_periodic_event).
     pub fn schedule_keyed_periodic_event<M, F, T, S>(
         &self,
         deadline: impl Deadline,

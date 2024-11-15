@@ -325,7 +325,8 @@
 //! #     .add_model(multiplier2, multiplier2_mbox, "multiplier2")
 //! #     .add_model(delay1, delay1_mbox, "delay1")
 //! #     .add_model(delay2, delay2_mbox, "delay2")
-//! #     .init(t0)?;
+//! #     .init(t0)?
+//! #     .0;
 //! // Send a value to the first multiplier.
 //! simu.process_event(Multiplier::input, 21.0, &input_address)?;
 //!

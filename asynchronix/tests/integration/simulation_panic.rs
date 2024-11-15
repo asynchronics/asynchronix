@@ -48,7 +48,7 @@ fn model_panic(num_threads: usize) {
 
     // Run the simulation.
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = siminit.init(t0).unwrap();
+    let mut simu = siminit.init(t0).unwrap().0;
 
     match simu.process_event(TestModel::countdown_in, INIT_COUNTDOWN, addr0) {
         Err(ExecutionError::Panic { model, payload }) => {

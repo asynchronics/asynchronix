@@ -366,13 +366,11 @@ fn main() -> Result<(), SimulationError> {
     let t0 = MonotonicTime::EPOCH;
 
     // Assembly and initialization.
-    let mut simu = SimInit::new()
+    let (mut simu, scheduler) = SimInit::new()
         .add_model(controller, controller_mbox, "controller")
         .add_model(pump, pump_mbox, "pump")
         .add_model(tank, tank_mbox, "tank")
         .init(t0)?;
-
-    let scheduler = simu.scheduler();
 
     // ----------
     // Simulation.

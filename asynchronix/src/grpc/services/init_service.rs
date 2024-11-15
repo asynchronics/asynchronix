@@ -2,8 +2,7 @@ use ciborium;
 use serde::de::DeserializeOwned;
 
 use crate::registry::EndpointRegistry;
-use crate::simulation::SimInit;
-use crate::simulation::Simulation;
+use crate::simulation::{Scheduler, SimInit, Simulation};
 
 use super::{map_execution_error, timestamp_to_monotonic, to_error};
 
@@ -51,7 +50,7 @@ impl InitService {
     pub(crate) fn init(
         &mut self,
         request: InitRequest,
-    ) -> (InitReply, Option<(Simulation, EndpointRegistry)>) {
+    ) -> (InitReply, Option<(Simulation, Scheduler, EndpointRegistry)>) {
         let start_time = request.time.unwrap_or_default();
 
         let reply = (self.sim_gen)(&request.cfg)
@@ -73,7 +72,7 @@ impl InitService {
                         sim_init
                             .init(start_time)
                             .map_err(map_execution_error)
-                            .map(|sim| (sim, registry))
+                            .map(|(sim, sched)| (sim, sched, registry))
                     })
             });
 

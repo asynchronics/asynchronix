@@ -133,11 +133,9 @@ fn main() -> Result<(), SimulationError> {
     let t0 = MonotonicTime::EPOCH;
 
     // Assembly and initialization.
-    let mut simu = SimInit::new()
+    let (mut simu, scheduler) = SimInit::new()
         .add_model(assembly, assembly_mbox, "assembly")
         .init(t0)?;
-
-    let scheduler = simu.scheduler();
 
     // ----------
     // Simulation.

@@ -4,12 +4,13 @@ use prost_types::Timestamp;
 
 use crate::grpc::key_registry::{KeyRegistry, KeyRegistryId};
 use crate::registry::{EventSourceRegistry, QuerySourceRegistry};
-use crate::simulation::Simulation;
+use crate::simulation::{Scheduler, Simulation};
 
 use super::super::codegen::simulation::*;
 use super::{
-    map_execution_error, monotonic_to_timestamp, simulation_not_started_error,
-    timestamp_to_monotonic, to_error, to_positive_duration, to_strictly_positive_duration,
+    map_execution_error, map_scheduling_error, monotonic_to_timestamp,
+    simulation_not_started_error, timestamp_to_monotonic, to_error, to_positive_duration,
+    to_strictly_positive_duration,
 };
 
 /// Protobuf-based simulation manager.
@@ -24,6 +25,7 @@ pub(crate) enum ControllerService {
     NotStarted,
     Started {
         simulation: Simulation,
+        scheduler: Scheduler,
         event_source_registry: EventSourceRegistry,
         query_source_registry: QuerySourceRegistry,
         key_registry: KeyRegistry,
@@ -147,6 +149,7 @@ impl ControllerService {
         let reply = match self {
             Self::Started {
                 simulation,
+                scheduler,
                 event_source_registry,
                 key_registry,
                 ..
@@ -224,7 +227,9 @@ impl ControllerService {
                     }
                 });
 
-                simulation.process(action).map_err(map_execution_error)?;
+                scheduler
+                    .schedule(deadline, action)
+                    .map_err(map_scheduling_error)?;
 
                 Ok(key_id)
             }(),

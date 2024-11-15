@@ -6,7 +6,7 @@ use std::time::Duration;
 use asynchronix::model::Context;
 use asynchronix::model::Model;
 use asynchronix::ports::{EventBuffer, Output};
-use asynchronix::simulation::{Address, Mailbox, SimInit, Simulation};
+use asynchronix::simulation::{Address, Mailbox, Scheduler, SimInit, Simulation};
 use asynchronix::time::MonotonicTime;
 
 const MT_NUM_THREADS: usize = 4;
@@ -32,7 +32,12 @@ impl<T: Clone + Send + 'static> Model for PassThroughModel<T> {}
 fn passthrough_bench<T: Clone + Send + 'static>(
     num_threads: usize,
     t0: MonotonicTime,
-) -> (Simulation, Address<PassThroughModel<T>>, EventBuffer<T>) {
+) -> (
+    Simulation,
+    Scheduler,
+    Address<PassThroughModel<T>>,
+    EventBuffer<T>,
+) {
     // Bench assembly.
     let mut model = PassThroughModel::new();
     let mbox = Mailbox::new();
@@ -41,19 +46,17 @@ fn passthrough_bench<T: Clone + Send + 'static>(
     model.output.connect_sink(&out_stream);
     let addr = mbox.address();
 
-    let simu = SimInit::with_num_threads(num_threads)
+    let (simu, scheduler) = SimInit::with_num_threads(num_threads)
         .add_model(model, mbox, "")
         .init(t0)
         .unwrap();
 
-    (simu, addr, out_stream)
+    (simu, scheduler, addr, out_stream)
 }
 
 fn schedule_events(num_threads: usize) {
     let t0 = MonotonicTime::EPOCH;
-    let (mut simu, addr, mut output) = passthrough_bench(num_threads, t0);
-
-    let scheduler = simu.scheduler();
+    let (mut simu, scheduler, addr, mut output) = passthrough_bench(num_threads, t0);
 
     // Queue 2 events at t0+3s and t0+2s, in reverse order.
     scheduler
@@ -92,9 +95,7 @@ fn schedule_events(num_threads: usize) {
 
 fn schedule_keyed_events(num_threads: usize) {
     let t0 = MonotonicTime::EPOCH;
-    let (mut simu, addr, mut output) = passthrough_bench(num_threads, t0);
-
-    let scheduler = simu.scheduler();
+    let (mut simu, scheduler, addr, mut output) = passthrough_bench(num_threads, t0);
 
     let event_t1 = scheduler
         .schedule_keyed_event(
@@ -133,9 +134,7 @@ fn schedule_keyed_events(num_threads: usize) {
 
 fn schedule_periodic_events(num_threads: usize) {
     let t0 = MonotonicTime::EPOCH;
-    let (mut simu, addr, mut output) = passthrough_bench(num_threads, t0);
-
-    let scheduler = simu.scheduler();
+    let (mut simu, scheduler, addr, mut output) = passthrough_bench(num_threads, t0);
 
     // Queue 2 periodic events at t0 + 3s + k*2s.
     scheduler
@@ -172,9 +171,7 @@ fn schedule_periodic_events(num_threads: usize) {
 
 fn schedule_periodic_keyed_events(num_threads: usize) {
     let t0 = MonotonicTime::EPOCH;
-    let (mut simu, addr, mut output) = passthrough_bench(num_threads, t0);
-
-    let scheduler = simu.scheduler();
+    let (mut simu, scheduler, addr, mut output) = passthrough_bench(num_threads, t0);
 
     // Queue 2 periodic events at t0 + 3s + k*2s.
     scheduler
@@ -292,6 +289,7 @@ fn timestamp_bench(
     clock: impl Clock + 'static,
 ) -> (
     Simulation,
+    Scheduler,
     Address<TimestampModel>,
     EventBuffer<(Instant, SystemTime)>,
 ) {
@@ -303,13 +301,13 @@ fn timestamp_bench(
     model.stamp.connect_sink(&stamp_stream);
     let addr = mbox.address();
 
-    let simu = SimInit::with_num_threads(num_threads)
+    let (simu, scheduler) = SimInit::with_num_threads(num_threads)
         .add_model(model, mbox, "")
         .set_clock(clock)
         .init(t0)
         .unwrap();
 
-    (simu, addr, stamp_stream)
+    (simu, scheduler, addr, stamp_stream)
 }
 
 #[cfg(not(miri))]
@@ -335,9 +333,7 @@ fn system_clock_from_instant(num_threads: usize) {
 
         let clock = SystemClock::from_instant(simulation_ref, wall_clock_ref);
 
-        let (mut simu, addr, mut stamp) = timestamp_bench(num_threads, t0, clock);
-
-        let scheduler = simu.scheduler();
+        let (mut simu, scheduler, addr, mut stamp) = timestamp_bench(num_threads, t0, clock);
 
         // Queue a single event at t0 + 0.1s.
         scheduler
@@ -391,9 +387,7 @@ fn system_clock_from_system_time(num_threads: usize) {
 
         let clock = SystemClock::from_system_time(simulation_ref, wall_clock_ref);
 
-        let (mut simu, addr, mut stamp) = timestamp_bench(num_threads, t0, clock);
-
-        let scheduler = simu.scheduler();
+        let (mut simu, scheduler, addr, mut stamp) = timestamp_bench(num_threads, t0, clock);
 
         // Queue a single event at t0 + 0.1s.
         scheduler
@@ -435,10 +429,9 @@ fn auto_system_clock(num_threads: usize) {
     let t0 = MonotonicTime::EPOCH;
     const TOLERANCE: f64 = 0.005; // [s]
 
-    let (mut simu, addr, mut stamp) = timestamp_bench(num_threads, t0, AutoSystemClock::new());
+    let (mut simu, scheduler, addr, mut stamp) =
+        timestamp_bench(num_threads, t0, AutoSystemClock::new());
     let instant_t0 = Instant::now();
-
-    let scheduler = simu.scheduler();
 
     // Queue a periodic event at t0 + 0.2s + k*0.2s.
     scheduler

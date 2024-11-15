@@ -206,12 +206,10 @@ fn main() -> Result<(), asynchronix::simulation::SimulationError> {
     let t0 = MonotonicTime::EPOCH;
 
     // Assembly and initialization.
-    let mut simu = SimInit::new()
+    let (mut simu, scheduler) = SimInit::new()
         .add_model(driver, driver_mbox, "driver")
         .add_model(motor, motor_mbox, "motor")
         .init(t0)?;
-
-    let scheduler = simu.scheduler();
 
     // ----------
     // Simulation.

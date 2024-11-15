@@ -107,7 +107,7 @@
 //! # impl Model for ModelB {};
 //! # let modelA_addr = Mailbox::<ModelA>::new().address();
 //! # let modelB_addr = Mailbox::<ModelB>::new().address();
-//! # let mut simu = SimInit::new().init(MonotonicTime::EPOCH)?;
+//! # let mut simu = SimInit::new().init(MonotonicTime::EPOCH)?.0;
 //! simu.process_event(
 //!     |m: &mut ModelA| {
 //!         m.output.connect(ModelB::input, modelB_addr);
@@ -164,11 +164,11 @@ thread_local! { pub(crate) static CURRENT_MODEL_ID: Cell<ModelId> = const { Cell
 ///
 /// A [`Simulation`] object also manages an event scheduling queue and
 /// simulation time. The scheduling queue can be accessed from the simulation
-/// itself, but also from models via the optional
-/// [`&mut Context`](crate::model::Context) argument of input and replier port
-/// methods.  Likewise, simulation time can be accessed with the
-/// [`Simulation::time()`] method, or from models with the
-/// [`LocalScheduler::time()`](crate::simulation::LocalScheduler::time) method.
+/// itself, but also from models via the optional [`&mut
+/// Context`](crate::model::Context) argument of input and replier port methods.
+/// Likewise, simulation time can be accessed with the [`Simulation::time()`]
+/// method, or from models with the
+/// [`Context::time()`](crate::simulation::Context::time) method.
 ///
 /// Events and queries can be scheduled immediately, *i.e.* for the current
 /// simulation time, using [`process_event()`](Simulation::process_event) and
@@ -274,11 +274,6 @@ impl Simulation {
             return Err(ExecutionError::InvalidDeadline(target_time));
         }
         self.step_until_unchecked(target_time)
-    }
-
-    /// Returns an owned scheduler handle.
-    pub fn scheduler(&self) -> Scheduler {
-        Scheduler::new(self.scheduler_queue.clone(), self.time.reader())
     }
 
     /// Processes an action immediately, blocking until completion.
