@@ -85,7 +85,7 @@ impl Model for MotorAssembly {}
 impl ProtoModel for ProtoMotorAssembly {
     type Model = MotorAssembly;
 
-    fn build(self, ctx: &mut BuildContext<Self>) -> MotorAssembly {
+    fn build(self, cx: &mut BuildContext<Self>) -> MotorAssembly {
         let mut assembly = MotorAssembly::new();
         let mut motor = Motor::new(self.init_pos);
         let mut driver = Driver::new(1.0);
@@ -105,8 +105,8 @@ impl ProtoModel for ProtoMotorAssembly {
         motor.position = self.position;
 
         // Add the submodels to the simulation.
-        ctx.add_submodel(driver, driver_mbox, "driver");
-        ctx.add_submodel(motor, motor_mbox, "motor");
+        cx.add_submodel(driver, driver_mbox, "driver");
+        cx.add_submodel(motor, motor_mbox, "motor");
 
         assembly
     }
@@ -133,11 +133,9 @@ fn main() -> Result<(), SimulationError> {
     let t0 = MonotonicTime::EPOCH;
 
     // Assembly and initialization.
-    let mut simu = SimInit::new()
+    let (mut simu, scheduler) = SimInit::new()
         .add_model(assembly, assembly_mbox, "assembly")
         .init(t0)?;
-
-    let scheduler = simu.scheduler();
 
     // ----------
     // Simulation.

@@ -10,7 +10,10 @@ use crate::time::{Clock, NoClock};
 use crate::util::priority_queue::PriorityQueue;
 use crate::util::sync_cell::SyncCell;
 
-use super::{add_model, ExecutionError, Mailbox, Scheduler, SchedulerQueue, Signal, Simulation};
+use super::{
+    add_model, ExecutionError, GlobalScheduler, Mailbox, Scheduler, SchedulerQueue, Signal,
+    Simulation,
+};
 
 /// Builder for a multi-threaded, discrete-event simulation.
 pub struct SimInit {
@@ -88,7 +91,7 @@ impl SimInit {
         };
         self.observers
             .push((name.clone(), Box::new(mailbox.0.observer())));
-        let scheduler = Scheduler::new(self.scheduler_queue.clone(), self.time.reader());
+        let scheduler = GlobalScheduler::new(self.scheduler_queue.clone(), self.time.reader());
 
         add_model(
             model,
@@ -144,10 +147,17 @@ impl SimInit {
     /// Builds a simulation initialized at the specified simulation time,
     /// executing the [`Model::init()`](crate::model::Model::init) method on all
     /// model initializers.
-    pub fn init(mut self, start_time: MonotonicTime) -> Result<Simulation, ExecutionError> {
+    ///
+    /// The simulation object and its associated scheduler are returned upon
+    /// success.
+    pub fn init(
+        mut self,
+        start_time: MonotonicTime,
+    ) -> Result<(Simulation, Scheduler), ExecutionError> {
         self.time.write(start_time);
         self.clock.synchronize(start_time);
 
+        let scheduler = Scheduler::new(self.scheduler_queue.clone(), self.time.reader());
         let mut simulation = Simulation::new(
             self.executor,
             self.scheduler_queue,
@@ -160,7 +170,7 @@ impl SimInit {
         );
         simulation.run()?;
 
-        Ok(simulation)
+        Ok((simulation, scheduler))
     }
 }
 

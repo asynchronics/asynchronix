@@ -90,7 +90,7 @@ impl Motor {
 
 impl Model for Motor {
     /// Broadcasts the initial position of the motor.
-    async fn init(mut self, _: &Context<Self>) -> InitializedModel<Self> {
+    async fn init(mut self, _: &mut Context<Self>) -> InitializedModel<Self> {
         self.position.send(self.pos).await;
         self.into()
     }
@@ -126,7 +126,7 @@ impl Driver {
     }
 
     /// Pulse rate (sign = direction) [Hz] -- input port.
-    pub async fn pulse_rate(&mut self, pps: f64, context: &Context<Self>) {
+    pub async fn pulse_rate(&mut self, pps: f64, cx: &mut Context<Self>) {
         let pps = pps.signum() * pps.abs().clamp(Self::MIN_PPS, Self::MAX_PPS);
         if pps == self.pps {
             return;
@@ -138,7 +138,7 @@ impl Driver {
         // Trigger the rotation if the motor is currently idle. Otherwise the
         // new value will be accounted for at the next pulse.
         if is_idle {
-            self.send_pulse((), context).await;
+            self.send_pulse((), cx).await;
         }
     }
 
@@ -149,7 +149,7 @@ impl Driver {
     fn send_pulse<'a>(
         &'a mut self,
         _: (),
-        context: &'a Context<Self>,
+        cx: &'a mut Context<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
             let current_out = match self.next_phase {
@@ -170,9 +170,7 @@ impl Driver {
             let pulse_duration = Duration::from_secs_f64(1.0 / self.pps.abs());
 
             // Schedule the next pulse.
-            context
-                .scheduler
-                .schedule_event(pulse_duration, Self::send_pulse, ())
+            cx.schedule_event(pulse_duration, Self::send_pulse, ())
                 .unwrap();
         }
     }
@@ -208,12 +206,10 @@ fn main() -> Result<(), asynchronix::simulation::SimulationError> {
     let t0 = MonotonicTime::EPOCH;
 
     // Assembly and initialization.
-    let mut simu = SimInit::new()
+    let (mut simu, scheduler) = SimInit::new()
         .add_model(driver, driver_mbox, "driver")
         .add_model(motor, motor_mbox, "motor")
         .init(t0)?;
-
-    let scheduler = simu.scheduler();
 
     // ----------
     // Simulation.

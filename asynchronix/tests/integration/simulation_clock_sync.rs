@@ -39,14 +39,13 @@ fn clock_sync(
     let addr = mbox.address();
 
     let t0 = MonotonicTime::EPOCH;
-    let mut simu = SimInit::with_num_threads(num_threads)
+    let (mut simu, scheduler) = SimInit::with_num_threads(num_threads)
         .add_model(model, mbox, "test")
         .set_clock(clock)
         .set_clock_tolerance(clock_tolerance)
         .init(t0)
         .unwrap();
 
-    let scheduler = simu.scheduler();
     let mut delta = Duration::ZERO;
     for tick_ms in ticks_ms {
         let tick = Duration::from_millis(*tick_ms);

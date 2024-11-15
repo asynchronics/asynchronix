@@ -136,11 +136,9 @@ impl Listener {
 
 impl Model for Listener {
     /// Initialize model.
-    async fn init(self, context: &Context<Self>) -> InitializedModel<Self> {
+    async fn init(self, cx: &mut Context<Self>) -> InitializedModel<Self> {
         // Schedule periodic function that processes external events.
-        context
-            .scheduler
-            .schedule_periodic_event(DELTA, PERIOD, Listener::process, ())
+        cx.schedule_periodic_event(DELTA, PERIOD, Listener::process, ())
             .unwrap();
 
         self.into()
@@ -212,7 +210,8 @@ fn main() -> Result<(), SimulationError> {
     let mut simu = SimInit::new()
         .add_model(listener, listener_mbox, "listener")
         .set_clock(AutoSystemClock::new())
-        .init(t0)?;
+        .init(t0)?
+        .0;
 
     // ----------
     // Simulation.

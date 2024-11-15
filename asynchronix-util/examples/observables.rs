@@ -126,17 +126,11 @@ impl Processor {
     }
 
     /// Process data for dt milliseconds.
-    pub async fn process(&mut self, dt: u64, context: &Context<Self>) {
+    pub async fn process(&mut self, dt: u64, cx: &mut Context<Self>) {
         if matches!(self.state.observe(), ModeId::Idle | ModeId::Processing) {
             self.state
                 .set(State::Processing(
-                    context
-                        .scheduler
-                        .schedule_keyed_event(
-                            Duration::from_millis(dt),
-                            Self::finish_processing,
-                            (),
-                        )
+                    cx.schedule_keyed_event(Duration::from_millis(dt), Self::finish_processing, ())
                         .unwrap()
                         .into_auto(),
                 ))
@@ -155,7 +149,7 @@ impl Processor {
 
 impl Model for Processor {
     /// Propagate all internal states.
-    async fn init(mut self, _: &Context<Self>) -> InitializedModel<Self> {
+    async fn init(mut self, _: &mut Context<Self>) -> InitializedModel<Self> {
         self.state.propagate().await;
         self.acc.propagate().await;
         self.elc.propagate().await;
@@ -188,7 +182,10 @@ fn main() -> Result<(), SimulationError> {
     let t0 = MonotonicTime::EPOCH;
 
     // Assembly and initialization.
-    let mut simu = SimInit::new().add_model(proc, proc_mbox, "proc").init(t0)?;
+    let mut simu = SimInit::new()
+        .add_model(proc, proc_mbox, "proc")
+        .init(t0)?
+        .0;
 
     // ----------
     // Simulation.

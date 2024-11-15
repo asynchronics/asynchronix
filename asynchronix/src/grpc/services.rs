@@ -8,7 +8,7 @@ use prost_types::Timestamp;
 use tai_time::MonotonicTime;
 
 use super::codegen::simulation::{Error, ErrorCode};
-use crate::simulation::ExecutionError;
+use crate::simulation::{ExecutionError, SchedulingError};
 
 pub(crate) use controller_service::ControllerService;
 pub(crate) use init_service::InitService;
@@ -40,6 +40,18 @@ fn map_execution_error(error: ExecutionError) -> Error {
         ExecutionError::BadQuery => ErrorCode::SimulationBadQuery,
         ExecutionError::Terminated => ErrorCode::SimulationTerminated,
         ExecutionError::InvalidDeadline(_) => ErrorCode::InvalidDeadline,
+    };
+
+    let error_message = error.to_string();
+
+    to_error(error_code, error_message)
+}
+
+/// Map a `SchedulingError` to a Protobuf error.
+fn map_scheduling_error(error: SchedulingError) -> Error {
+    let error_code = match error {
+        SchedulingError::InvalidScheduledTime => ErrorCode::InvalidDeadline,
+        SchedulingError::NullRepetitionPeriod => ErrorCode::InvalidPeriod,
     };
 
     let error_message = error.to_string();

@@ -76,56 +76,18 @@
 //! Any deadlocks will be reported as an [`ExecutionError::Deadlock`] error,
 //! which identifies all involved models and the amount of unprocessed messages
 //! (events or requests) in their mailboxes.
-//!
-//! ## Modifying connections during simulation
-//!
-//! Although uncommon, there is sometimes a need for connecting and/or
-//! disconnecting models after they have been migrated to the simulation.
-//! Likewise, one may want to connect or disconnect an
-//! [`EventSlot`](crate::ports::EventSlot) or
-//! [`EventBuffer`](crate::ports::EventBuffer) after the simulation has been
-//! instantiated.
-//!
-//! There is actually a very simple solution to this problem: since the
-//! [`InputFn`] trait also matches closures of type `FnOnce(&mut impl Model)`,
-//! it is enough to invoke [`Simulation::process_event()`] with a closure that
-//! connects or disconnects a port, such as:
-//!
-//! ```
-//! # use asynchronix::model::{Context, Model};
-//! # use asynchronix::ports::Output;
-//! # use asynchronix::time::MonotonicTime;
-//! # use asynchronix::simulation::{Mailbox, SimInit};
-//! # pub struct ModelA {
-//! #     pub output: Output<i32>,
-//! # }
-//! # impl Model for ModelA {};
-//! # pub struct ModelB {}
-//! # impl ModelB {
-//! #     pub fn input(&mut self, value: i32) {}
-//! # }
-//! # impl Model for ModelB {};
-//! # let modelA_addr = Mailbox::<ModelA>::new().address();
-//! # let modelB_addr = Mailbox::<ModelB>::new().address();
-//! # let mut simu = SimInit::new().init(MonotonicTime::EPOCH)?;
-//! simu.process_event(
-//!     |m: &mut ModelA| {
-//!         m.output.connect(ModelB::input, modelB_addr);
-//!     },
-//!     (),
-//!     &modelA_addr
-//! )?;
-//! # Ok::<(), asynchronix::simulation::SimulationError>(())
-//! ```
 mod mailbox;
 mod scheduler;
 mod sim_init;
 
-pub use mailbox::{Address, Mailbox};
-pub use scheduler::{Action, ActionKey, AutoActionKey, LocalScheduler, Scheduler, SchedulingError};
+use scheduler::SchedulerQueue;
+
 pub(crate) use scheduler::{
-    KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction, SchedulerQueue,
+    GlobalScheduler, KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction,
 };
+
+pub use mailbox::{Address, Mailbox};
+pub use scheduler::{Action, ActionKey, AutoActionKey, Scheduler, SchedulingError};
 pub use sim_init::SimInit;
 
 use std::any::Any;
@@ -161,11 +123,11 @@ thread_local! { pub(crate) static CURRENT_MODEL_ID: Cell<ModelId> = const { Cell
 ///
 /// A [`Simulation`] object also manages an event scheduling queue and
 /// simulation time. The scheduling queue can be accessed from the simulation
-/// itself, but also from models via the optional
-/// [`&Context`](crate::model::Context) argument of input and replier port
-/// methods.  Likewise, simulation time can be accessed with the
-/// [`Simulation::time()`] method, or from models with the
-/// [`LocalScheduler::time()`](crate::simulation::LocalScheduler::time) method.
+/// itself, but also from models via the optional [`&mut
+/// Context`](crate::model::Context) argument of input and replier port methods.
+/// Likewise, simulation time can be accessed with the [`Simulation::time()`]
+/// method, or from models with the
+/// [`Context::time()`](crate::simulation::Context::time) method.
 ///
 /// Events and queries can be scheduled immediately, *i.e.* for the current
 /// simulation time, using [`process_event()`](Simulation::process_event) and
@@ -271,11 +233,6 @@ impl Simulation {
             return Err(ExecutionError::InvalidDeadline(target_time));
         }
         self.step_until_unchecked(target_time)
-    }
-
-    /// Returns an owned scheduler handle.
-    pub fn scheduler(&self) -> Scheduler {
-        Scheduler::new(self.scheduler_queue.clone(), self.time.reader())
     }
 
     /// Processes an action immediately, blocking until completion.
@@ -461,13 +418,13 @@ impl Simulation {
             let action = pull_next_action(&mut scheduler_queue);
             let mut next_key = peek_next_key(&mut scheduler_queue);
             if next_key != Some(current_key) {
-                // Since there are no other actions targeting the same mailbox
-                // and the same time, the action is spawned immediately.
+                // Since there are no other actions with the same origin and the
+                // same time, the action is spawned immediately.
                 action.spawn_and_forget(&self.executor);
             } else {
                 // To ensure that their relative order of execution is
-                // preserved, all actions targeting the same mailbox are
-                // executed sequentially within a single compound future.
+                // preserved, all actions with the same origin are executed
+                // sequentially within a single compound future.
                 let mut action_sequence = SeqFuture::new();
                 action_sequence.push(action.into_future());
                 loop {
@@ -717,7 +674,7 @@ pub(crate) fn add_model<P: ProtoModel>(
     model: P,
     mailbox: Mailbox<P::Model>,
     name: String,
-    scheduler: Scheduler,
+    scheduler: GlobalScheduler,
     executor: &Executor,
     abort_signal: &Signal,
     model_names: &mut Vec<String>,
@@ -725,21 +682,23 @@ pub(crate) fn add_model<P: ProtoModel>(
     #[cfg(feature = "tracing")]
     let span = tracing::span!(target: env!("CARGO_PKG_NAME"), tracing::Level::INFO, "model", name);
 
-    let context = Context::new(
-        name.clone(),
-        LocalScheduler::new(scheduler, mailbox.address()),
+    let mut build_cx = BuildContext::new(
+        &mailbox,
+        &name,
+        &scheduler,
+        executor,
+        abort_signal,
+        model_names,
     );
-    let mut build_context =
-        BuildContext::new(&mailbox, &context, executor, abort_signal, model_names);
+    let model = model.build(&mut build_cx);
 
-    let model = model.build(&mut build_context);
-
+    let address = mailbox.address();
     let mut receiver = mailbox.0;
     let abort_signal = abort_signal.clone();
-
+    let mut cx = Context::new(name.clone(), scheduler, address);
     let fut = async move {
-        let mut model = model.init(&context).await.0;
-        while !abort_signal.is_set() && receiver.recv(&mut model, &context).await.is_ok() {}
+        let mut model = model.init(&mut cx).await.0;
+        while !abort_signal.is_set() && receiver.recv(&mut model, &mut cx).await.is_ok() {}
     };
 
     let model_id = ModelId::new(model_names.len());

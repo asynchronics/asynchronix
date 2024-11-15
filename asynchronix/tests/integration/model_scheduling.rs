@@ -15,14 +15,8 @@ fn model_schedule_event(num_threads: usize) {
         output: Output<()>,
     }
     impl TestModel {
-        fn trigger(&mut self, _: (), context: &Context<Self>) {
-            context
-                .scheduler
-                .schedule_event(
-                    context.scheduler.time() + Duration::from_secs(2),
-                    Self::action,
-                    (),
-                )
+        fn trigger(&mut self, _: (), cx: &mut Context<Self>) {
+            cx.schedule_event(Duration::from_secs(2), Self::action, ())
                 .unwrap();
         }
         async fn action(&mut self) {
@@ -42,7 +36,8 @@ fn model_schedule_event(num_threads: usize) {
     let mut simu = SimInit::with_num_threads(num_threads)
         .add_model(model, mbox, "")
         .init(t0)
-        .unwrap();
+        .unwrap()
+        .0;
 
     simu.process_event(TestModel::trigger, (), addr).unwrap();
     simu.step().unwrap();
@@ -59,22 +54,11 @@ fn model_cancel_future_keyed_event(num_threads: usize) {
         key: Option<ActionKey>,
     }
     impl TestModel {
-        fn trigger(&mut self, _: (), context: &Context<Self>) {
-            context
-                .scheduler
-                .schedule_event(
-                    context.scheduler.time() + Duration::from_secs(1),
-                    Self::action1,
-                    (),
-                )
+        fn trigger(&mut self, _: (), cx: &mut Context<Self>) {
+            cx.schedule_event(Duration::from_secs(1), Self::action1, ())
                 .unwrap();
-            self.key = context
-                .scheduler
-                .schedule_keyed_event(
-                    context.scheduler.time() + Duration::from_secs(2),
-                    Self::action2,
-                    (),
-                )
+            self.key = cx
+                .schedule_keyed_event(Duration::from_secs(2), Self::action2, ())
                 .ok();
         }
         async fn action1(&mut self) {
@@ -99,7 +83,8 @@ fn model_cancel_future_keyed_event(num_threads: usize) {
     let mut simu = SimInit::with_num_threads(num_threads)
         .add_model(model, mbox, "")
         .init(t0)
-        .unwrap();
+        .unwrap()
+        .0;
 
     simu.process_event(TestModel::trigger, (), addr).unwrap();
     simu.step().unwrap();
@@ -117,22 +102,11 @@ fn model_cancel_same_time_keyed_event(num_threads: usize) {
         key: Option<ActionKey>,
     }
     impl TestModel {
-        fn trigger(&mut self, _: (), context: &Context<Self>) {
-            context
-                .scheduler
-                .schedule_event(
-                    context.scheduler.time() + Duration::from_secs(2),
-                    Self::action1,
-                    (),
-                )
+        fn trigger(&mut self, _: (), cx: &mut Context<Self>) {
+            cx.schedule_event(Duration::from_secs(2), Self::action1, ())
                 .unwrap();
-            self.key = context
-                .scheduler
-                .schedule_keyed_event(
-                    context.scheduler.time() + Duration::from_secs(2),
-                    Self::action2,
-                    (),
-                )
+            self.key = cx
+                .schedule_keyed_event(Duration::from_secs(2), Self::action2, ())
                 .ok();
         }
         async fn action1(&mut self) {
@@ -157,7 +131,8 @@ fn model_cancel_same_time_keyed_event(num_threads: usize) {
     let mut simu = SimInit::with_num_threads(num_threads)
         .add_model(model, mbox, "")
         .init(t0)
-        .unwrap();
+        .unwrap()
+        .0;
 
     simu.process_event(TestModel::trigger, (), addr).unwrap();
     simu.step().unwrap();
@@ -174,16 +149,14 @@ fn model_schedule_periodic_event(num_threads: usize) {
         output: Output<i32>,
     }
     impl TestModel {
-        fn trigger(&mut self, _: (), context: &Context<Self>) {
-            context
-                .scheduler
-                .schedule_periodic_event(
-                    context.scheduler.time() + Duration::from_secs(2),
-                    Duration::from_secs(3),
-                    Self::action,
-                    42,
-                )
-                .unwrap();
+        fn trigger(&mut self, _: (), cx: &mut Context<Self>) {
+            cx.schedule_periodic_event(
+                Duration::from_secs(2),
+                Duration::from_secs(3),
+                Self::action,
+                42,
+            )
+            .unwrap();
         }
         async fn action(&mut self, payload: i32) {
             self.output.send(payload).await;
@@ -202,7 +175,8 @@ fn model_schedule_periodic_event(num_threads: usize) {
     let mut simu = SimInit::with_num_threads(num_threads)
         .add_model(model, mbox, "")
         .init(t0)
-        .unwrap();
+        .unwrap()
+        .0;
 
     simu.process_event(TestModel::trigger, (), addr).unwrap();
 
@@ -225,11 +199,10 @@ fn model_cancel_periodic_event(num_threads: usize) {
         key: Option<ActionKey>,
     }
     impl TestModel {
-        fn trigger(&mut self, _: (), context: &Context<Self>) {
-            self.key = context
-                .scheduler
+        fn trigger(&mut self, _: (), cx: &mut Context<Self>) {
+            self.key = cx
                 .schedule_keyed_periodic_event(
-                    context.scheduler.time() + Duration::from_secs(2),
+                    Duration::from_secs(2),
                     Duration::from_secs(3),
                     Self::action,
                     (),
@@ -255,7 +228,8 @@ fn model_cancel_periodic_event(num_threads: usize) {
     let mut simu = SimInit::with_num_threads(num_threads)
         .add_model(model, mbox, "")
         .init(t0)
-        .unwrap();
+        .unwrap()
+        .0;
 
     simu.process_event(TestModel::trigger, (), addr).unwrap();
 
