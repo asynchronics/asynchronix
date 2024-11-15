@@ -91,11 +91,3 @@ pub use sink::{
     event_buffer::EventBuffer, event_slot::EventSlot, EventSink, EventSinkStream, EventSinkWriter,
 };
 pub use source::{EventSource, QuerySource, ReplyReceiver};
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-/// Unique identifier for a connection between two ports.
-pub struct LineId(u64);
-
-/// Error raised when the specified line cannot be found.
-#[derive(Copy, Clone, Debug)]
-pub struct LineError {}

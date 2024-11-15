@@ -10,7 +10,6 @@ use diatomic_waker::WakeSink;
 
 use super::sender::{Sender, SenderFuture};
 
-use crate::ports::LineId;
 use crate::util::task_set::TaskSet;
 
 /// An object that can efficiently broadcast messages to several addresses.
@@ -24,10 +23,8 @@ use crate::util::task_set::TaskSet;
 /// does, but the outputs of all sender futures are returned all at once rather
 /// than with an asynchronous iterator (a.k.a. async stream).
 pub(super) struct BroadcasterInner<T: Clone, R> {
-    /// Line identifier for the next port to be connected.
-    next_line_id: u64,
     /// The list of senders with their associated line identifier.
-    senders: Vec<(LineId, Box<dyn Sender<T, R>>)>,
+    senders: Vec<Box<dyn Sender<T, R>>>,
 }
 
 impl<T: Clone, R> BroadcasterInner<T, R> {
@@ -36,34 +33,11 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
     /// # Panics
     ///
     /// This method will panic if the total count of senders would reach
-    /// `u32::MAX - 1`.
-    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, R>>) -> LineId {
-        assert!(self.next_line_id != u64::MAX);
-        let line_id = LineId(self.next_line_id);
-        self.next_line_id += 1;
-
-        self.senders.push((line_id, sender));
-
-        line_id
-    }
-
-    /// Removes the first sender with the specified identifier, if any.
-    ///
-    /// Returns `true` if there was indeed a sender associated to the specified
-    /// identifier.
-    pub(super) fn remove(&mut self, id: LineId) -> bool {
-        if let Some(pos) = self.senders.iter().position(|s| s.0 == id) {
-            self.senders.swap_remove(pos);
-
-            return true;
-        }
-
-        false
-    }
-
-    /// Removes all senders.
-    pub(super) fn clear(&mut self) {
-        self.senders.clear();
+    /// `u32::MAX - 1` due to limitations inherent to the task set
+    /// implementation.
+    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, R>>) {
+        assert!(self.senders.len() < (u32::MAX as usize - 2));
+        self.senders.push(sender);
     }
 
     /// Returns the number of connected senders.
@@ -81,12 +55,12 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
         while let Some(sender) = iter.next() {
             // Move the argument for the last future to avoid undue cloning.
             if iter.len() == 0 {
-                if let Some(fut) = sender.1.send_owned(arg) {
+                if let Some(fut) = sender.send_owned(arg) {
                     future_states.push(SenderFutureState::Pending(fut));
                 }
                 break;
             }
-            if let Some(fut) = sender.1.send(&arg) {
+            if let Some(fut) = sender.send(&arg) {
                 future_states.push(SenderFutureState::Pending(fut));
             }
         }
@@ -98,7 +72,6 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
 impl<T: Clone, R> Default for BroadcasterInner<T, R> {
     fn default() -> Self {
         Self {
-            next_line_id: 0,
             senders: Vec::new(),
         }
     }
@@ -121,22 +94,10 @@ impl<T: Clone + Send> EventBroadcaster<T> {
     /// # Panics
     ///
     /// This method will panic if the total count of senders would reach
-    /// `u32::MAX - 1`.
-    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, ()>>) -> LineId {
-        self.inner.add(sender)
-    }
-
-    /// Removes the first sender with the specified identifier, if any.
-    ///
-    /// Returns `true` if there was indeed a sender associated to the specified
-    /// identifier.
-    pub(super) fn remove(&mut self, id: LineId) -> bool {
-        self.inner.remove(id)
-    }
-
-    /// Removes all senders.
-    pub(super) fn clear(&mut self) {
-        self.inner.clear();
+    /// `u32::MAX - 1` due to limitations inherent to the task set
+    /// implementation.
+    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, ()>>) {
+        self.inner.add(sender);
     }
 
     /// Returns the number of connected senders.
@@ -159,7 +120,7 @@ impl<T: Clone + Send> EventBroadcaster<T> {
             // No sender.
             [] => Fut::Empty,
             // One sender at most.
-            [sender] => Fut::Single(sender.1.send_owned(arg)),
+            [sender] => Fut::Single(sender.send_owned(arg)),
             // Possibly multiple senders.
             _ => Fut::Multiple(self.inner.futures(arg)),
         };
@@ -209,22 +170,10 @@ impl<T: Clone + Send, R: Send> QueryBroadcaster<T, R> {
     /// # Panics
     ///
     /// This method will panic if the total count of senders would reach
-    /// `u32::MAX - 1`.
-    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, R>>) -> LineId {
-        self.inner.add(sender)
-    }
-
-    /// Removes the first sender with the specified identifier, if any.
-    ///
-    /// Returns `true` if there was indeed a sender associated to the specified
-    /// identifier.
-    pub(super) fn remove(&mut self, id: LineId) -> bool {
-        self.inner.remove(id)
-    }
-
-    /// Removes all senders.
-    pub(super) fn clear(&mut self) {
-        self.inner.clear();
+    /// `u32::MAX - 1` due to limitations inherent to the task set
+    /// implementation.
+    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, R>>) {
+        self.inner.add(sender);
     }
 
     /// Returns the number of connected senders.
@@ -247,7 +196,7 @@ impl<T: Clone + Send, R: Send> QueryBroadcaster<T, R> {
             // No sender.
             [] => Fut::Empty,
             // One sender at most.
-            [sender] => Fut::Single(sender.1.send_owned(arg)),
+            [sender] => Fut::Single(sender.send_owned(arg)),
             // Possibly multiple senders.
             _ => Fut::Multiple(self.inner.futures(arg)),
         };

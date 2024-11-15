@@ -76,47 +76,6 @@
 //! Any deadlocks will be reported as an [`ExecutionError::Deadlock`] error,
 //! which identifies all involved models and the amount of unprocessed messages
 //! (events or requests) in their mailboxes.
-//!
-//! ## Modifying connections during simulation
-//!
-//! Although uncommon, there is sometimes a need for connecting and/or
-//! disconnecting models after they have been migrated to the simulation.
-//! Likewise, one may want to connect or disconnect an
-//! [`EventSlot`](crate::ports::EventSlot) or
-//! [`EventBuffer`](crate::ports::EventBuffer) after the simulation has been
-//! instantiated.
-//!
-//! There is actually a very simple solution to this problem: since the
-//! [`InputFn`] trait also matches closures of type `FnOnce(&mut impl Model)`,
-//! it is enough to invoke [`Simulation::process_event()`] with a closure that
-//! connects or disconnects a port, such as:
-//!
-//! ```
-//! # use asynchronix::model::{Context, Model};
-//! # use asynchronix::ports::Output;
-//! # use asynchronix::time::MonotonicTime;
-//! # use asynchronix::simulation::{Mailbox, SimInit};
-//! # pub struct ModelA {
-//! #     pub output: Output<i32>,
-//! # }
-//! # impl Model for ModelA {};
-//! # pub struct ModelB {}
-//! # impl ModelB {
-//! #     pub fn input(&mut self, value: i32) {}
-//! # }
-//! # impl Model for ModelB {};
-//! # let modelA_addr = Mailbox::<ModelA>::new().address();
-//! # let modelB_addr = Mailbox::<ModelB>::new().address();
-//! # let mut simu = SimInit::new().init(MonotonicTime::EPOCH)?.0;
-//! simu.process_event(
-//!     |m: &mut ModelA| {
-//!         m.output.connect(ModelB::input, modelB_addr);
-//!     },
-//!     (),
-//!     &modelA_addr
-//! )?;
-//! # Ok::<(), asynchronix::simulation::SimulationError>(())
-//! ```
 mod mailbox;
 mod scheduler;
 mod sim_init;

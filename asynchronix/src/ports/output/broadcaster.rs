@@ -6,7 +6,6 @@ use std::task::{Context, Poll};
 use diatomic_waker::WakeSink;
 
 use super::sender::{RecycledFuture, SendError, Sender};
-use super::LineId;
 use crate::util::task_set::TaskSet;
 
 /// An object that can efficiently broadcast messages to several addresses.
@@ -24,10 +23,8 @@ use crate::util::task_set::TaskSet;
 /// - the outputs of all sender futures are returned all at once rather than
 ///   with an asynchronous iterator (a.k.a. async stream).
 pub(super) struct BroadcasterInner<T: Clone, R> {
-    /// Line identifier for the next port to be connected.
-    next_line_id: u64,
     /// The list of senders with their associated line identifier.
-    senders: Vec<(LineId, Box<dyn Sender<T, R>>)>,
+    senders: Vec<Box<dyn Sender<T, R>>>,
     /// Fields explicitly borrowed by the `BroadcastFuture`.
     shared: Shared<R>,
 }
@@ -38,42 +35,17 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
     /// # Panics
     ///
     /// This method will panic if the total count of senders would reach
-    /// `u32::MAX - 1`.
-    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, R>>) -> LineId {
-        assert!(self.next_line_id != u64::MAX);
-        let line_id = LineId(self.next_line_id);
-        self.next_line_id += 1;
-
-        self.senders.push((line_id, sender));
+    /// `u32::MAX - 1` due to limitations inherent to the task set
+    /// implementation.
+    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, R>>) {
+        assert!(self.senders.len() < (u32::MAX as usize - 2));
+        self.senders.push(sender);
         self.shared.outputs.push(None);
 
         // The storage is alway an empty vector so we just book some capacity.
         if let Some(storage) = self.shared.storage.as_mut() {
             let _ = storage.try_reserve(self.senders.len());
         };
-
-        line_id
-    }
-
-    /// Removes the first sender with the specified identifier, if any.
-    ///
-    /// Returns `true` if there was indeed a sender associated to the specified
-    /// identifier.
-    pub(super) fn remove(&mut self, id: LineId) -> bool {
-        if let Some(pos) = self.senders.iter().position(|s| s.0 == id) {
-            self.senders.swap_remove(pos);
-            self.shared.outputs.truncate(self.senders.len());
-
-            return true;
-        }
-
-        false
-    }
-
-    /// Removes all senders.
-    pub(super) fn clear(&mut self) {
-        self.senders.clear();
-        self.shared.outputs.clear();
     }
 
     /// Returns the number of connected senders.
@@ -98,13 +70,13 @@ impl<T: Clone, R> BroadcasterInner<T, R> {
         while let Some(sender) = iter.next() {
             // Move the argument rather than clone it for the last future.
             if iter.len() == 0 {
-                if let Some(fut) = sender.1.send_owned(arg) {
+                if let Some(fut) = sender.send_owned(arg) {
                     futures.push(fut);
                 }
                 break;
             }
 
-            if let Some(fut) = sender.1.send(&arg) {
+            if let Some(fut) = sender.send(&arg) {
                 futures.push(fut);
             }
         }
@@ -120,7 +92,6 @@ impl<T: Clone, R> Default for BroadcasterInner<T, R> {
         let wake_src = wake_sink.source();
 
         Self {
-            next_line_id: 0,
             senders: Vec::new(),
             shared: Shared {
                 wake_sink,
@@ -135,7 +106,6 @@ impl<T: Clone, R> Default for BroadcasterInner<T, R> {
 impl<T: Clone, R> Clone for BroadcasterInner<T, R> {
     fn clone(&self) -> Self {
         Self {
-            next_line_id: self.next_line_id,
             senders: self.senders.clone(),
             shared: self.shared.clone(),
         }
@@ -160,22 +130,10 @@ impl<T: Clone> EventBroadcaster<T> {
     /// # Panics
     ///
     /// This method will panic if the total count of senders would reach
-    /// `u32::MAX - 1`.
-    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, ()>>) -> LineId {
+    /// `u32::MAX - 1` due to limitations inherent to the task set
+    /// implementation.
+    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, ()>>) {
         self.inner.add(sender)
-    }
-
-    /// Removes the first sender with the specified identifier, if any.
-    ///
-    /// Returns `true` if there was indeed a sender associated to the specified
-    /// identifier.
-    pub(super) fn remove(&mut self, id: LineId) -> bool {
-        self.inner.remove(id)
-    }
-
-    /// Removes all senders.
-    pub(super) fn clear(&mut self) {
-        self.inner.clear();
     }
 
     /// Returns the number of connected senders.
@@ -190,7 +148,7 @@ impl<T: Clone> EventBroadcaster<T> {
             [] => Ok(()),
 
             // One sender at most.
-            [sender] => match sender.1.send_owned(arg) {
+            [sender] => match sender.send_owned(arg) {
                 None => Ok(()),
                 Some(fut) => fut.await.map_err(|_| BroadcastError {}),
             },
@@ -233,22 +191,10 @@ impl<T: Clone, R> QueryBroadcaster<T, R> {
     /// # Panics
     ///
     /// This method will panic if the total count of senders would reach
-    /// `u32::MAX - 1`.
-    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, R>>) -> LineId {
+    /// `u32::MAX - 1` due to limitations inherent to the task set
+    /// implementation.
+    pub(super) fn add(&mut self, sender: Box<dyn Sender<T, R>>) {
         self.inner.add(sender)
-    }
-
-    /// Removes the first sender with the specified identifier, if any.
-    ///
-    /// Returns `true` if there was indeed a sender associated to the specified
-    /// identifier.
-    pub(super) fn remove(&mut self, id: LineId) -> bool {
-        self.inner.remove(id)
-    }
-
-    /// Removes all senders.
-    pub(super) fn clear(&mut self) {
-        self.inner.clear();
     }
 
     /// Returns the number of connected senders.
@@ -267,7 +213,7 @@ impl<T: Clone, R> QueryBroadcaster<T, R> {
 
             // One sender at most.
             [sender] => {
-                if let Some(fut) = sender.1.send_owned(arg) {
+                if let Some(fut) = sender.send_owned(arg) {
                     let output = fut.await.map_err(|_| BroadcastError {})?;
                     self.inner.shared.outputs[0] = Some(output);
 

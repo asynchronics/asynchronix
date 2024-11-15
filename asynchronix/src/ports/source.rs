@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use crate::model::Model;
 use crate::ports::InputFn;
-use crate::ports::{LineError, LineId};
 use crate::simulation::{
     Action, ActionKey, Address, KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction,
 };
@@ -43,14 +42,14 @@ impl<T: Clone + Send + 'static> EventSource<T> {
     /// The input port must be an asynchronous method of a model of type `M`
     /// taking as argument a value of type `T` plus, optionally, a scheduler
     /// reference.
-    pub fn connect<M, F, S>(&mut self, input: F, address: impl Into<Address<M>>) -> LineId
+    pub fn connect<M, F, S>(&mut self, input: F, address: impl Into<Address<M>>)
     where
         M: Model,
         F: for<'a> InputFn<'a, M, T, S> + Clone,
         S: Send + 'static,
     {
         let sender = Box::new(InputSender::new(input, address.into().0));
-        self.broadcaster.lock().unwrap().add(sender)
+        self.broadcaster.lock().unwrap().add(sender);
     }
 
     /// Adds an auto-converting connection to an input port of the model
@@ -62,12 +61,7 @@ impl<T: Clone + Send + 'static> EventSource<T> {
     /// The input port must be an asynchronous method of a model of type `M`
     /// taking as argument a value of the type returned by the mapping closure
     /// plus, optionally, a context reference.
-    pub fn map_connect<M, C, F, U, S>(
-        &mut self,
-        map: C,
-        input: F,
-        address: impl Into<Address<M>>,
-    ) -> LineId
+    pub fn map_connect<M, C, F, U, S>(&mut self, map: C, input: F, address: impl Into<Address<M>>)
     where
         M: Model,
         C: for<'a> Fn(&'a T) -> U + Send + 'static,
@@ -76,7 +70,7 @@ impl<T: Clone + Send + 'static> EventSource<T> {
         S: Send + 'static,
     {
         let sender = Box::new(MapInputSender::new(map, input, address.into().0));
-        self.broadcaster.lock().unwrap().add(sender)
+        self.broadcaster.lock().unwrap().add(sender);
     }
 
     /// Adds an auto-converting, filtered connection to an input port of the
@@ -93,8 +87,7 @@ impl<T: Clone + Send + 'static> EventSource<T> {
         map: C,
         input: F,
         address: impl Into<Address<M>>,
-    ) -> LineId
-    where
+    ) where
         M: Model,
         C: for<'a> Fn(&'a T) -> Option<U> + Send + 'static,
         F: for<'a> InputFn<'a, M, U, S> + Clone,
@@ -102,26 +95,7 @@ impl<T: Clone + Send + 'static> EventSource<T> {
         S: Send + 'static,
     {
         let sender = Box::new(FilterMapInputSender::new(map, input, address.into().0));
-        self.broadcaster.lock().unwrap().add(sender)
-    }
-
-    /// Removes the connection specified by the `LineId` parameter.
-    ///
-    /// It is a logic error to specify a line identifier from another
-    /// [`EventSource`], [`QuerySource`], [`Output`](crate::ports::Output) or
-    /// [`Requestor`](crate::ports::Requestor) instance and may result in the
-    /// disconnection of an arbitrary endpoint.
-    pub fn disconnect(&mut self, line_id: LineId) -> Result<(), LineError> {
-        if self.broadcaster.lock().unwrap().remove(line_id) {
-            Ok(())
-        } else {
-            Err(LineError {})
-        }
-    }
-
-    /// Removes all connections.
-    pub fn disconnect_all(&mut self) {
-        self.broadcaster.lock().unwrap().clear();
+        self.broadcaster.lock().unwrap().add(sender);
     }
 
     /// Returns an action which, when processed, broadcasts an event to all
@@ -248,14 +222,14 @@ impl<T: Clone + Send + 'static, R: Send + 'static> QuerySource<T, R> {
     /// The replier port must be an asynchronous method of a model of type `M`
     /// returning a value of type `R` and taking as argument a value of type `T`
     /// plus, optionally, a context reference.
-    pub fn connect<M, F, S>(&mut self, replier: F, address: impl Into<Address<M>>) -> LineId
+    pub fn connect<M, F, S>(&mut self, replier: F, address: impl Into<Address<M>>)
     where
         M: Model,
         F: for<'a> ReplierFn<'a, M, T, R, S> + Clone,
         S: Send + 'static,
     {
         let sender = Box::new(ReplierSender::new(replier, address.into().0));
-        self.broadcaster.lock().unwrap().add(sender)
+        self.broadcaster.lock().unwrap().add(sender);
     }
 
     /// Adds an auto-converting connection to a replier port of the model
@@ -274,8 +248,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> QuerySource<T, R> {
         reply_map: D,
         replier: F,
         address: impl Into<Address<M>>,
-    ) -> LineId
-    where
+    ) where
         M: Model,
         C: for<'a> Fn(&'a T) -> U + Send + 'static,
         D: Fn(Q) -> R + Send + Sync + 'static,
@@ -290,7 +263,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> QuerySource<T, R> {
             replier,
             address.into().0,
         ));
-        self.broadcaster.lock().unwrap().add(sender)
+        self.broadcaster.lock().unwrap().add(sender);
     }
 
     /// Adds an auto-converting, filtered connection to a replier port of the
@@ -309,8 +282,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> QuerySource<T, R> {
         reply_map: D,
         replier: F,
         address: impl Into<Address<M>>,
-    ) -> LineId
-    where
+    ) where
         M: Model,
         C: for<'a> Fn(&'a T) -> Option<U> + Send + 'static,
         D: Fn(Q) -> R + Send + Sync + 'static,
@@ -325,26 +297,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> QuerySource<T, R> {
             replier,
             address.into().0,
         ));
-        self.broadcaster.lock().unwrap().add(sender)
-    }
-
-    /// Removes the connection specified by the `LineId` parameter.
-    ///
-    /// It is a logic error to specify a line identifier from another
-    /// [`QuerySource`], [`EventSource`], [`Output`](crate::ports::Output) or
-    /// [`Requestor`](crate::ports::Requestor) instance and may result in the
-    /// disconnection of an arbitrary endpoint.
-    pub fn disconnect(&mut self, line_id: LineId) -> Result<(), LineError> {
-        if self.broadcaster.lock().unwrap().remove(line_id) {
-            Ok(())
-        } else {
-            Err(LineError {})
-        }
-    }
-
-    /// Removes all connections.
-    pub fn disconnect_all(&mut self) {
-        self.broadcaster.lock().unwrap().clear();
+        self.broadcaster.lock().unwrap().add(sender);
     }
 
     /// Returns an action which, when processed, broadcasts a query to all
