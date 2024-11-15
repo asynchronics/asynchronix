@@ -8,7 +8,7 @@ use prost_types::Timestamp;
 use tai_time::MonotonicTime;
 
 use super::codegen::simulation::{Error, ErrorCode};
-use crate::simulation::{ExecutionError, SchedulingError};
+use crate::simulation::{ExecutionError, SchedulingError, SimulationError};
 
 pub(crate) use controller_service::ControllerService;
 pub(crate) use init_service::InitService;
@@ -57,6 +57,14 @@ fn map_scheduling_error(error: SchedulingError) -> Error {
     let error_message = error.to_string();
 
     to_error(error_code, error_message)
+}
+
+/// Map a `SimulationError` to a Protobuf error.
+fn map_simulation_error(error: SimulationError) -> Error {
+    match error {
+        SimulationError::ExecutionError(e) => map_execution_error(e),
+        SimulationError::SchedulingError(e) => map_scheduling_error(e),
+    }
 }
 
 /// Attempts a cast from a `MonotonicTime` to a protobuf `Timestamp`.

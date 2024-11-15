@@ -38,7 +38,6 @@ message EventKey {
 }
 
 message InitRequest {
-    google.protobuf.Timestamp time = 1;
     bytes cfg = 2;
 }
 message InitReply {
