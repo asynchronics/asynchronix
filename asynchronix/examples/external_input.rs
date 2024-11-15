@@ -136,11 +136,9 @@ impl Listener {
 
 impl Model for Listener {
     /// Initialize model.
-    async fn init(self, context: &Context<Self>) -> InitializedModel<Self> {
+    async fn init(self, cx: &mut Context<Self>) -> InitializedModel<Self> {
         // Schedule periodic function that processes external events.
-        context
-            .scheduler
-            .schedule_periodic_event(DELTA, PERIOD, Listener::process, ())
+        cx.schedule_periodic_event(DELTA, PERIOD, Listener::process, ())
             .unwrap();
 
         self.into()

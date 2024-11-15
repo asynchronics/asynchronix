@@ -45,7 +45,7 @@
 //! * _input ports_, which are synchronous or asynchronous methods that
 //!   implement the [`InputFn`](ports::InputFn) trait and take an `&mut self`
 //!   argument, a message argument, and an optional
-//!   [`&Context`](model::Context) argument,
+//!   [`&mut Context`](model::Context) argument,
 //! * _replier ports_, which are similar to input ports but implement the
 //!   [`ReplierFn`](ports::ReplierFn) trait and return a reply.
 //!
@@ -118,8 +118,8 @@
 //!    pub output: Output<f64>,
 //! }
 //! impl Delay {
-//!     pub fn input(&mut self, value: f64, context: &Context<Self>) {
-//!         context.scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
+//!     pub fn input(&mut self, value: f64, cx: &mut Context<Self>) {
+//!         cx.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //!     }
 //!
 //!     async fn send(&mut self, value: f64) {
@@ -189,8 +189,8 @@
 //! #        pub output: Output<f64>,
 //! #     }
 //! #     impl Delay {
-//! #         pub fn input(&mut self, value: f64, context: &Context<Self>) {
-//! #             context.scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
+//! #         pub fn input(&mut self, value: f64, cx: &mut Context<Self>) {
+//! #             cx.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //! #         }
 //! #         async fn send(&mut self, value: f64) { // this method can be private
 //! #             self.output.send(value).await;
@@ -290,8 +290,8 @@
 //! #        pub output: Output<f64>,
 //! #     }
 //! #     impl Delay {
-//! #         pub fn input(&mut self, value: f64, context: &Context<Self>) {
-//! #             context.scheduler.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
+//! #         pub fn input(&mut self, value: f64, cx: &mut Context<Self>) {
+//! #             cx.schedule_event(Duration::from_secs(1), Self::send, value).unwrap();
 //! #         }
 //! #         async fn send(&mut self, value: f64) { // this method can be private
 //! #             self.output.send(value).await;

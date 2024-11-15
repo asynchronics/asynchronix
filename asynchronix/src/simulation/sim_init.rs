@@ -11,7 +11,7 @@ use crate::util::priority_queue::PriorityQueue;
 use crate::util::sync_cell::SyncCell;
 
 use super::{
-    add_model, ExecutionError, Mailbox, SchedulerInner, SchedulerQueue, Signal, Simulation,
+    add_model, ExecutionError, Mailbox, GlobalScheduler, SchedulerQueue, Signal, Simulation,
 };
 
 /// Builder for a multi-threaded, discrete-event simulation.
@@ -90,7 +90,7 @@ impl SimInit {
         };
         self.observers
             .push((name.clone(), Box::new(mailbox.0.observer())));
-        let scheduler = SchedulerInner::new(self.scheduler_queue.clone(), self.time.reader());
+        let scheduler = GlobalScheduler::new(self.scheduler_queue.clone(), self.time.reader());
 
         add_model(
             model,

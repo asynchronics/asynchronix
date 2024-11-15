@@ -278,7 +278,7 @@ impl TimestampModel {
 }
 #[cfg(not(miri))]
 impl Model for TimestampModel {
-    async fn init(mut self, _: &Context<Self>) -> asynchronix::model::InitializedModel<Self> {
+    async fn init(mut self, _: &mut Context<Self>) -> asynchronix::model::InitializedModel<Self> {
         self.stamp.send((Instant::now(), SystemTime::now())).await;
         self.into()
     }

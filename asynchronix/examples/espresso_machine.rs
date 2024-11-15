@@ -120,7 +120,7 @@ impl Controller {
     }
 
     /// Starts brewing or cancels the current brew -- input port.
-    pub async fn brew_cmd(&mut self, _: (), context: &Context<Self>) {
+    pub async fn brew_cmd(&mut self, _: (), cx: &mut Context<Self>) {
         // If a brew was ongoing, sending the brew command is interpreted as a
         // request to cancel it.
         if let Some(key) = self.stop_brew_key.take() {
@@ -139,9 +139,7 @@ impl Controller {
 
         // Schedule the `stop_brew()` method and turn on the pump.
         self.stop_brew_key = Some(
-            context
-                .scheduler
-                .schedule_keyed_event(self.brew_time, Self::stop_brew, ())
+            cx.schedule_keyed_event(self.brew_time, Self::stop_brew, ())
                 .unwrap(),
         );
         self.pump_cmd.send(PumpCommand::On).await;
@@ -189,7 +187,7 @@ impl Tank {
     }
 
     /// Water volume added [m³] -- input port.
-    pub async fn fill(&mut self, added_volume: f64, context: &Context<Self>) {
+    pub async fn fill(&mut self, added_volume: f64, cx: &mut Context<Self>) {
         // Ignore zero and negative values. We could also impose a maximum based
         // on tank capacity.
         if added_volume <= 0.0 {
@@ -207,11 +205,11 @@ impl Tank {
             state.set_empty_key.cancel();
 
             // Update the volume, saturating at 0 in case of rounding errors.
-            let time = context.scheduler.time();
+            let time = cx.time();
             let elapsed_time = time.duration_since(state.last_volume_update).as_secs_f64();
             self.volume = (self.volume - state.flow_rate * elapsed_time).max(0.0);
 
-            self.schedule_empty(state.flow_rate, time, context).await;
+            self.schedule_empty(state.flow_rate, time, cx).await;
 
             // There is no need to broadcast the state of the water sense since
             // it could not be previously `Empty` (otherwise the dynamic state
@@ -229,10 +227,10 @@ impl Tank {
     /// # Panics
     ///
     /// This method will panic if the flow rate is negative.
-    pub async fn set_flow_rate(&mut self, flow_rate: f64, context: &Context<Self>) {
+    pub async fn set_flow_rate(&mut self, flow_rate: f64, cx: &mut Context<Self>) {
         assert!(flow_rate >= 0.0);
 
-        let time = context.scheduler.time();
+        let time = cx.time();
 
         // If the flow rate was non-zero up to now, update the volume.
         if let Some(state) = self.dynamic_state.take() {
@@ -244,7 +242,7 @@ impl Tank {
             self.volume = (self.volume - state.flow_rate * elapsed_time).max(0.0);
         }
 
-        self.schedule_empty(flow_rate, time, context).await;
+        self.schedule_empty(flow_rate, time, cx).await;
     }
 
     /// Schedules a callback for when the tank becomes empty.
@@ -257,7 +255,7 @@ impl Tank {
         &mut self,
         flow_rate: f64,
         time: MonotonicTime,
-        context: &Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         // Determine when the tank will be empty at the current flow rate.
         let duration_until_empty = if self.volume == 0.0 {
@@ -274,10 +272,7 @@ impl Tank {
         let duration_until_empty = Duration::from_secs_f64(duration_until_empty);
 
         // Schedule the next update.
-        match context
-            .scheduler
-            .schedule_keyed_event(duration_until_empty, Self::set_empty, ())
-        {
+        match cx.schedule_keyed_event(duration_until_empty, Self::set_empty, ()) {
             Ok(set_empty_key) => {
                 let state = TankDynamicState {
                     last_volume_update: time,
@@ -304,7 +299,7 @@ impl Tank {
 
 impl Model for Tank {
     /// Broadcasts the initial state of the water sense.
-    async fn init(mut self, _: &Context<Self>) -> InitializedModel<Self> {
+    async fn init(mut self, _: &mut Context<Self>) -> InitializedModel<Self> {
         self.water_sense
             .send(if self.volume == 0.0 {
                 WaterSenseState::Empty

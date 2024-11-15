@@ -30,8 +30,8 @@
 //!     }
 //!
 //!     // Sets an alarm [input port].
-//!     pub fn set(&mut self, setting: MonotonicTime, context: &Context<Self>) {
-//!         if context.scheduler.schedule_event(setting, Self::ring, ()).is_err() {
+//!     pub fn set(&mut self, setting: MonotonicTime, cx: &mut Context<Self>) {
+//!         if cx.schedule_event(setting, Self::ring, ()).is_err() {
 //!             println!("The alarm clock can only be set for a future time");
 //!         }
 //!     }

@@ -124,11 +124,11 @@ mod sim_init;
 use scheduler::SchedulerQueue;
 
 pub(crate) use scheduler::{
-    KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction, SchedulerInner,
+    GlobalScheduler, KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction,
 };
 
 pub use mailbox::{Address, Mailbox};
-pub use scheduler::{Action, ActionKey, AutoActionKey, LocalScheduler, Scheduler, SchedulingError};
+pub use scheduler::{Action, ActionKey, AutoActionKey, Scheduler, SchedulingError};
 pub use sim_init::SimInit;
 
 use std::any::Any;
@@ -165,7 +165,7 @@ thread_local! { pub(crate) static CURRENT_MODEL_ID: Cell<ModelId> = const { Cell
 /// A [`Simulation`] object also manages an event scheduling queue and
 /// simulation time. The scheduling queue can be accessed from the simulation
 /// itself, but also from models via the optional
-/// [`&Context`](crate::model::Context) argument of input and replier port
+/// [`&mut Context`](crate::model::Context) argument of input and replier port
 /// methods.  Likewise, simulation time can be accessed with the
 /// [`Simulation::time()`] method, or from models with the
 /// [`LocalScheduler::time()`](crate::simulation::LocalScheduler::time) method.
@@ -720,7 +720,7 @@ pub(crate) fn add_model<P: ProtoModel>(
     model: P,
     mailbox: Mailbox<P::Model>,
     name: String,
-    scheduler: SchedulerInner,
+    scheduler: GlobalScheduler,
     executor: &Executor,
     abort_signal: &Signal,
     model_names: &mut Vec<String>,
@@ -728,7 +728,7 @@ pub(crate) fn add_model<P: ProtoModel>(
     #[cfg(feature = "tracing")]
     let span = tracing::span!(target: env!("CARGO_PKG_NAME"), tracing::Level::INFO, "model", name);
 
-    let mut build_context = BuildContext::new(
+    let mut build_cx = BuildContext::new(
         &mailbox,
         &name,
         &scheduler,
@@ -736,15 +736,15 @@ pub(crate) fn add_model<P: ProtoModel>(
         abort_signal,
         model_names,
     );
-    let model = model.build(&mut build_context);
+    let model = model.build(&mut build_cx);
 
     let address = mailbox.address();
     let mut receiver = mailbox.0;
     let abort_signal = abort_signal.clone();
-    let context = Context::new(name.clone(), LocalScheduler::new(scheduler, address));
+    let mut cx = Context::new(name.clone(), scheduler, address);
     let fut = async move {
-        let mut model = model.init(&context).await.0;
-        while !abort_signal.is_set() && receiver.recv(&mut model, &context).await.is_ok() {}
+        let mut model = model.init(&mut cx).await.0;
+        while !abort_signal.is_set() && receiver.recv(&mut model, &mut cx).await.is_ok() {}
     };
 
     let model_id = ModelId::new(model_names.len());

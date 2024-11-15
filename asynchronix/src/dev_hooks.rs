@@ -16,7 +16,7 @@ impl Executor {
     ///
     /// The maximum number of threads is set with the `pool_size` parameter.
     pub fn new(pool_size: usize) -> Self {
-        let dummy_context = crate::executor::SimulationContext {
+        let dummy_cx = crate::executor::SimulationContext {
             #[cfg(feature = "tracing")]
             time_reader: crate::util::sync_cell::SyncCell::new(
                 crate::time::TearableAtomicTime::new(crate::time::MonotonicTime::EPOCH),
@@ -25,7 +25,7 @@ impl Executor {
         };
         Self(executor::Executor::new_multi_threaded(
             pool_size,
-            dummy_context,
+            dummy_cx,
             executor::Signal::new(),
         ))
     }

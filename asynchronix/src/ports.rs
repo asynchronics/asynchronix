@@ -69,10 +69,10 @@
 //! impl ProtoModel for ProtoParentModel {
 //!     type Model = ParentModel;
 //!
-//!     fn build(self, ctx: &mut BuildContext<Self>) -> ParentModel {
+//!     fn build(self, cx: &mut BuildContext<Self>) -> ParentModel {
 //!         let mut child = ChildModel::new(self.output.clone());
 //!
-//!         ctx.add_submodel(child, Mailbox::new(), "child");
+//!         cx.add_submodel(child, Mailbox::new(), "child");
 //!
 //!         ParentModel { output: self.output }
 //!     }

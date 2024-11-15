@@ -567,7 +567,7 @@ mod tests {
     use futures_executor::block_on;
 
     use crate::channel::Receiver;
-    use crate::simulation::{Address, LocalScheduler, SchedulerInner};
+    use crate::simulation::{Address, GlobalScheduler};
     use crate::time::{MonotonicTime, TearableAtomicTime};
     use crate::util::priority_queue::PriorityQueue;
     use crate::util::sync_cell::SyncCell;
@@ -635,14 +635,12 @@ mod tests {
                         let dummy_priority_queue = Arc::new(Mutex::new(PriorityQueue::new()));
                         let dummy_time =
                             SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH)).reader();
-                        let dummy_context = Context::new(
+                        let mut dummy_cx = Context::new(
                             String::new(),
-                            LocalScheduler::new(
-                                SchedulerInner::new(dummy_priority_queue, dummy_time),
-                                Address(dummy_address),
-                            ),
+                            GlobalScheduler::new(dummy_priority_queue, dummy_time),
+                            Address(dummy_address),
                         );
-                        block_on(mailbox.recv(&mut sum_model, &dummy_context)).unwrap();
+                        block_on(mailbox.recv(&mut sum_model, &mut dummy_cx)).unwrap();
                     }
                 })
             })
@@ -707,17 +705,15 @@ mod tests {
                         let dummy_priority_queue = Arc::new(Mutex::new(PriorityQueue::new()));
                         let dummy_time =
                             SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH)).reader();
-                        let dummy_context = Context::new(
+                        let mut dummy_cx = Context::new(
                             String::new(),
-                            LocalScheduler::new(
-                                SchedulerInner::new(dummy_priority_queue, dummy_time),
-                                Address(dummy_address),
-                            ),
+                            GlobalScheduler::new(dummy_priority_queue, dummy_time),
+                            Address(dummy_address),
                         );
                         block_on(async {
-                            mailbox.recv(&mut sum_model, &dummy_context).await.unwrap();
-                            mailbox.recv(&mut sum_model, &dummy_context).await.unwrap();
-                            mailbox.recv(&mut sum_model, &dummy_context).await.unwrap();
+                            mailbox.recv(&mut sum_model, &mut dummy_cx).await.unwrap();
+                            mailbox.recv(&mut sum_model, &mut dummy_cx).await.unwrap();
+                            mailbox.recv(&mut sum_model, &mut dummy_cx).await.unwrap();
                         });
                     }
                 })
@@ -769,14 +765,12 @@ mod tests {
                         let dummy_priority_queue = Arc::new(Mutex::new(PriorityQueue::new()));
                         let dummy_time =
                             SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH)).reader();
-                        let dummy_context = Context::new(
+                        let mut dummy_cx = Context::new(
                             String::new(),
-                            LocalScheduler::new(
-                                SchedulerInner::new(dummy_priority_queue, dummy_time),
-                                Address(dummy_address),
-                            ),
+                            GlobalScheduler::new(dummy_priority_queue, dummy_time),
+                            Address(dummy_address),
                         );
-                        block_on(mailbox.recv(&mut double_model, &dummy_context)).unwrap();
+                        block_on(mailbox.recv(&mut double_model, &mut dummy_cx)).unwrap();
                         thread::sleep(std::time::Duration::from_millis(100));
                     }
                 })
@@ -856,25 +850,23 @@ mod tests {
                         let dummy_priority_queue = Arc::new(Mutex::new(PriorityQueue::new()));
                         let dummy_time =
                             SyncCell::new(TearableAtomicTime::new(MonotonicTime::EPOCH)).reader();
-                        let dummy_context = Context::new(
+                        let mut dummy_cx = Context::new(
                             String::new(),
-                            LocalScheduler::new(
-                                SchedulerInner::new(dummy_priority_queue, dummy_time),
-                                Address(dummy_address),
-                            ),
+                            GlobalScheduler::new(dummy_priority_queue, dummy_time),
+                            Address(dummy_address),
                         );
 
                         block_on(async {
                             mailbox
-                                .recv(&mut double_model, &dummy_context)
+                                .recv(&mut double_model, &mut dummy_cx)
                                 .await
                                 .unwrap();
                             mailbox
-                                .recv(&mut double_model, &dummy_context)
+                                .recv(&mut double_model, &mut dummy_cx)
                                 .await
                                 .unwrap();
                             mailbox
-                                .recv(&mut double_model, &dummy_context)
+                                .recv(&mut double_model, &mut dummy_cx)
                                 .await
                                 .unwrap();
                         });

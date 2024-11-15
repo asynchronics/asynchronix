@@ -56,7 +56,7 @@
 //! impl Model for MyModel {
 //!     async fn init(
 //!         mut self,
-//!         ctx: &Context<Self>
+//!         ctx: &mut Context<Self>
 //!     ) -> InitializedModel<Self> {
 //!         println!("...initialization...");
 //!
@@ -173,10 +173,10 @@
 //! ```ignore
 //! fn(&mut self) // argument elided, implies `T=()`
 //! fn(&mut self, T)
-//! fn(&mut self, T, &Context<Self>)
+//! fn(&mut self, T, &mut Context<Self>)
 //! async fn(&mut self) // argument elided, implies `T=()`
 //! async fn(&mut self, T)
-//! async fn(&mut self, T, &Context<Self>)
+//! async fn(&mut self, T, &mut Context<Self>)
 //! where
 //!     Self: Model,
 //!     T: Clone + Send + 'static,
@@ -193,7 +193,7 @@
 //! ```ignore
 //! async fn(&mut self) -> R // argument elided, implies `T=()`
 //! async fn(&mut self, T) -> R
-//! async fn(&mut self, T, &Context<Self>) -> R
+//! async fn(&mut self, T, &mut Context<Self>) -> R
 //! where
 //!     Self: Model,
 //!     T: Clone + Send + 'static,
@@ -219,7 +219,7 @@
 //!     // ...
 //! }
 //! impl MyModel {
-//!     pub fn my_input(&mut self, input: String, context: &Context<Self>) {
+//!     pub fn my_input(&mut self, input: String, cx: &mut Context<Self>) {
 //!         // ...
 //!     }
 //!     pub async fn my_replier(&mut self, request: u32) -> bool { // context argument elided
@@ -273,7 +273,7 @@ pub trait Model: Sized + Send + 'static {
     /// impl Model for MyModel {
     ///     async fn init(
     ///         self,
-    ///         context: &Context<Self>
+    ///         cx: &mut Context<Self>
     ///     ) -> InitializedModel<Self> {
     ///         println!("...initialization...");
     ///
@@ -281,7 +281,7 @@ pub trait Model: Sized + Send + 'static {
     ///     }
     /// }
     /// ```
-    fn init(self, _: &Context<Self>) -> impl Future<Output = InitializedModel<Self>> + Send {
+    fn init(self, _: &mut Context<Self>) -> impl Future<Output = InitializedModel<Self>> + Send {
         async { self.into() }
     }
 }
@@ -322,7 +322,7 @@ pub trait ProtoModel: Sized {
     /// This method is invoked when the
     /// [`SimInit::add_model()`](crate::simulation::SimInit::add_model) or
     /// [`BuildContext::add_submodel`] method is called.
-    fn build(self, ctx: &mut BuildContext<Self>) -> Self::Model;
+    fn build(self, cx: &mut BuildContext<Self>) -> Self::Model;
 }
 
 // Every model can be used as a prototype for itself.
