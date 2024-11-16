@@ -5,9 +5,9 @@ discrete-event simulation framework written in Rust. It is meant to scale from
 small, simple simulations to very large simulation benches with complex
 time-driven state machines.
 
-[![Cargo](https://img.shields.io/crates/v/asynchronix.svg)](https://crates.io/crates/asynchronix)
-[![Documentation](https://docs.rs/asynchronix/badge.svg)](https://docs.rs/asynchronix)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/asynchronics/asynchronix#license)
+[![Cargo](https://img.shields.io/crates/v/nexosim.svg)](https://crates.io/crates/nexosim)
+[![Documentation](https://docs.rs/nexosim/badge.svg)](https://docs.rs/nexosim)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/asynchronics/nexosim#license)
 
 
 ## Overview
@@ -53,16 +53,25 @@ More fleshed out examples can also be found in the dedicated
 [simulator](nexosim/examples) and [utilities](nexosim-util/examples)
 directories.
 
-[API]: https://docs.rs/asynchronix
+[API]: https://docs.rs/nexosim
 
 
 ## Usage
 
-Note that this page documents version `0.3.0-beta` of NeXosim, which is
-not available on crates.io yet.
+Note that this page currently documents the latest beta version for the upcoming
+`0.3.0` release, which contains numerous improvements over the `0.2` branch.
+While the API is considered nearly frozen, some minor changes are still
+possible.
 
-For the last official release (sill under the name `asynchronix`), add
-this to your `Cargo.toml`:
+To use the beta version, add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+nexosim = "0.3.0-beta.0"
+```
+
+If you would rather stay for now with the last official release (published under
+the `asynchronix` name), add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
