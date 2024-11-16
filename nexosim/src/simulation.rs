@@ -494,6 +494,12 @@ impl Simulation {
             }
         }
     }
+
+    /// Returns a scheduler handle.
+    #[cfg(feature = "grpc")]
+    pub(crate) fn scheduler(&self) -> Scheduler {
+        Scheduler::new(self.scheduler_queue.clone(), self.time.reader())
+    }
 }
 
 impl fmt::Debug for Simulation {
