@@ -10,7 +10,7 @@ name = "nexosim"
 # - Update if necessary copyright notice in LICENSE-MIT
 # - Create a "vX.Y.Z" git tag
 authors = ["Serge Barral <serge.barral@asynchronics.com>"]
-version = "0.2.2"
+version = "0.3.0-beta.0"
 edition = "2021"
 rust-version = "1.77.0"
 license = "MIT OR Apache-2.0"

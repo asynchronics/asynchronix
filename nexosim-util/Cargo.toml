@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-nexosim = {version = "0.2.2", path = "../nexosim"}
+nexosim = {version = "0.3.0-beta.0", path = "../nexosim"}
