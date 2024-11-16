@@ -75,7 +75,7 @@ the `asynchronix` name), add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-asynchronix = "0.2.3"
+asynchronix = "0.2.4"
 ```
 
 
