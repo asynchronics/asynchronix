@@ -71,7 +71,7 @@ jobs:
       - name: Dry-run cargo test (Loom)
         run: cargo test --no-run --lib --all-features
         env:
-          RUSTFLAGS: --cfg asynchronix_loom
+          RUSTFLAGS: --cfg nexosim_loom
 
   miri:
     name: Miri

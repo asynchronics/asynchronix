@@ -4,33 +4,33 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'asynchronix/src/channel.rs'
-      - 'asynchronix/src/channel/**'
-      - 'asynchronix/src/executor/task.rs'
-      - 'asynchronix/src/executor/task/**'
-      - 'asynchronix/src/loom_exports.rs'
-      - 'asynchronix/src/ports/output/broadcaster.rs'
-      - 'asynchronix/src/ports/output/broadcaster/**'
-      - 'asynchronix/src/ports/source/broadcaster.rs'
-      - 'asynchronix/src/ports/source/broadcaster/**'
-      - 'asynchronix/src/util/cached_rw_lock.rs'
-      - 'asynchronix/src/util/slot.rs'
-      - 'asynchronix/src/util/sync_cell.rs'
+      - 'nexosim/src/channel.rs'
+      - 'nexosim/src/channel/**'
+      - 'nexosim/src/executor/task.rs'
+      - 'nexosim/src/executor/task/**'
+      - 'nexosim/src/loom_exports.rs'
+      - 'nexosim/src/ports/output/broadcaster.rs'
+      - 'nexosim/src/ports/output/broadcaster/**'
+      - 'nexosim/src/ports/source/broadcaster.rs'
+      - 'nexosim/src/ports/source/broadcaster/**'
+      - 'nexosim/src/util/cached_rw_lock.rs'
+      - 'nexosim/src/util/slot.rs'
+      - 'nexosim/src/util/sync_cell.rs'
   push:
     branches: [ main ]
     paths:
-      - 'asynchronix/src/channel.rs'
-      - 'asynchronix/src/channel/**'
-      - 'asynchronix/src/executor/task.rs'
-      - 'asynchronix/src/executor/task/**'
-      - 'asynchronix/src/loom_exports.rs'
-      - 'asynchronix/src/ports/output/broadcaster.rs'
-      - 'asynchronix/src/ports/output/broadcaster/**'
-      - 'asynchronix/src/ports/source/broadcaster.rs'
-      - 'asynchronix/src/ports/source/broadcaster/**'
-      - 'asynchronix/src/util/cached_rw_lock.rs'
-      - 'asynchronix/src/util/slot.rs'
-      - 'asynchronix/src/util/sync_cell.rs'
+      - 'nexosim/src/channel.rs'
+      - 'nexosim/src/channel/**'
+      - 'nexosim/src/executor/task.rs'
+      - 'nexosim/src/executor/task/**'
+      - 'nexosim/src/loom_exports.rs'
+      - 'nexosim/src/ports/output/broadcaster.rs'
+      - 'nexosim/src/ports/output/broadcaster/**'
+      - 'nexosim/src/ports/source/broadcaster.rs'
+      - 'nexosim/src/ports/source/broadcaster/**'
+      - 'nexosim/src/util/cached_rw_lock.rs'
+      - 'nexosim/src/util/slot.rs'
+      - 'nexosim/src/util/sync_cell.rs'
 
 jobs:
   loom:
@@ -46,4 +46,4 @@ jobs:
       - name: Run cargo test (Loom)
         run: cargo test --lib --release
         env:
-          RUSTFLAGS: --cfg asynchronix_loom
+          RUSTFLAGS: --cfg nexosim_loom
