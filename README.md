@@ -1,5 +1,9 @@
 # Asynchronix
 
+> [!WARNING]  
+> Asynchronix has been renamed to NeXosim. Please update your `Cargo.toml`
+> dependency to point to the `nexosim` crate.
+
 Asynchronix is a developer-friendly, highly optimized discrete-event simulation
 framework written in Rust. It is meant to scale from small, simple simulations
 to very large simulation benches with complex time-driven state machines.
@@ -56,11 +60,15 @@ More fleshed out examples can also be found in the dedicated
 
 ## Usage
 
+> [!WARNING]  
+> Asynchronix has been renamed to NeXosim. Please update your `Cargo.toml`
+> dependency to point to the `nexosim` crate.
+
 Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-asynchronix = "0.2.3"
+asynchronix = "0.2.4"
 ```
 
 

@@ -1,3 +1,7 @@
+# 0.2.4 (2024-11-16)
+
+- Add crate rename notice
+
 # 0.2.3 (2024-08-24)
 
 - Force the waker VTable to be uniquely instantiated to re-enable the

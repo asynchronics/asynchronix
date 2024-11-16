@@ -1,6 +1,9 @@
 //! A high-performance, discrete-event computation framework for system
 //! simulation.
 //!
+//! > [WARNING!]
+//! > Asynchronix is now [NeXosim][nexosim].
+//!
 //! Asynchronix is a developer-friendly, yet highly optimized software simulator
 //! able to scale to very large simulation with complex time-driven state
 //! machines.
@@ -17,7 +20,7 @@
 //! and users, achieving high computational throughput on large simulation
 //! benches by means of a custom multi-threaded executor.
 //!
-//!
+//! [nexosim]: https://docs.rs/nexosim/latest/nexosim/
 //! [FBP]: https://en.wikipedia.org/wiki/Flow-based_programming
 //!
 //! # A practical overview
