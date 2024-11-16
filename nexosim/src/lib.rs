@@ -394,11 +394,20 @@
 //!
 //! ```toml
 //! [dependencies]
-//! nexosim = { version = "0.3", features = ["tracing"] }
+//! nexosim = { version = "0.3.0-beta.0", features = ["tracing"] }
 //! ```
 //!
 //! See the [`tracing`] module for more information.
 //!
+//! ## gRPC server
+//!
+//! The `grpc` feature provides a gRPC server for remote control and monitoring,
+//! e.g. from a Python client. It can be activated with:
+//!
+//! ```toml
+//! [dependencies]
+//! nexosim = { version = "0.3.0-beta.0", features = ["grpc"] }
+//! ```
 //!
 //! # Other resources
 //!

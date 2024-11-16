@@ -8,7 +8,7 @@ use serde::de::DeserializeOwned;
 use tonic::{transport::Server, Request, Response, Status};
 
 use crate::registry::EndpointRegistry;
-use crate::simulation::{Scheduler, Simulation, SimulationError};
+use crate::simulation::{Simulation, SimulationError};
 
 use super::codegen::simulation::*;
 use super::key_registry::KeyRegistry;
@@ -19,13 +19,11 @@ use super::services::{ControllerService, MonitorService};
 ///
 /// The first argument is a closure that takes an initialization configuration
 /// and is called every time the simulation is (re)started by the remote client.
-/// It must create a new simulation and its scheduler, complemented by a
-/// registry that exposes the public event and query interface.
+/// It must create a new simulation, complemented by a registry that exposes the
+/// public event and query interface.
 pub fn run<F, I>(sim_gen: F, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>>
 where
-    F: FnMut(I) -> Result<(Simulation, Scheduler, EndpointRegistry), SimulationError>
-        + Send
-        + 'static,
+    F: FnMut(I) -> Result<(Simulation, EndpointRegistry), SimulationError> + Send + 'static,
     I: DeserializeOwned,
 {
     run_service(GrpcSimulationService::new(sim_gen), addr)
@@ -67,13 +65,11 @@ impl GrpcSimulationService {
     ///
     /// The argument is a closure that takes an initialization configuration and
     /// is called every time the simulation is (re)started by the remote client.
-    /// It must create a new simulation and its scheduler, complemented by a
-    /// registry that exposes the public event and query interface.
+    /// It must create a new simulation, complemented by a registry that exposes
+    /// the public event and query interface.
     pub(crate) fn new<F, I>(sim_gen: F) -> Self
     where
-        F: FnMut(I) -> Result<(Simulation, Scheduler, EndpointRegistry), SimulationError>
-            + Send
-            + 'static,
+        F: FnMut(I) -> Result<(Simulation, EndpointRegistry), SimulationError> + Send + 'static,
         I: DeserializeOwned,
     {
         Self {

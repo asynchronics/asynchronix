@@ -8,7 +8,7 @@ use super::{map_simulation_error, to_error};
 
 use super::super::codegen::simulation::*;
 
-type InitResult = Result<(Simulation, Scheduler, EndpointRegistry), SimulationError>;
+type InitResult = Result<(Simulation, EndpointRegistry), SimulationError>;
 type DeserializationError = ciborium::de::Error<std::io::Error>;
 type SimGen = Box<dyn FnMut(&[u8]) -> Result<InitResult, DeserializationError> + Send + 'static>;
 
@@ -27,14 +27,11 @@ impl InitService {
     ///
     /// The argument is a closure that takes a CBOR-serialized initialization
     /// configuration and is called every time the simulation is (re)started by
-    /// the remote client. It must create a new simulation and its scheduler,
-    /// complemented by a registry that exposes the public event and query
-    /// interface.
+    /// the remote client. It must create a new simulation complemented by a
+    /// registry that exposes the public event and query interface.
     pub(crate) fn new<F, I>(mut sim_gen: F) -> Self
     where
-        F: FnMut(I) -> Result<(Simulation, Scheduler, EndpointRegistry), SimulationError>
-            + Send
-            + 'static,
+        F: FnMut(I) -> Result<(Simulation, EndpointRegistry), SimulationError> + Send + 'static,
         I: DeserializeOwned,
     {
         // Wrap `sim_gen` so it accepts a serialized init configuration.
@@ -67,7 +64,13 @@ impl InitService {
             .and_then(|init_result| init_result.map_err(map_simulation_error));
 
         let (reply, bench) = match reply {
-            Ok(bench) => (init_reply::Result::Empty(()), Some(bench)),
+            Ok((simulation, registry)) => {
+                let scheduler = simulation.scheduler();
+                (
+                    init_reply::Result::Empty(()),
+                    Some((simulation, scheduler, registry)),
+                )
+            }
             Err(e) => (init_reply::Result::Error(e), None),
         };
 
