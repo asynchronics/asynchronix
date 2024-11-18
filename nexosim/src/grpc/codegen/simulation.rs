@@ -338,11 +338,12 @@ pub enum ErrorCode {
     SimulationNotStarted = 1,
     SimulationTerminated = 2,
     SimulationDeadlock = 3,
-    SimulationPanic = 4,
-    SimulationTimeout = 5,
-    SimulationOutOfSync = 6,
-    SimulationBadQuery = 7,
-    SimulationTimeOutOfRange = 8,
+    SimulationMessageLoss = 4,
+    SimulationPanic = 5,
+    SimulationTimeout = 6,
+    SimulationOutOfSync = 7,
+    SimulationBadQuery = 8,
+    SimulationTimeOutOfRange = 9,
     MissingArgument = 20,
     InvalidTime = 30,
     InvalidPeriod = 31,
@@ -359,23 +360,24 @@ impl ErrorCode {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            ErrorCode::InternalError => "INTERNAL_ERROR",
-            ErrorCode::SimulationNotStarted => "SIMULATION_NOT_STARTED",
-            ErrorCode::SimulationTerminated => "SIMULATION_TERMINATED",
-            ErrorCode::SimulationDeadlock => "SIMULATION_DEADLOCK",
-            ErrorCode::SimulationPanic => "SIMULATION_PANIC",
-            ErrorCode::SimulationTimeout => "SIMULATION_TIMEOUT",
-            ErrorCode::SimulationOutOfSync => "SIMULATION_OUT_OF_SYNC",
-            ErrorCode::SimulationBadQuery => "SIMULATION_BAD_QUERY",
-            ErrorCode::SimulationTimeOutOfRange => "SIMULATION_TIME_OUT_OF_RANGE",
-            ErrorCode::MissingArgument => "MISSING_ARGUMENT",
-            ErrorCode::InvalidTime => "INVALID_TIME",
-            ErrorCode::InvalidPeriod => "INVALID_PERIOD",
-            ErrorCode::InvalidDeadline => "INVALID_DEADLINE",
-            ErrorCode::InvalidMessage => "INVALID_MESSAGE",
-            ErrorCode::InvalidKey => "INVALID_KEY",
-            ErrorCode::SourceNotFound => "SOURCE_NOT_FOUND",
-            ErrorCode::SinkNotFound => "SINK_NOT_FOUND",
+            Self::InternalError => "INTERNAL_ERROR",
+            Self::SimulationNotStarted => "SIMULATION_NOT_STARTED",
+            Self::SimulationTerminated => "SIMULATION_TERMINATED",
+            Self::SimulationDeadlock => "SIMULATION_DEADLOCK",
+            Self::SimulationMessageLoss => "SIMULATION_MESSAGE_LOSS",
+            Self::SimulationPanic => "SIMULATION_PANIC",
+            Self::SimulationTimeout => "SIMULATION_TIMEOUT",
+            Self::SimulationOutOfSync => "SIMULATION_OUT_OF_SYNC",
+            Self::SimulationBadQuery => "SIMULATION_BAD_QUERY",
+            Self::SimulationTimeOutOfRange => "SIMULATION_TIME_OUT_OF_RANGE",
+            Self::MissingArgument => "MISSING_ARGUMENT",
+            Self::InvalidTime => "INVALID_TIME",
+            Self::InvalidPeriod => "INVALID_PERIOD",
+            Self::InvalidDeadline => "INVALID_DEADLINE",
+            Self::InvalidMessage => "INVALID_MESSAGE",
+            Self::InvalidKey => "INVALID_KEY",
+            Self::SourceNotFound => "SOURCE_NOT_FOUND",
+            Self::SinkNotFound => "SINK_NOT_FOUND",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -385,6 +387,7 @@ impl ErrorCode {
             "SIMULATION_NOT_STARTED" => Some(Self::SimulationNotStarted),
             "SIMULATION_TERMINATED" => Some(Self::SimulationTerminated),
             "SIMULATION_DEADLOCK" => Some(Self::SimulationDeadlock),
+            "SIMULATION_MESSAGE_LOSS" => Some(Self::SimulationMessageLoss),
             "SIMULATION_PANIC" => Some(Self::SimulationPanic),
             "SIMULATION_TIMEOUT" => Some(Self::SimulationTimeout),
             "SIMULATION_OUT_OF_SYNC" => Some(Self::SimulationOutOfSync),
@@ -404,7 +407,13 @@ impl ErrorCode {
 }
 /// Generated server implementations.
 pub mod simulation_server {
-    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
     use tonic::codegen::*;
     /// Generated trait containing gRPC methods that should be implemented for use with SimulationServer.
     #[async_trait]
@@ -1033,17 +1042,19 @@ pub mod simulation_server {
                 }
                 _ => {
                     Box::pin(async move {
-                        Ok(
-                            http::Response::builder()
-                                .status(200)
-                                .header("grpc-status", tonic::Code::Unimplemented as i32)
-                                .header(
-                                    http::header::CONTENT_TYPE,
-                                    tonic::metadata::GRPC_CONTENT_TYPE,
-                                )
-                                .body(empty_body())
-                                .unwrap(),
-                        )
+                        let mut response = http::Response::new(empty_body());
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
                     })
                 }
             }

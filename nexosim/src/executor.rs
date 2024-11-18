@@ -23,8 +23,8 @@ static NEXT_EXECUTOR_ID: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug)]
 pub(crate) enum ExecutorError {
-    /// The simulation has deadlocked.
-    Deadlock,
+    /// Not all messages have been processed.
+    UnprocessedMessages(usize),
     /// The simulation has timed out.
     Timeout,
     /// The simulation has panicked.

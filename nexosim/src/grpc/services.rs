@@ -34,6 +34,7 @@ fn simulation_not_started_error() -> Error {
 fn map_execution_error(error: ExecutionError) -> Error {
     let error_code = match error {
         ExecutionError::Deadlock(_) => ErrorCode::SimulationDeadlock,
+        ExecutionError::MessageLoss(_) => ErrorCode::SimulationMessageLoss,
         ExecutionError::Panic { .. } => ErrorCode::SimulationPanic,
         ExecutionError::Timeout => ErrorCode::SimulationTimeout,
         ExecutionError::OutOfSync(_) => ErrorCode::SimulationOutOfSync,

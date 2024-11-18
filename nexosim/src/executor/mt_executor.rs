@@ -250,9 +250,9 @@ impl Executor {
             if self.context.pool_manager.pool_is_idle() {
                 let msg_count = self.context.msg_count.load(Ordering::Relaxed);
                 if msg_count != 0 {
-                    assert!(msg_count > 0);
+                    let msg_count: usize = msg_count.try_into().unwrap();
 
-                    return Err(ExecutorError::Deadlock);
+                    return Err(ExecutorError::UnprocessedMessages(msg_count));
                 }
 
                 return Ok(());
