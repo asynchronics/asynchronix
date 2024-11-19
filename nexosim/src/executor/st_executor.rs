@@ -193,12 +193,12 @@ impl ExecutorInner {
             return Err(ExecutorError::Panic(model_id, payload));
         }
 
-        // Check for deadlock.
+        // Check for unprocessed messages.
         self.context.msg_count = channel::THREAD_MSG_COUNT.replace(msg_count_stash);
         if self.context.msg_count != 0 {
-            assert!(self.context.msg_count > 0);
+            let msg_count: usize = self.context.msg_count.try_into().unwrap();
 
-            return Err(ExecutorError::Deadlock);
+            return Err(ExecutorError::UnprocessedMessages(msg_count));
         }
 
         Ok(())

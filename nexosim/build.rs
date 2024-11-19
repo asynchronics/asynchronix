@@ -3,7 +3,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::configure()
         .build_client(false)
         .out_dir("src/grpc/codegen/")
-        .compile(&["simulation.proto"], &["src/grpc/api/"])?;
+        .compile_protos(&["simulation.proto"], &["src/grpc/api/"])?;
 
     Ok(())
 }

@@ -333,7 +333,7 @@ impl Simulation {
         }
 
         self.executor.run(self.timeout).map_err(|e| match e {
-            ExecutorError::Deadlock => {
+            ExecutorError::UnprocessedMessages(msg_count) => {
                 self.is_terminated = true;
                 let mut deadlock_info = Vec::new();
                 for (model, observer) in &self.observers {
@@ -346,7 +346,11 @@ impl Simulation {
                     }
                 }
 
-                ExecutionError::Deadlock(deadlock_info)
+                if deadlock_info.is_empty() {
+                    ExecutionError::MessageLoss(msg_count)
+                } else {
+                    ExecutionError::Deadlock(deadlock_info)
+                }
             }
             ExecutorError::Timeout => {
                 self.is_terminated = true;
@@ -525,14 +529,22 @@ pub struct DeadlockInfo {
 /// An error returned upon simulation execution failure.
 #[derive(Debug)]
 pub enum ExecutionError {
-    /// The simulation has been terminated due to an earlier deadlock, model
-    /// panic, timeout or synchronization loss.
+    /// The simulation has been terminated due to an earlier deadlock, message
+    /// loss, model panic, timeout or synchronization loss.
     Terminated,
     /// The simulation has deadlocked due to the enlisted models.
     ///
     /// This is a fatal error: any subsequent attempt to run the simulation will
     /// return an [`ExecutionError::Terminated`] error.
     Deadlock(Vec<DeadlockInfo>),
+    /// One or more message were left unprocessed because the recipient's
+    /// mailbox was not migrated to the simulation.
+    ///
+    /// The payload indicates the number of lost messages.
+    ///
+    /// This is a fatal error: any subsequent attempt to run the simulation will
+    /// return an [`ExecutionError::Terminated`] error.
+    MessageLoss(usize),
     /// A panic was caught during execution.
     ///
     /// This is a fatal error: any subsequent attempt to run the simulation will
@@ -603,6 +615,9 @@ impl fmt::Display for ExecutionError {
                 }
 
                 Ok(())
+            }
+            Self::MessageLoss(count) => {
+                write!(f, "{} messages have been lost", count)
             }
             Self::Panic{model, payload} => {
                 let msg: &str = if let Some(s) = payload.downcast_ref::<&str>() {
