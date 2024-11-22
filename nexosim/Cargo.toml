@@ -63,6 +63,7 @@ tracing-subscriber = { version= "0.3.18", optional = true }
 futures-util = "0.3"
 futures-executor = "0.3"
 tracing-subscriber = { version= "0.3.18", features=["env-filter"] }
+nexosim-util = {version = "0.1.0", path = "../nexosim-util"}
 
 [target.'cfg(nexosim_loom)'.dev-dependencies]
 loom = "0.7"

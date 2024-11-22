@@ -86,7 +86,7 @@ mod source;
 
 pub use input::markers;
 pub use input::{InputFn, ReplierFn};
-pub use output::{Output, Requestor};
+pub use output::{Output, Requestor, UniRequestor};
 pub use sink::{
     event_buffer::EventBuffer, event_slot::EventSlot, EventSink, EventSinkStream, EventSinkWriter,
 };
