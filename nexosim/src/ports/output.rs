@@ -303,23 +303,21 @@ impl<T: Clone + Send + 'static, R: Send + 'static> fmt::Debug for Requestor<T, R
 
 /// A requestor port with exactly one connection.
 ///
-/// `UniRequestor` port is connected to unique replier port, i.e. to an
+/// A `UniRequestor` port is connected to a unique replier port, i.e. to an
 /// asynchronous model method that returns a value.
-///
-/// A UniRequestor port can be safely cloned.
 #[derive(Clone)]
 pub struct UniRequestor<T: Clone + Send + 'static, R: Send + 'static> {
     sender: Box<dyn Sender<T, R>>,
 }
 
 impl<T: Clone + Send + 'static, R: Send + 'static> UniRequestor<T, R> {
-    /// Creates new UniRequestor port connected to a replier port of the model
+    /// Creates a new `UniRequestor` port connected to a replier port of the model
     /// specified by the address.
     ///
     /// The replier port must be an asynchronous method of a model of type `M`
     /// returning a value of type `R` and taking as argument a value of type `T`
     /// plus, optionally, a context reference.
-    pub fn new_connected<M, F, S>(replier: F, address: impl Into<Address<M>>) -> Self
+    pub fn new<M, F, S>(replier: F, address: impl Into<Address<M>>) -> Self
     where
         M: Model,
         F: for<'a> ReplierFn<'a, M, T, R, S> + Clone,
@@ -330,7 +328,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> UniRequestor<T, R> {
         Self { sender }
     }
 
-    /// Creates new UniRequestor port connected with auto-conversion to a
+    /// Creates a new `UniRequestor` port connected with auto-conversion to a
     /// replier port of the model specified by the address.
     ///
     /// Queries and replies are mapped to other types using the closures
@@ -340,7 +338,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> UniRequestor<T, R> {
     /// returning a value of the type returned by the reply mapping closure and
     /// taking as argument a value of the type returned by the query mapping
     /// closure plus, optionally, a context reference.
-    pub fn new_map_connected<M, C, D, F, U, Q, S>(
+    pub fn with_map<M, C, D, F, U, Q, S>(
         query_map: C,
         reply_map: D,
         replier: F,
@@ -365,7 +363,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> UniRequestor<T, R> {
         Self { sender }
     }
 
-    /// Creates neq UniRequestor port connected with filtering and
+    /// Creates a new `UniRequestor` port connected with filtering and
     /// auto-conversion to a replier port of the model specified by the address.
     ///
     /// Queries and replies are mapped to other types using the closures
@@ -375,7 +373,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> UniRequestor<T, R> {
     /// returning a value of the type returned by the reply mapping closure and
     /// taking as argument a value of the type returned by the query mapping
     /// closure plus, optionally, a context reference.
-    pub fn new_filter_map_connected<M, C, D, F, U, Q, S>(
+    pub fn with_filter_map<M, C, D, F, U, Q, S>(
         query_filer_map: C,
         reply_map: D,
         replier: F,
@@ -400,7 +398,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> UniRequestor<T, R> {
         Self { sender }
     }
 
-    /// Send a query to the connected replier port.
+    /// Sends a query to the connected replier port.
     pub async fn send(&mut self, arg: T) -> Option<R> {
         if let Some(fut) = self.sender.send_owned(arg) {
             let output = fut.await.unwrap();

@@ -109,7 +109,7 @@ impl Env {
 
 impl Model for Env {}
 
-/// Orbiting Mars and looking for its climate remember to convert units.
+/// Converts Fahrenheit to Celsius.
 pub fn fahr_to_cels(t: f64) -> f64 {
     5.0 * (t - 32.0) / 9.0
 }
@@ -124,7 +124,7 @@ fn main() -> Result<(), SimulationError> {
     let env_mbox = Mailbox::new();
 
     // Connect data line and convert Fahrenheit degrees to Celsius.
-    let temp_req = UniRequestor::new_map_connected(|x| *x, fahr_to_cels, Env::get_temp, &env_mbox);
+    let temp_req = UniRequestor::with_map(|x| *x, fahr_to_cels, Env::get_temp, &env_mbox);
 
     // Models.
     let mut sensor = Sensor::new(100.0, temp_req);
