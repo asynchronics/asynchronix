@@ -301,7 +301,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> fmt::Debug for Requestor<T, R
     }
 }
 
-/// A UniRequestor port.
+/// A requestor port with exactly one connection.
 ///
 /// `UniRequestor` port is connected to unique replier port, i.e. to an
 /// asynchronous model method that returns a value.
