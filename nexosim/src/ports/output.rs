@@ -8,6 +8,7 @@ use crate::ports::EventSink;
 use crate::ports::{InputFn, ReplierFn};
 use crate::simulation::Address;
 use crate::util::cached_rw_lock::CachedRwLock;
+use crate::util::unwrap_or_throw::UnwrapOrThrow;
 
 use broadcaster::{EventBroadcaster, QueryBroadcaster};
 use sender::{FilterMapReplierSender, Sender};
@@ -32,7 +33,7 @@ pub struct Output<T: Clone + Send + 'static> {
 }
 
 impl<T: Clone + Send + 'static> Output<T> {
-    /// Creates a new, disconnected `Output` port.
+    /// Creates a disconnected `Output` port.
     pub fn new() -> Self {
         Self::default()
     }
@@ -146,7 +147,7 @@ impl<T: Clone + Send + 'static> Output<T> {
     /// Broadcasts an event to all connected input ports.
     pub async fn send(&mut self, arg: T) {
         let broadcaster = self.broadcaster.write_scratchpad().unwrap();
-        broadcaster.broadcast(arg).await.unwrap();
+        broadcaster.broadcast(arg).await.unwrap_or_throw();
     }
 }
 
@@ -183,7 +184,7 @@ pub struct Requestor<T: Clone + Send + 'static, R: Send + 'static> {
 }
 
 impl<T: Clone + Send + 'static, R: Send + 'static> Requestor<T, R> {
-    /// Creates a new, disconnected `Requestor` port.
+    /// Creates a disconnected `Requestor` port.
     pub fn new() -> Self {
         Self::default()
     }
@@ -250,7 +251,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> Requestor<T, R> {
     /// closure plus, optionally, a context reference.
     pub fn filter_map_connect<M, C, D, F, U, Q, S>(
         &mut self,
-        query_filer_map: C,
+        query_filter_map: C,
         reply_map: D,
         replier: F,
         address: impl Into<Address<M>>,
@@ -264,7 +265,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> Requestor<T, R> {
         S: Send + 'static,
     {
         let sender = Box::new(FilterMapReplierSender::new(
-            query_filer_map,
+            query_filter_map,
             reply_map,
             replier,
             address.into().0,
@@ -279,7 +280,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> Requestor<T, R> {
             .unwrap()
             .broadcast(arg)
             .await
-            .unwrap()
+            .unwrap_or_throw()
     }
 }
 
@@ -303,7 +304,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> fmt::Debug for Requestor<T, R
 
 /// A requestor port with exactly one connection.
 ///
-/// A `UniRequestor` port is connected to a unique replier port, i.e. to an
+/// A `UniRequestor` port is connected to a replier port, i.e. to an
 /// asynchronous model method that returns a value.
 #[derive(Clone)]
 pub struct UniRequestor<T: Clone + Send + 'static, R: Send + 'static> {
@@ -311,7 +312,7 @@ pub struct UniRequestor<T: Clone + Send + 'static, R: Send + 'static> {
 }
 
 impl<T: Clone + Send + 'static, R: Send + 'static> UniRequestor<T, R> {
-    /// Creates a new `UniRequestor` port connected to a replier port of the model
+    /// Creates a `UniRequestor` port connected to a replier port of the model
     /// specified by the address.
     ///
     /// The replier port must be an asynchronous method of a model of type `M`
@@ -328,8 +329,8 @@ impl<T: Clone + Send + 'static, R: Send + 'static> UniRequestor<T, R> {
         Self { sender }
     }
 
-    /// Creates a new `UniRequestor` port connected with auto-conversion to a
-    /// replier port of the model specified by the address.
+    /// Creates an auto-converting `UniRequestor` port connected to a replier
+    /// port of the model specified by the address.
     ///
     /// Queries and replies are mapped to other types using the closures
     /// provided in argument.
@@ -363,8 +364,8 @@ impl<T: Clone + Send + 'static, R: Send + 'static> UniRequestor<T, R> {
         Self { sender }
     }
 
-    /// Creates a new `UniRequestor` port connected with filtering and
-    /// auto-conversion to a replier port of the model specified by the address.
+    /// Creates an auto-converting, filtered `UniRequestor` port connected to a
+    /// replier port of the model specified by the address.
     ///
     /// Queries and replies are mapped to other types using the closures
     /// provided in argument, or ignored if the query closure returns `None`.
@@ -374,7 +375,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> UniRequestor<T, R> {
     /// taking as argument a value of the type returned by the query mapping
     /// closure plus, optionally, a context reference.
     pub fn with_filter_map<M, C, D, F, U, Q, S>(
-        query_filer_map: C,
+        query_filter_map: C,
         reply_map: D,
         replier: F,
         address: impl Into<Address<M>>,
@@ -389,7 +390,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> UniRequestor<T, R> {
         S: Send + 'static,
     {
         let sender = Box::new(FilterMapReplierSender::new(
-            query_filer_map,
+            query_filter_map,
             reply_map,
             replier,
             address.into().0,
@@ -401,7 +402,8 @@ impl<T: Clone + Send + 'static, R: Send + 'static> UniRequestor<T, R> {
     /// Sends a query to the connected replier port.
     pub async fn send(&mut self, arg: T) -> Option<R> {
         if let Some(fut) = self.sender.send_owned(arg) {
-            let output = fut.await.unwrap();
+            let output = fut.await.unwrap_or_throw();
+
             Some(output)
         } else {
             None

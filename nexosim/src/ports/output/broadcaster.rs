@@ -5,7 +5,8 @@ use std::task::{Context, Poll};
 
 use diatomic_waker::WakeSink;
 
-use super::sender::{RecycledFuture, SendError, Sender};
+use super::sender::{RecycledFuture, Sender};
+use crate::channel::SendError;
 use crate::util::task_set::TaskSet;
 
 /// An object that can efficiently broadcast messages to several addresses.
@@ -142,7 +143,7 @@ impl<T: Clone> EventBroadcaster<T> {
     }
 
     /// Broadcasts an event to all addresses.
-    pub(super) async fn broadcast(&mut self, arg: T) -> Result<(), BroadcastError> {
+    pub(super) async fn broadcast(&mut self, arg: T) -> Result<(), SendError> {
         match self.inner.senders.as_mut_slice() {
             // No sender.
             [] => Ok(()),
@@ -150,7 +151,7 @@ impl<T: Clone> EventBroadcaster<T> {
             // One sender at most.
             [sender] => match sender.send_owned(arg) {
                 None => Ok(()),
-                Some(fut) => fut.await.map_err(|_| BroadcastError {}),
+                Some(fut) => fut.await,
             },
 
             // Possibly multiple senders.
@@ -158,7 +159,7 @@ impl<T: Clone> EventBroadcaster<T> {
                 let (shared, mut futures) = self.inner.futures(arg);
                 match futures.as_mut_slice() {
                     [] => Ok(()),
-                    [fut] => fut.await.map_err(|_| BroadcastError {}),
+                    [fut] => fut.await,
                     _ => BroadcastFuture::new(shared, futures).await,
                 }
             }
@@ -206,7 +207,7 @@ impl<T: Clone, R> QueryBroadcaster<T, R> {
     pub(super) async fn broadcast(
         &mut self,
         arg: T,
-    ) -> Result<impl Iterator<Item = R> + '_, BroadcastError> {
+    ) -> Result<impl Iterator<Item = R> + '_, SendError> {
         let output_count = match self.inner.senders.as_mut_slice() {
             // No sender.
             [] => 0,
@@ -214,7 +215,7 @@ impl<T: Clone, R> QueryBroadcaster<T, R> {
             // One sender at most.
             [sender] => {
                 if let Some(fut) = sender.send_owned(arg) {
-                    let output = fut.await.map_err(|_| BroadcastError {})?;
+                    let output = fut.await?;
                     self.inner.shared.outputs[0] = Some(output);
 
                     1
@@ -231,7 +232,7 @@ impl<T: Clone, R> QueryBroadcaster<T, R> {
                 match futures.as_mut_slice() {
                     [] => {}
                     [fut] => {
-                        let output = fut.await.map_err(|_| BroadcastError {})?;
+                        let output = fut.await?;
                         shared.outputs[0] = Some(output);
                     }
                     _ => {
@@ -361,7 +362,7 @@ impl<'a, R> Drop for BroadcastFuture<'a, R> {
 }
 
 impl<'a, R> Future for BroadcastFuture<'a, R> {
-    type Output = Result<(), BroadcastError>;
+    type Output = Result<(), SendError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = &mut *self;
@@ -392,10 +393,10 @@ impl<'a, R> Future for BroadcastFuture<'a, R> {
                         *output = Some(o);
                         this.pending_futures_count -= 1;
                     }
-                    Poll::Ready(Err(_)) => {
+                    Poll::Ready(Err(SendError)) => {
                         this.state = FutureState::Completed;
 
-                        return Poll::Ready(Err(BroadcastError {}));
+                        return Poll::Ready(Err(SendError));
                     }
                     Poll::Pending => {}
                 }
@@ -450,10 +451,10 @@ impl<'a, R> Future for BroadcastFuture<'a, R> {
                         *output = Some(o);
                         this.pending_futures_count -= 1;
                     }
-                    Poll::Ready(Err(_)) => {
+                    Poll::Ready(Err(SendError)) => {
                         this.state = FutureState::Completed;
 
-                        return Poll::Ready(Err(BroadcastError {}));
+                        return Poll::Ready(Err(SendError));
                     }
                     Poll::Pending => {}
                 }
@@ -467,10 +468,6 @@ impl<'a, R> Future for BroadcastFuture<'a, R> {
         }
     }
 }
-
-/// Error returned when a message could not be delivered.
-#[derive(Debug)]
-pub(super) struct BroadcastError {}
 
 #[derive(Debug, PartialEq)]
 enum FutureState {

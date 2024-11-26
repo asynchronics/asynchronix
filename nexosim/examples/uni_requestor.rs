@@ -1,4 +1,4 @@
-//! Example: sensor reading data from the environment model.
+//! Example: sensor reading data from environment model.
 //!
 //! This example demonstrates in particular:
 //!
@@ -11,8 +11,8 @@
 //! ```text
 //!                        ┌─────────────┐               ┌──────────┐
 //!                        │             │ temperature   │          │ overheat
-//! Temperature ●─────────►│ Environment ├──────────────►│ Sensor   ├──────────►
-//!                        │             │               │          │ state
+//! Temperature ●─────────►│ Environment ├──────────────►│  Sensor  ├──────────►
+//!                        │             │               │          │
 //!                        └─────────────┘               └──────────┘
 //! ```
 

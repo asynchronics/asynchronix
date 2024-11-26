@@ -6,6 +6,7 @@ mod model_scheduling;
 mod simulation_clock_sync;
 mod simulation_deadlock;
 mod simulation_message_loss;
+mod simulation_no_recipient;
 mod simulation_panic;
 mod simulation_scheduling;
 #[cfg(not(miri))]

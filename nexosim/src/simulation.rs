@@ -80,8 +80,6 @@ mod mailbox;
 mod scheduler;
 mod sim_init;
 
-use scheduler::SchedulerQueue;
-
 pub(crate) use scheduler::{
     GlobalScheduler, KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction,
 };
@@ -90,7 +88,7 @@ pub use mailbox::{Address, Mailbox};
 pub use scheduler::{Action, ActionKey, AutoActionKey, Scheduler, SchedulingError};
 pub use sim_init::SimInit;
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::cell::Cell;
 use std::error::Error;
 use std::fmt;
@@ -104,7 +102,9 @@ use std::{panic, task};
 use pin_project::pin_project;
 use recycle_box::{coerce_box, RecycleBox};
 
-use crate::channel::ChannelObserver;
+use scheduler::SchedulerQueue;
+
+use crate::channel::{ChannelObserver, SendError};
 use crate::executor::{Executor, ExecutorError, Signal};
 use crate::model::{BuildContext, Context, Model, ProtoModel};
 use crate::ports::{InputFn, ReplierFn};
@@ -332,42 +332,46 @@ impl Simulation {
             return Err(ExecutionError::Terminated);
         }
 
-        self.executor.run(self.timeout).map_err(|e| match e {
-            ExecutorError::UnprocessedMessages(msg_count) => {
-                self.is_terminated = true;
-                let mut deadlock_info = Vec::new();
-                for (model, observer) in &self.observers {
-                    let mailbox_size = observer.len();
-                    if mailbox_size != 0 {
-                        deadlock_info.push(DeadlockInfo {
-                            model: model.clone(),
-                            mailbox_size,
-                        });
+        self.executor.run(self.timeout).map_err(|e| {
+            self.is_terminated = true;
+
+            match e {
+                ExecutorError::UnprocessedMessages(msg_count) => {
+                    let mut deadlock_info = Vec::new();
+                    for (model, observer) in &self.observers {
+                        let mailbox_size = observer.len();
+                        if mailbox_size != 0 {
+                            deadlock_info.push(DeadlockInfo {
+                                model: model.clone(),
+                                mailbox_size,
+                            });
+                        }
+                    }
+
+                    if deadlock_info.is_empty() {
+                        ExecutionError::MessageLoss(msg_count)
+                    } else {
+                        ExecutionError::Deadlock(deadlock_info)
                     }
                 }
+                ExecutorError::Timeout => ExecutionError::Timeout,
+                ExecutorError::Panic(model_id, payload) => {
+                    let model = model_id
+                        .get()
+                        .map(|id| self.model_names.get(id).unwrap().clone());
 
-                if deadlock_info.is_empty() {
-                    ExecutionError::MessageLoss(msg_count)
-                } else {
-                    ExecutionError::Deadlock(deadlock_info)
-                }
-            }
-            ExecutorError::Timeout => {
-                self.is_terminated = true;
+                    // Filter out panics originating from a `SendError`.
+                    if (*payload).type_id() == TypeId::of::<SendError>() {
+                        return ExecutionError::NoRecipient { model };
+                    }
 
-                ExecutionError::Timeout
-            }
-            ExecutorError::Panic(model_id, payload) => {
-                self.is_terminated = true;
+                    if let Some(model) = model {
+                        return ExecutionError::Panic { model, payload };
+                    }
 
-                let model = match model_id.get() {
-                    // The panic was emitted by a model.
-                    Some(id) => self.model_names.get(id).unwrap().clone(),
                     // The panic is due to an internal issue.
-                    None => panic::resume_unwind(payload),
-                };
-
-                ExecutionError::Panic { model, payload }
+                    panic::resume_unwind(payload);
+                }
             }
         })
     }
@@ -530,7 +534,7 @@ pub struct DeadlockInfo {
 #[derive(Debug)]
 pub enum ExecutionError {
     /// The simulation has been terminated due to an earlier deadlock, message
-    /// loss, model panic, timeout or synchronization loss.
+    /// loss, missing recipient, model panic, timeout or synchronization loss.
     Terminated,
     /// The simulation has deadlocked due to the enlisted models.
     ///
@@ -545,6 +549,22 @@ pub enum ExecutionError {
     /// This is a fatal error: any subsequent attempt to run the simulation will
     /// return an [`ExecutionError::Terminated`] error.
     MessageLoss(usize),
+    /// The recipient of a message does not exists.
+    ///
+    /// This indicates that the mailbox of the recipient of a message was not
+    /// migrated to the simulation and was no longer alive when the message was
+    /// sent.
+    ///
+    /// This is a fatal error: any subsequent attempt to run the simulation will
+    /// return an [`ExecutionError::Terminated`] error.
+    NoRecipient {
+        /// The fully qualified name of the model that attempted to send a
+        /// message, or `None` if the message was sent from the scheduler.
+        ///
+        /// The fully qualified name is made of the unqualified model name, if
+        /// relevant prepended by the dot-separated names of all parent models.
+        model: Option<String>,
+    },
     /// A panic was caught during execution.
     ///
     /// This is a fatal error: any subsequent attempt to run the simulation will
@@ -618,6 +638,15 @@ impl fmt::Display for ExecutionError {
             }
             Self::MessageLoss(count) => {
                 write!(f, "{} messages have been lost", count)
+            }
+            Self::NoRecipient{model} => {
+                match model {
+                    Some(model) => write!(f,
+                        "an attempt by model '{}' to send a message failed because the recipient's mailbox is no longer alive",
+                        model
+                    ),
+                    None => f.write_str("an attempt by the scheduler to send a message failed because the recipient's mailbox is no longer alive"),
+                }
             }
             Self::Panic{model, payload} => {
                 let msg: &str = if let Some(s) = payload.downcast_ref::<&str>() {

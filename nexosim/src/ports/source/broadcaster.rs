@@ -10,6 +10,7 @@ use diatomic_waker::WakeSink;
 
 use super::sender::{Sender, SenderFuture};
 
+use crate::channel::SendError;
 use crate::util::task_set::TaskSet;
 
 /// An object that can efficiently broadcast messages to several addresses.
@@ -109,7 +110,7 @@ impl<T: Clone + Send> EventBroadcaster<T> {
     pub(super) fn broadcast(
         &mut self,
         arg: T,
-    ) -> impl Future<Output = Result<(), BroadcastError>> + Send {
+    ) -> impl Future<Output = Result<(), SendError>> + Send {
         enum Fut<F1, F2> {
             Empty,
             Single(F1),
@@ -130,13 +131,13 @@ impl<T: Clone + Send> EventBroadcaster<T> {
                 // No sender.
                 Fut::Empty | Fut::Single(None) => Ok(()),
 
-                Fut::Single(Some(fut)) => fut.await.map_err(|_| BroadcastError {}),
+                Fut::Single(Some(fut)) => fut.await,
 
                 Fut::Multiple(mut futures) => match futures.as_mut_slice() {
                     // No sender.
                     [] => Ok(()),
                     // One sender.
-                    [SenderFutureState::Pending(fut)] => fut.await.map_err(|_| BroadcastError {}),
+                    [SenderFutureState::Pending(fut)] => fut.await,
                     // Multiple senders.
                     _ => BroadcastFuture::new(futures).await.map(|_| ()),
                 },
@@ -185,7 +186,7 @@ impl<T: Clone + Send, R: Send> QueryBroadcaster<T, R> {
     pub(super) fn broadcast(
         &mut self,
         arg: T,
-    ) -> impl Future<Output = Result<ReplyIterator<R>, BroadcastError>> + Send {
+    ) -> impl Future<Output = Result<ReplyIterator<R>, SendError>> + Send {
         enum Fut<F1, F2> {
             Empty,
             Single(F1),
@@ -208,25 +209,19 @@ impl<T: Clone + Send, R: Send> QueryBroadcaster<T, R> {
 
                 Fut::Single(Some(fut)) => fut
                     .await
-                    .map(|reply| ReplyIterator(vec![SenderFutureState::Ready(reply)].into_iter()))
-                    .map_err(|_| BroadcastError {}),
+                    .map(|reply| ReplyIterator(vec![SenderFutureState::Ready(reply)].into_iter())),
 
                 Fut::Multiple(mut futures) => match futures.as_mut_slice() {
                     // No sender.
                     [] => Ok(ReplyIterator(Vec::new().into_iter())),
 
                     // One sender.
-                    [SenderFutureState::Pending(fut)] => fut
-                        .await
-                        .map(|reply| {
-                            ReplyIterator(vec![SenderFutureState::Ready(reply)].into_iter())
-                        })
-                        .map_err(|_| BroadcastError {}),
+                    [SenderFutureState::Pending(fut)] => fut.await.map(|reply| {
+                        ReplyIterator(vec![SenderFutureState::Ready(reply)].into_iter())
+                    }),
 
                     // Multiple senders.
-                    _ => BroadcastFuture::new(futures)
-                        .await
-                        .map_err(|_| BroadcastError {}),
+                    _ => BroadcastFuture::new(futures).await,
                 },
             }
         }
@@ -280,7 +275,7 @@ impl<R> BroadcastFuture<R> {
 }
 
 impl<R> Future for BroadcastFuture<R> {
-    type Output = Result<ReplyIterator<R>, BroadcastError>;
+    type Output = Result<ReplyIterator<R>, SendError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = &mut *self;
@@ -300,10 +295,10 @@ impl<R> Future for BroadcastFuture<R> {
                             this.future_states[task_idx] = SenderFutureState::Ready(output);
                             this.pending_futures_count -= 1;
                         }
-                        Poll::Ready(Err(_)) => {
+                        Poll::Ready(Err(SendError)) => {
                             this.state = FutureState::Completed;
 
-                            return Poll::Ready(Err(BroadcastError {}));
+                            return Poll::Ready(Err(SendError));
                         }
                         Poll::Pending => {}
                     }
@@ -353,10 +348,10 @@ impl<R> Future for BroadcastFuture<R> {
                             this.future_states[task_idx] = SenderFutureState::Ready(output);
                             this.pending_futures_count -= 1;
                         }
-                        Poll::Ready(Err(_)) => {
+                        Poll::Ready(Err(SendError)) => {
                             this.state = FutureState::Completed;
 
-                            return Poll::Ready(Err(BroadcastError {}));
+                            return Poll::Ready(Err(SendError));
                         }
                         Poll::Pending => {}
                     }
@@ -372,10 +367,6 @@ impl<R> Future for BroadcastFuture<R> {
         }
     }
 }
-
-/// Error returned when a message could not be delivered.
-#[derive(Debug)]
-pub(super) struct BroadcastError {}
 
 #[derive(Debug, PartialEq)]
 enum FutureState {
@@ -749,7 +740,6 @@ mod tests {
 
     use waker_fn::waker_fn;
 
-    use super::super::sender::SendError;
     use super::*;
 
     // An event that may be waken spuriously.

@@ -1,5 +1,3 @@
-use std::error::Error;
-use std::fmt;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
@@ -11,6 +9,7 @@ use dyn_clone::DynClone;
 use recycle_box::{coerce_box, RecycleBox};
 
 use crate::channel;
+use crate::channel::SendError;
 use crate::model::Model;
 use crate::ports::{EventSinkWriter, InputFn, ReplierFn};
 
@@ -75,9 +74,7 @@ where
             coerce_box!(RecycleBox::recycle(recycle_box, fut))
         });
 
-        Some(RecycledFuture::new(&mut self.fut_storage, async move {
-            fut.await.map_err(|_| SendError {})
-        }))
+        Some(RecycledFuture::new(&mut self.fut_storage, fut))
     }
 }
 
@@ -147,9 +144,7 @@ where
             coerce_box!(RecycleBox::recycle(recycle_box, fut))
         });
 
-        Some(RecycledFuture::new(&mut self.fut_storage, async move {
-            fut.await.map_err(|_| SendError {})
-        }))
+        Some(RecycledFuture::new(&mut self.fut_storage, fut))
     }
 }
 
@@ -221,9 +216,7 @@ where
                 coerce_box!(RecycleBox::recycle(recycle_box, fut))
             });
 
-            RecycledFuture::new(&mut self.fut_storage, async move {
-                fut.await.map_err(|_| SendError {})
-            })
+            RecycledFuture::new(&mut self.fut_storage, fut)
         })
     }
 }
@@ -474,12 +467,12 @@ where
 
         Some(RecycledFuture::new(fut_storage, async move {
             // Send the message.
-            send_fut.await.map_err(|_| SendError {})?;
+            send_fut.await?;
 
             // Wait until the message is processed and the reply is sent back.
             // If an error is received, it most likely means the mailbox was
             // dropped before the message was processed.
-            reply_receiver.recv().await.map_err(|_| SendError {})
+            reply_receiver.recv().await.map_err(|_| SendError)
         }))
     }
 }
@@ -574,7 +567,7 @@ where
 
         Some(RecycledFuture::new(fut_storage, async move {
             // Send the message.
-            send_fut.await.map_err(|_| SendError {})?;
+            send_fut.await?;
 
             // Wait until the message is processed and the reply is sent back.
             // If an error is received, it most likely means the mailbox was
@@ -582,7 +575,7 @@ where
             reply_receiver
                 .recv()
                 .await
-                .map_err(|_| SendError {})
+                .map_err(|_| SendError)
                 .map(reply_map)
         }))
     }
@@ -687,7 +680,7 @@ where
 
             RecycledFuture::new(fut_storage, async move {
                 // Send the message.
-                send_fut.await.map_err(|_| SendError {})?;
+                send_fut.await?;
 
                 // Wait until the message is processed and the reply is sent back.
                 // If an error is received, it most likely means the mailbox was
@@ -695,7 +688,7 @@ where
                 reply_receiver
                     .recv()
                     .await
-                    .map_err(|_| SendError {})
+                    .map_err(|_| SendError)
                     .map(reply_map)
             })
         })
@@ -722,18 +715,6 @@ where
         }
     }
 }
-
-/// Error returned when the mailbox was closed or dropped.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub(super) struct SendError {}
-
-impl fmt::Display for SendError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "sending message into a closed mailbox")
-    }
-}
-
-impl Error for SendError {}
 
 pub(super) struct RecycledFuture<'a, T> {
     fut: ManuallyDrop<Pin<RecycleBox<dyn Future<Output = T> + Send + 'a>>>,
