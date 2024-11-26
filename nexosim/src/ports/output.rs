@@ -10,7 +10,7 @@ use crate::simulation::Address;
 use crate::util::cached_rw_lock::CachedRwLock;
 
 use broadcaster::{EventBroadcaster, QueryBroadcaster};
-use sender::FilterMapReplierSender;
+use sender::{FilterMapReplierSender, Sender};
 
 use self::sender::{
     EventSinkSender, FilterMapEventSinkSender, FilterMapInputSender, InputSender,
@@ -298,5 +298,119 @@ impl<T: Clone + Send + 'static, R: Send + 'static> fmt::Debug for Requestor<T, R
             "Requestor ({} connected ports)",
             self.broadcaster.read_unsync().len()
         )
+    }
+}
+
+/// A requestor port with exactly one connection.
+///
+/// A `UniRequestor` port is connected to a unique replier port, i.e. to an
+/// asynchronous model method that returns a value.
+#[derive(Clone)]
+pub struct UniRequestor<T: Clone + Send + 'static, R: Send + 'static> {
+    sender: Box<dyn Sender<T, R>>,
+}
+
+impl<T: Clone + Send + 'static, R: Send + 'static> UniRequestor<T, R> {
+    /// Creates a new `UniRequestor` port connected to a replier port of the model
+    /// specified by the address.
+    ///
+    /// The replier port must be an asynchronous method of a model of type `M`
+    /// returning a value of type `R` and taking as argument a value of type `T`
+    /// plus, optionally, a context reference.
+    pub fn new<M, F, S>(replier: F, address: impl Into<Address<M>>) -> Self
+    where
+        M: Model,
+        F: for<'a> ReplierFn<'a, M, T, R, S> + Clone,
+        S: Send + 'static,
+    {
+        let sender = Box::new(ReplierSender::new(replier, address.into().0));
+
+        Self { sender }
+    }
+
+    /// Creates a new `UniRequestor` port connected with auto-conversion to a
+    /// replier port of the model specified by the address.
+    ///
+    /// Queries and replies are mapped to other types using the closures
+    /// provided in argument.
+    ///
+    /// The replier port must be an asynchronous method of a model of type `M`
+    /// returning a value of the type returned by the reply mapping closure and
+    /// taking as argument a value of the type returned by the query mapping
+    /// closure plus, optionally, a context reference.
+    pub fn with_map<M, C, D, F, U, Q, S>(
+        query_map: C,
+        reply_map: D,
+        replier: F,
+        address: impl Into<Address<M>>,
+    ) -> Self
+    where
+        M: Model,
+        C: Fn(&T) -> U + Send + Sync + 'static,
+        D: Fn(Q) -> R + Send + Sync + 'static,
+        F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
+        U: Send + 'static,
+        Q: Send + 'static,
+        S: Send + 'static,
+    {
+        let sender = Box::new(MapReplierSender::new(
+            query_map,
+            reply_map,
+            replier,
+            address.into().0,
+        ));
+
+        Self { sender }
+    }
+
+    /// Creates a new `UniRequestor` port connected with filtering and
+    /// auto-conversion to a replier port of the model specified by the address.
+    ///
+    /// Queries and replies are mapped to other types using the closures
+    /// provided in argument, or ignored if the query closure returns `None`.
+    ///
+    /// The replier port must be an asynchronous method of a model of type `M`
+    /// returning a value of the type returned by the reply mapping closure and
+    /// taking as argument a value of the type returned by the query mapping
+    /// closure plus, optionally, a context reference.
+    pub fn with_filter_map<M, C, D, F, U, Q, S>(
+        query_filer_map: C,
+        reply_map: D,
+        replier: F,
+        address: impl Into<Address<M>>,
+    ) -> Self
+    where
+        M: Model,
+        C: Fn(&T) -> Option<U> + Send + Sync + 'static,
+        D: Fn(Q) -> R + Send + Sync + 'static,
+        F: for<'a> ReplierFn<'a, M, U, Q, S> + Clone,
+        U: Send + 'static,
+        Q: Send + 'static,
+        S: Send + 'static,
+    {
+        let sender = Box::new(FilterMapReplierSender::new(
+            query_filer_map,
+            reply_map,
+            replier,
+            address.into().0,
+        ));
+
+        Self { sender }
+    }
+
+    /// Sends a query to the connected replier port.
+    pub async fn send(&mut self, arg: T) -> Option<R> {
+        if let Some(fut) = self.sender.send_owned(arg) {
+            let output = fut.await.unwrap();
+            Some(output)
+        } else {
+            None
+        }
+    }
+}
+
+impl<T: Clone + Send + 'static, R: Send + 'static> fmt::Debug for UniRequestor<T, R> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "UniRequestor")
     }
 }

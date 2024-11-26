@@ -25,8 +25,8 @@ where
 
 /// Observable state.
 ///
-/// This object encapsulates state. Every state change is propagated to the
-/// output.
+/// This object encapsulates state. Every state change access is propagated to
+/// the output.
 #[derive(Debug)]
 pub struct ObservableState<S, T>
 where
