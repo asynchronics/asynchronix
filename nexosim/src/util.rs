@@ -7,3 +7,4 @@ pub(crate) mod seq_futures;
 pub(crate) mod slot;
 pub(crate) mod sync_cell;
 pub(crate) mod task_set;
+pub(crate) mod unwrap_or_throw;

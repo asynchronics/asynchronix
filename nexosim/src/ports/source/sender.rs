@@ -1,5 +1,3 @@
-use std::error::Error;
-use std::fmt;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -9,6 +7,7 @@ use futures_channel::oneshot;
 use recycle_box::{coerce_box, RecycleBox};
 
 use crate::channel;
+use crate::channel::SendError;
 use crate::model::Model;
 use crate::ports::{InputFn, ReplierFn};
 
@@ -73,7 +72,6 @@ where
                     coerce_box!(RecycleBox::recycle(recycle_box, fut))
                 })
                 .await
-                .map_err(|_| SendError {})
         }))
     }
 }
@@ -129,7 +127,6 @@ where
                     coerce_box!(RecycleBox::recycle(recycle_box, fut))
                 })
                 .await
-                .map_err(|_| SendError {})
         }))
     }
 }
@@ -185,7 +182,6 @@ where
                         coerce_box!(RecycleBox::recycle(recycle_box, fut))
                     })
                     .await
-                    .map_err(|_| SendError {})
             }) as SenderFuture<()>
         })
     }
@@ -243,10 +239,9 @@ where
 
                     coerce_box!(RecycleBox::recycle(recycle_box, fut))
                 })
-                .await
-                .map_err(|_| SendError {})?;
+                .await?;
 
-            reply_receiver.await.map_err(|_| SendError {})
+            reply_receiver.await.map_err(|_| SendError)
         }))
     }
 }
@@ -314,13 +309,9 @@ where
 
                     coerce_box!(RecycleBox::recycle(recycle_box, fut))
                 })
-                .await
-                .map_err(|_| SendError {})?;
+                .await?;
 
-            reply_receiver
-                .await
-                .map_err(|_| SendError {})
-                .map(&*reply_map)
+            reply_receiver.await.map_err(|_| SendError).map(&*reply_map)
         }))
     }
 }
@@ -393,26 +384,10 @@ where
 
                         coerce_box!(RecycleBox::recycle(recycle_box, fut))
                     })
-                    .await
-                    .map_err(|_| SendError {})?;
+                    .await?;
 
-                reply_receiver
-                    .await
-                    .map_err(|_| SendError {})
-                    .map(&*reply_map)
+                reply_receiver.await.map_err(|_| SendError).map(&*reply_map)
             }) as SenderFuture<R>
         })
     }
 }
-
-/// Error returned when the mailbox was closed or dropped.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub(super) struct SendError {}
-
-impl fmt::Display for SendError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "sending message into a closed mailbox")
-    }
-}
-
-impl Error for SendError {}

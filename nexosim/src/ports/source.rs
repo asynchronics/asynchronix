@@ -11,6 +11,7 @@ use crate::simulation::{
     Action, ActionKey, Address, KeyedOnceAction, KeyedPeriodicAction, OnceAction, PeriodicAction,
 };
 use crate::util::slot;
+use crate::util::unwrap_or_throw::UnwrapOrThrow;
 
 use broadcaster::{EventBroadcaster, QueryBroadcaster, ReplyIterator};
 use sender::{
@@ -31,7 +32,7 @@ pub struct EventSource<T: Clone + Send + 'static> {
 }
 
 impl<T: Clone + Send + 'static> EventSource<T> {
-    /// Creates a new, disconnected `EventSource` port.
+    /// Creates a disconnected `EventSource` port.
     pub fn new() -> Self {
         Self::default()
     }
@@ -106,7 +107,7 @@ impl<T: Clone + Send + 'static> EventSource<T> {
     pub fn event(&mut self, arg: T) -> Action {
         let fut = self.broadcaster.lock().unwrap().broadcast(arg);
         let fut = async {
-            fut.await.unwrap();
+            fut.await.unwrap_or_throw();
         };
 
         Action::new(OnceAction::new(fut))
@@ -123,12 +124,12 @@ impl<T: Clone + Send + 'static> EventSource<T> {
 
         let action = Action::new(KeyedOnceAction::new(
             // Cancellation is ignored once the action is already spawned on the
-            // executor. This means the action cannot be cancelled while the
-            // simulation is running, but since an event source is meant to be
-            // used outside the simulator, this shouldn't be an issue in
-            // practice.
+            // executor. This means the action cannot be cancelled once the
+            // simulation step targeted by the action is running, but since an
+            // event source is meant to be used outside the simulator, this
+            // shouldn't be an issue in practice.
             |_| async {
-                fut.await.unwrap();
+                fut.await.unwrap_or_throw();
             },
             action_key.clone(),
         ));
@@ -147,7 +148,7 @@ impl<T: Clone + Send + 'static> EventSource<T> {
         Action::new(PeriodicAction::new(
             || async move {
                 let fut = broadcaster.lock().unwrap().broadcast(arg);
-                fut.await.unwrap();
+                fut.await.unwrap_or_throw();
             },
             period,
         ))
@@ -171,7 +172,7 @@ impl<T: Clone + Send + 'static> EventSource<T> {
             // practice.
             |_| async move {
                 let fut = broadcaster.lock().unwrap().broadcast(arg);
-                fut.await.unwrap();
+                fut.await.unwrap_or_throw();
             },
             period,
             action_key.clone(),
@@ -211,7 +212,7 @@ pub struct QuerySource<T: Clone + Send + 'static, R: Send + 'static> {
 }
 
 impl<T: Clone + Send + 'static, R: Send + 'static> QuerySource<T, R> {
-    /// Creates a new, disconnected `EventSource` port.
+    /// Creates a disconnected `EventSource` port.
     pub fn new() -> Self {
         Self::default()
     }
@@ -309,7 +310,7 @@ impl<T: Clone + Send + 'static, R: Send + 'static> QuerySource<T, R> {
         let (writer, reader) = slot::slot();
         let fut = self.broadcaster.lock().unwrap().broadcast(arg);
         let fut = async move {
-            let replies = fut.await.unwrap();
+            let replies = fut.await.unwrap_or_throw();
             let _ = writer.write(replies);
         };
 
