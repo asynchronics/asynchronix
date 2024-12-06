@@ -13,11 +13,7 @@ use nexosim::ports::{Output, Requestor};
 ///
 /// Model input is propagated to all the connected replier ports and their
 /// answers are written to the model output.
-pub struct ReplierAdaptor<T, R>
-where
-    T: Clone + Send + 'static,
-    R: Clone + Send + 'static,
-{
+pub struct ReplierAdaptor<T: Clone + Send + 'static, R: Clone + Send + 'static> {
     /// Requestor port to be connected to replier port.
     pub requestor: Requestor<T, R>,
 
@@ -25,17 +21,10 @@ where
     pub output: Output<R>,
 }
 
-impl<T, R> ReplierAdaptor<T, R>
-where
-    T: Clone + Send + 'static,
-    R: Clone + Send + 'static,
-{
+impl<T: Clone + Send + 'static, R: Clone + Send + 'static> ReplierAdaptor<T, R> {
     /// Creates a `ReplierAdaptor` model.
     pub fn new() -> Self {
-        Self {
-            requestor: Requestor::new(),
-            output: Output::new(),
-        }
+        Self::default()
     }
 
     /// Input port.
@@ -46,9 +35,13 @@ where
     }
 }
 
-impl<T, R> Model for ReplierAdaptor<T, R>
-where
-    T: Clone + Send + 'static,
-    R: Clone + Send + 'static,
-{
+impl<T: Clone + Send + 'static, R: Clone + Send + 'static> Model for ReplierAdaptor<T, R> {}
+
+impl<T: Clone + Send + 'static, R: Clone + Send + 'static> Default for ReplierAdaptor<T, R> {
+    fn default() -> Self {
+        Self {
+            requestor: Requestor::new(),
+            output: Output::new(),
+        }
+    }
 }
