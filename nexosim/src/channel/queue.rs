@@ -33,7 +33,7 @@ pub(super) struct MessageBorrow<'a, T: ?Sized> {
     stamp: usize,
 }
 
-impl<'a, T: ?Sized> Deref for MessageBorrow<'a, T> {
+impl<T: ?Sized> Deref for MessageBorrow<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -41,13 +41,13 @@ impl<'a, T: ?Sized> Deref for MessageBorrow<'a, T> {
     }
 }
 
-impl<'a, T: ?Sized> DerefMut for MessageBorrow<'a, T> {
+impl<T: ?Sized> DerefMut for MessageBorrow<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.msg
     }
 }
 
-impl<'a, T: ?Sized> Drop for MessageBorrow<'a, T> {
+impl<T: ?Sized> Drop for MessageBorrow<'_, T> {
     fn drop(&mut self) {
         let slot = &self.queue.buffer[self.index];
 
@@ -67,7 +67,7 @@ impl<'a, T: ?Sized> Drop for MessageBorrow<'a, T> {
         slot.stamp.store(self.stamp, Ordering::Release);
     }
 }
-impl<'a, M> fmt::Debug for MessageBorrow<'a, M> {
+impl<M> fmt::Debug for MessageBorrow<'_, M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MessageBorrow").finish_non_exhaustive()
     }
