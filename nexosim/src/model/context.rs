@@ -70,7 +70,6 @@ use super::{Model, ProtoModel};
 /// }
 /// impl Model for DelayedGreeter {}
 /// ```
-
 // The self-scheduling caveat seems related to this issue:
 // https://github.com/rust-lang/rust/issues/78649
 pub struct Context<M: Model> {

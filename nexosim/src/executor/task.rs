@@ -315,7 +315,7 @@ where
 ///
 /// An arbitrary tag can be attached to the task, a clone of which will be
 /// passed to the scheduling function each time it is called.
-
+///
 /// The returned `Runnable` must be scheduled by the user.
 pub(crate) fn spawn<F, S, T>(
     future: F,

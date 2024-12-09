@@ -42,7 +42,6 @@ const COUNTDOWN_ONE: u64 = 1 << 32;
 /// more than 1 to wake the parent task less frequently. For instance, if
 /// `notify_count` is set to the number of pending sub-tasks, the parent task
 /// will only be woken once all subtasks have been woken.
-
 pub(crate) struct TaskSet {
     /// Set of all tasks, scheduled or not.
     ///
@@ -355,7 +354,7 @@ pub(crate) struct TaskIterator<'a> {
     next_index: u32,
 }
 
-impl<'a> Iterator for TaskIterator<'a> {
+impl Iterator for TaskIterator<'_> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -380,7 +379,7 @@ impl<'a> Iterator for TaskIterator<'a> {
     }
 }
 
-impl<'a> Drop for TaskIterator<'a> {
+impl Drop for TaskIterator<'_> {
     fn drop(&mut self) {
         // Put all remaining scheduled tasks in the sleeping state.
         //

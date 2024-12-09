@@ -350,7 +350,7 @@ impl<'a, R> BroadcastFuture<'a, R> {
     }
 }
 
-impl<'a, R> Drop for BroadcastFuture<'a, R> {
+impl<R> Drop for BroadcastFuture<'_, R> {
     fn drop(&mut self) {
         // Safety: this is safe since `self.futures` is never accessed after it
         // is moved out.
@@ -361,7 +361,7 @@ impl<'a, R> Drop for BroadcastFuture<'a, R> {
     }
 }
 
-impl<'a, R> Future for BroadcastFuture<'a, R> {
+impl<R> Future for BroadcastFuture<'_, R> {
     type Output = Result<(), SendError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
