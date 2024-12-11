@@ -736,7 +736,7 @@ impl<'a, T> RecycledFuture<'a, T> {
     }
 }
 
-impl<'a, T> Drop for RecycledFuture<'a, T> {
+impl<T> Drop for RecycledFuture<'_, T> {
     fn drop(&mut self) {
         // Return the box to the lender.
         //
@@ -747,7 +747,7 @@ impl<'a, T> Drop for RecycledFuture<'a, T> {
     }
 }
 
-impl<'a, T> Future for RecycledFuture<'a, T> {
+impl<T> Future for RecycledFuture<'_, T> {
     type Output = T;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
