@@ -63,7 +63,6 @@ tracing-subscriber = { version= "0.3.18", optional = true }
 futures-util = "0.3"
 futures-executor = "0.3"
 tracing-subscriber = { version= "0.3.18", features=["env-filter"] }
-nexosim-util = {version = "0.1.0", path = "../nexosim-util"}
 
 [target.'cfg(nexosim_loom)'.dev-dependencies]
 loom = "0.7"
@@ -74,7 +73,7 @@ tonic-build = { version = "0.12" }
 
 [lints.rust]
 # `nexosim_loom` flag: run loom-based tests.
-# `nexosim_grpc_codegen` flag: regenerate gRPC code from .proto definitions. 
+# `nexosim_grpc_codegen` flag: regenerate gRPC code from .proto definitions.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(nexosim_loom)', 'cfg(nexosim_grpc_codegen)'] }
 
 [package.metadata.docs.rs]
